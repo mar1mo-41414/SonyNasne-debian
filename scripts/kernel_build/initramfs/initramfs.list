@@ -1,0 +1,2 @@
+# gen_init_cpio形式。カーネル内蔵initramfs。外部ramdisk(Sony miniroot)が後から重ねて展開される。
+file /nasne_init /work/nasne_initramfs/nasne_init 0755 0 0

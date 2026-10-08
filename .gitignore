@@ -1,0 +1,19 @@
+# ビルド成果物・取得物
+*.o
+*.bin
+*.img
+*.dlm
+__pycache__/
+gpl_src/
+scripts/kernel_build/dl/
+
+# 実機用ツールのビルド出力(ソースだけ管理)
+scripts/tools/*
+!scripts/tools/*.c
+scripts/watchdog/mcui2c
+
+# 解析対象のSonyファーム・SPIダンプ・個体情報は絶対に入れない
+SPI_dump/
+SampleData/
+start-note.md
+.DS_Store

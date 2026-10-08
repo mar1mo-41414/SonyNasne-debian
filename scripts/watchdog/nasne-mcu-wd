@@ -1,0 +1,36 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nasne-mcu-wd
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: nasneのMCUウォッチドッグを止める(これが無いと約333秒ごとにリセットされる)
+### END INIT INFO
+# 公式procmngの"MCU Watchdog Disable"と同じ: 公式ドライバ(xcode4drv)のI2C ioctlで、バス0・8bitアドレス0x20へ [0x20,0x01] を書く。
+# 前提(/usr/local/sbin): xcode4drv.ko と rc.xcode4(公式rootfsの/opt/dtvtuner/lib/modules/から)、mcui2c(scripts/watchdog/mcui2c.c)
+BIN=/usr/local/sbin
+LOG=/var/log/nasne-mcu-wd.log
+case "$1" in
+  start)
+    echo "== $(date) start" >> $LOG
+    ( cd $BIN
+      lsmod | grep -q '^xcode4drv' || ./rc.xcode4 >> $LOG 2>&1
+      n=0
+      while [ $n -lt 30 ]; do
+          if $BIN/mcui2c w 20 20 01 >> $LOG 2>&1; then
+              echo "MCU watchdog disabled" >> $LOG; break
+          fi
+          n=$((n + 1)); sleep 1
+      done
+      [ $n -ge 30 ] && echo "FAILED to disable MCU watchdog" >> $LOG ) &
+    ;;
+  stop|restart|force-reload|status)
+    :
+    ;;
+  *)
+    echo "Usage: $0 start" >&2
+    exit 1
+    ;;
+esac
+exit 0
