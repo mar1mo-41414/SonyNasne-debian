@@ -12,7 +12,7 @@
 | ブートフラッシュ | **Spansion S25FL128P**(SPI NOR、16MB、基板リファレンス U44) | U-Boot・カーネル・miniroot・設定を格納 |
 | Ethernet PHY | Realtek RTL8211EG | ギガビットEthernet |
 | MCU | 型番未確認(基板上のマイコン) | 電源・ウォッチドッグ(I2C)。[docs/06](06_mcu_watchdog.md) |
-| B-CASスロット | miniB-CAS | 放送のデスクランブル用カード |
+| B-CASスロット | フルサイズのB-CASカード | 放送のデスクランブル用カード |
 
 > 初代nasneの分解記事(日経テクノロジー)にも、復調ICとして TC90532XBG、SoCとしてViXS製とある。
 
