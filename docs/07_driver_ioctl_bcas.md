@@ -68,8 +68,9 @@ B-CASカードは、チップ内ファームが扱う**ジェネリックスト�
 | `ACTIVATE` | 成功。続けて活性化イベント(`0x400`)が返る |
 | `CARD_ID_ACQUIRE`、`BCASMSG` + 生APDU | SEND は成功するが、RECV はタイムアウトのみ。**カードIDは取得できていない** |
 
-ATR・メッセージ応答・ECM のイベントは観測できていない。応答は `bcas_card_management_t` のコールバック経由で渡される作りなので、
-`BCASMSG` の送信データ形式(SDK側のヘッダの有無、`bcasmsg_id` の扱い)や、TS/デコードのストリームが開いていることが前提の可能性があるが、未解明。
+ATR・メッセージ応答・ECM のイベントは観測できていない。**ただし、放送の復号にはカードIDの取得は不要だった**:
+B-CASストリームを活性化して復号ストリーム(`OPEN_SECUREDTS`)にハンドルを渡せば、ファームがカードと直接やり取りして地デジを復号する([docs/12](12_ts_and_bcas_decrypt.md)、[docs/11](11_tv_streaming.md))。
+カードIDの取得用コマンドの正しい使い方は未解明のまま。
 
 使い方: `bcas status|activate|id|deactivate ...`(1回の実行内で OPEN → 指定コマンド → CLOSE)、`bcas m<hex>` で `BCASMSG` に生バイト列を送る。
 ツールはファーム稼働中(`FW_ALIVE`)でないと `OPEN_GENERIC` が失敗する。

@@ -25,9 +25,10 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
 | ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)をオフラインで生成。HDD全損機の復旧 |
 | ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
-| ✅ できる | 復調IC・RFチューナーICとのI2C通信(レジスタの読み出し) |
-| △ 一部 | B-CASカード: 挿入検出・活性化まで。カードIDの取得は未達 |
-| ❌ できない | テレビ放送の受信・録画(Debian側にはチューナーを使う仕組みが無い。選局の書き込み列も未解析) |
+| ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
+| ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
+| ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
+| △ 未検証 | tvheadend・EPGStation 本体との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
 | ❌ できない | PWR LEDの点灯(Debian起動中は点滅のまま)、`halt`/`poweroff`による電源断(純正も電源断の手段は電源ケーブルのみ) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
 | ❌ やっていない | ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |
@@ -44,7 +45,9 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | Debian直起動 | 自前カーネル+内蔵initramfs → p3のDebianへ `switch_root` | [docs/05](docs/05_kernel_and_direct_boot.md) |
 | ウォッチドッグ | MCUへ I2C で `[0x20, 0x01]` を書くと停止 | [docs/06](docs/06_mcu_watchdog.md) |
 | ドライバのioctl | `/dev/vixs/xcodedrv` のプロトコル、B-CASの経路 | [docs/07](docs/07_driver_ioctl_bcas.md) |
-| チューナー | I2Cバス1の復調IC×2と、その奥(パススルー)のRFチューナーIC×3 | [docs/08](docs/08_tuner_i2c.md) |
+| チューナー | I2Cバス1の復調IC×2と、その奥(パススルー)のRFチューナーIC×3。地デジの選局手順 | [docs/08](docs/08_tuner_i2c.md) |
+| TV受信・配信 | B-CAS復号済みの元画質TSを取り出す `nasne-recpt1`(CLI/HTTP) | [docs/11](docs/11_tv_streaming.md) |
+| 復号の仕組み | TSパススルー、B-CAS、`OPEN_SECUREDTS` のioctl手順 | [docs/12](docs/12_ts_and_bcas_decrypt.md) |
 
 できること・できないこと・未解明の項目の詳細は **[docs/10_status_and_limits.md](docs/10_status_and_limits.md)**。
 
@@ -61,6 +64,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |
 | [08_tuner_i2c](docs/08_tuner_i2c.md) | 復調IC・RFチューナーICとのI2C通信 |
 | [09_tools](docs/09_tools.md) | **スクリプト・ツールの使い方** |
+| [11_tv_streaming](docs/11_tv_streaming.md) | **地デジの受信・配信**(`nasne-recpt1`) |
+| [12_ts_and_bcas_decrypt](docs/12_ts_and_bcas_decrypt.md) | TS取得とB-CAS復号のioctlレベルの手順 |
 | [10_status_and_limits](docs/10_status_and_limits.md) | できること・できないこと・未解明 |
 | [boxster_cmd_table](docs/boxster_cmd_table.md) | ドライバのioctlコマンド番号表 |
 
@@ -88,7 +93,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
    ├─ fetch_gpl_sources.sh    … SIE公開のGPLソースの取得
    ├─ kernel_build/           … 自前カーネルのビルド(Docker)と内蔵initramfs
    ├─ watchdog/               … MCUウォッチドッグ停止(mcui2c、initサービス)
-   ├─ tools/                  … 実機用の小ツール(I2C、ioctl、/dev/mem、MTD書き込み、B-CAS)
+   ├─ tools/                  … 実機用のツール(`nasne-recpt1`(TS取得・HTTP配信)、I2C、ioctl、/dev/mem、MTD書き込み、B-CAS)
+   ├─ nasne_fe.py             … チューナーのI2C操作(PCからssh経由)
    └─ ghidra/                 … Ghidra headless用の補助スクリプト
 ```
 

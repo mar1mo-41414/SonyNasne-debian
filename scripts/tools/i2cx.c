@@ -12,6 +12,8 @@
 #define SYS_open   4005
 #define SYS_close  4006
 #define SYS_ioctl  4054
+#define SYS_read   4003
+#define SYS_nanosleep 4166
 
 static long sys6(long n, long a, long b, long c, long d, long e, long f) {
     register long v0 __asm__("$2") = n;
@@ -43,6 +45,7 @@ static unsigned long parse_hex(const char *s) {
     return v;
 }
 
+static unsigned long parse_hex_dec(const char *s) { unsigned long v = 0; for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (*s - '0'); return v; }
 static unsigned long buf[0x110 / 4 + 4];
 static long fd;
 static unsigned long blk, addr;
@@ -62,16 +65,12 @@ static unsigned long xfer(int wr, unsigned char *d, int n) {
     return buf[0x0c / 4];
 }
 
-int main_c(long *sp) {
-    int argc = (int)sp[0];
-    char **argv = (char **)(sp + 1);
+static int run(int argc, char **argv) {
     unsigned char d[64];
     int i, n;
-    if (argc < 5) { ws("usage: i2cx <block> <addr8hex> r <n> | w <b>... | g <reg>... <n> | d <reg0> <count>\n"); return 1; }
+    if (argc < 5) { ws("usage: i2cx <block> <addr8hex> r <n> | w <b>... | g <reg>... <n> | h <reg> <n> | d <reg0> <count> | p <tuner8> <n> [pre...]   /  i2cx -b (標準入力から1行1コマンド)\n"); return 1; }
     blk = parse_hex(argv[1]); addr = parse_hex(argv[2]);
     char m = argv[3][0];
-    fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
-    if (fd < 0) { ws("open failed\n"); return 2; }
     if (m == 'r') {
         n = (int)parse_hex(argv[4]); if (n > 60) n = 60;
         unsigned long rv = xfer(0, d, n);
@@ -86,6 +85,13 @@ int main_c(long *sp) {
         for (i = 0; i < nw; i++) d[i] = (unsigned char)parse_hex(argv[4 + i]);
         n = (int)parse_hex(argv[argc - 1]); if (n > 60) n = 60;
         unsigned long rv = xfer(1, d, nw);
+        ws("write rv="); hex2(rv);
+        if (rv == 1) { rv = xfer(0, d, n); ws(" read rv="); hex2(rv); ws(" data="); if (rv == 1) for (i = 0; i < n; i++) { hex2(d[i]); ws(" "); } }
+        ws("\n");
+    } else if (m == 'h') {   /* h <reg> <n>: [reg]を書き(stopなし)、repeated startでn バイト読む(dtvtunerの復調IC読み出しと同じ) */
+        d[0] = (unsigned char)parse_hex(argv[4]);
+        n = (int)parse_hex(argv[5]); if (n > 60) n = 60;
+        pbit = 0; unsigned long rv = xfer(1, d, 1); pbit = 1;
         ws("write rv="); hex2(rv);
         if (rv == 1) { rv = xfer(0, d, n); ws(" read rv="); hex2(rv); ws(" data="); if (rv == 1) for (i = 0; i < n; i++) { hex2(d[i]); ws(" "); } }
         ws("\n");
@@ -117,8 +123,54 @@ int main_c(long *sp) {
         }
         ws("\n");
     }
-    sys3(SYS_close, fd, 0, 0);
     return 0;
+}
+
+static char line[512];
+static char *tok[40];
+
+/* -b: 標準入力の各行を1コマンドとして実行する(行頭が # は無視、"sleep <ms>" は待機)。結果は "> 行" の次に出力 */
+static int batch(void) {
+    int len = 0;
+    char c;
+    for (;;) {
+        long r = sys3(SYS_read, 0, (long)&c, 1);
+        if (r <= 0 && len == 0) break;
+        if (r <= 0 || c == '\n') {
+            line[len] = 0;
+            if (len > 0 && line[0] != '#') {
+                int nt = 1; char *p = line;
+                ws("> "); ws(line); ws("\n");
+                tok[0] = "i2cx";
+                while (*p && nt < 39) {
+                    while (*p == ' ') *p++ = 0;
+                    if (!*p) break;
+                    tok[nt++] = p;
+                    while (*p && *p != ' ') p++;
+                }
+                if (nt >= 3 && tok[1][0] == 's' && tok[1][1] == 'l') {
+                    unsigned long ms = parse_hex_dec(tok[2]);
+                    long ts[2]; ts[0] = ms / 1000; ts[1] = (ms % 1000) * 1000000;
+                    sys3(SYS_nanosleep, (long)ts, 0, 0);
+                } else run(nt, tok);
+            }
+            len = 0;
+            if (r <= 0) break;
+        } else if (len < 500) line[len++] = c;
+    }
+    return 0;
+}
+
+int main_c(long *sp) {
+    int argc = (int)sp[0];
+    char **argv = (char **)(sp + 1);
+    int rc;
+    fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
+    if (fd < 0) { ws("open failed\n"); return 2; }
+    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'b') rc = batch();
+    else rc = run(argc, argv);
+    sys3(SYS_close, fd, 0, 0);
+    return rc;
 }
 
 __asm__(".text\n.globl __start\n.ent __start\n__start:\n"

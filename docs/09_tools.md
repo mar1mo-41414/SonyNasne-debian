@@ -67,6 +67,17 @@ python3 scripts/build_dlm.py verify <file.dlm>
 
 hwtype・日付などは**テンプレートの実ヘッダをそのまま使う**ので、そのファームが動いている本体向けにだけ使える。
 
+### `nasne_fe.py` — チューナーのI2C操作(PCからssh経由)
+
+```bash
+python3 scripts/nasne_fe.py --host <ip> t-init                # 地デジ側の初期化
+python3 scripts/nasne_fe.py --host <ip> t-tune 27             # UHF 27 を選局してロック・C/Nを表示
+python3 scripts/nasne_fe.py --host <ip> t-scan 13 62          # ロックするチャンネルを一覧(-v で全部)
+python3 scripts/nasne_fe.py --host <ip> t-standby
+```
+
+nasne側に `i2cx`(バッチモード対応版)と公式ドライバが必要。BS側(`s-init` / `s-tune` / `s-scan`)は動作未確認。仕組み: [docs/08](08_tuner_i2c.md)。
+
 ## 環境構築
 
 ### `fetch_gpl_sources.sh` / `kernel_build/`
@@ -102,7 +113,10 @@ mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/ph
 | `watchdog/mcui2c` | MCU(バス0・`0x20`)の読み書き。`mcui2c w 20 20 01` がウォッチドッグ停止([docs/06](06_mcu_watchdog.md)) |
 | `watchdog/nasne-mcu-wd` | 上記を起動時に自動実行するinitスクリプト |
 | `tools/i2cscan` | `i2cscan <block 0\|1> [hz]`: I2Cブロックの全アドレスを走査して、応答するデバイスを一覧([docs/08](08_tuner_i2c.md)) |
-| `tools/i2cx` | `i2cx <block> <addr8> r <n> \| w <b>... \| g <reg>... <n> \| d <reg0> <count> \| p <tuner8> <n> [pre...]`: I2Cの読み書き・ダンプ・パススルー読み出し |
+| `tools/i2cx` | `i2cx <block> <addr8> r <n> \| w <b>... \| g <reg>... <n> \| h <reg> <n> \| d <reg0> <count> \| p <tuner8> <n> [pre...]` / `i2cx -b`(標準入力から連続実行): I2Cの読み書き・ダンプ・パススルー読み出し |
+| `tools/nasne_recpt1` | **`recpt1` 互換のTS取得とHTTP配信**(`<ch> <秒> <出力>`、`--scan`、`--listen <port>`)。[docs/11](11_tv_streaming.md) |
+| `watchdog/nasne-recpt1-server` | 上記のHTTPサーバを起動時に動かすinitスクリプト |
+| `tools/drvsh` | 同一fdで ioctl を連続実行するスクリプト実行ツール(ストリームの同時利用の実験用)。[docs/12](12_ts_and_bcas_decrypt.md) |
 | `tools/boxioctl` | `boxioctl <cmd_hex> <size_hex> [off=val]... [-d words]`: ドライバのioctlを汎用に試す。例 `boxioctl 103 b0 -d 0x2c`(ファーム状態)。[docs/07](07_driver_ioctl_bcas.md) |
 | `tools/bcas` | `bcas status\|activate\|id\|deactivate ...` / `bcas m<hex>`: B-CASカードの実験([docs/07](07_driver_ioctl_bcas.md)) |
 | `tools/mtdtool` | `mtdtool erase <dev> <off> <len>` / `write <dev> <off> <file>`: `/dev/mtd0` の許可範囲(KNL / BKNL / 未使用領域)だけを消去・書き込み([docs/05](05_kernel_and_direct_boot.md)) |
@@ -122,5 +136,9 @@ Ghidra の headless モード(`analyzeHeadless ... -process <プログラム> -n
 | `DecompRange.java` | `<out> <開始> <終了>` | アドレス範囲内の全関数をデコンパイル |
 | `CallersDecomp.java` | `<out> <アドレス>...` | 指定関数の呼び出し元をデコンパイル |
 | `StringRefs.java` | | 文字列の参照元の列挙 |
+| `CallersByName.java` | `<out> <関数名>...` | 名前で関数(PLT/thunk含む)を引いて呼び出し元をデコンパイル |
+| `RefsToAddr.java` | `<out> <アドレス>...` | 指定アドレスへの参照元を列挙 |
+
+Pythonの補助(`emu_dtvtuner.py` / `emu_secured_open.py`)は、unicorn(`python -m pip install unicorn`)で純正バイナリ中の計算関数をそのまま実行し、テーブル駆動でデコンパイルが読みにくい関数の出力(チューナーの設定列、ストリーム構造体の既定値)を得る。
 
 純正バイナリ(`init`、`procmng`、`dtvtuner`、`xcode4drv.ko` など)は、公式ファームのrootfsを `dlm_crypto.py decrypt-body` で取り出して `tar zxf` したものを対象にする。

@@ -1,0 +1,33 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nasne-recpt1-server
+# Required-Start:    $local_fs $network nasne-mcu-wd
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: nasne の地デジチューナーを HTTP(TS)で配信する nasne-recpt1 --listen
+### END INIT INFO
+# 使い方(別のPC・録画ソフトから):
+#   http://<nasne>:8301/tuner/<UHF ch>[?sid=0xNNNN&sec=N]   復号済みのTS(元画質)を配信
+#   http://<nasne>:8301/scan                                全UHFチャンネルのサービス一覧(約80秒)
+#   http://<nasne>:8301/status                              tuner idle|busy
+# 前提: /usr/local/sbin に nasne-recpt1、xcode4drv.ko、rc.xcode4(公式ドライバ)。
+BIN=/usr/local/sbin/nasne-recpt1
+PORT=${NASNE_RECPT1_PORT:-8301}
+PIDFILE=/var/run/nasne-recpt1-server.pid
+case "$1" in
+  start)
+    [ -x $BIN ] || exit 0
+    ( n=0; while [ $n -lt 60 ]; do [ -e /dev/vixs/xcodedrv ] && break; n=$((n+1)); sleep 1; done
+      nohup $BIN --listen $PORT >> /var/log/nasne-recpt1.log 2>&1 &
+      echo $! > $PIDFILE ) &
+    ;;
+  stop)
+    [ -f $PIDFILE ] && kill $(cat $PIDFILE) 2>/dev/null
+    rm -f $PIDFILE
+    ;;
+  restart|force-reload) $0 stop; sleep 1; $0 start ;;
+  status) [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null && echo running || echo stopped ;;
+  *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac
+exit 0
