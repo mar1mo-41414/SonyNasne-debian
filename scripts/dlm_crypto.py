@@ -301,6 +301,36 @@ def decrypt_header(path: str) -> bytes:
     return bf.chain_decrypt(data)
 
 
+def parse_header_fields(dec_header: bytes, file_size: int | None = None) -> dict:
+    """復号済み64バイトヘッダの各フィールドを、docs/03_firmware_format.mdの構造に従って読む。
+    主目的: offset 0x04(セグメント全長、ファイル全体サイズと一致するはず)がファイルの
+    実サイズと一致しているか確認すること(ファイルが途中で切れていないかの切り分け)。
+    """
+    magic = dec_header[0:4]
+    size_field = int.from_bytes(dec_header[4:8], "big")
+    major_version = int.from_bytes(dec_header[8:10], "big")
+    body_encrypted_flag = dec_header[0x0E]
+    gzip_flag = dec_header[0x0D]
+    hwtype = int.from_bytes(dec_header[0x10:0x14], "big")
+    date = dec_header[0x14 : 0x14 + 32].rstrip(b"\x00")
+    crc_stored = int.from_bytes(dec_header[0x3C:0x40], "big")
+    info = {
+        "magic": magic,
+        "magic_ok": magic == DLM_MAGIC,
+        "size_field(0x04)": size_field,
+        "major_version(0x08)": major_version,
+        "gzip_flag(0x0D, 0x10なら圧縮)": hex(gzip_flag),
+        "body_encrypted_flag(0x0E)": body_encrypted_flag,
+        "hwtype(0x10)": hex(hwtype),
+        "date(0x14)": date,
+        "crc_stored(0x3C)": hex(crc_stored),
+    }
+    if file_size is not None:
+        info["file_size(実測)"] = file_size
+        info["size_field_matches_file_size"] = size_field == file_size
+    return info
+
+
 def decrypt_body(path: str, chunk_size: int | None = None) -> bytes:
     """ボディを復号する(flag==1、body_encryptedの.dlmのみ有効)。
 
@@ -443,10 +473,17 @@ def extract_segment_body(path: str, offset: int, total_size: int) -> bytes:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "decrypt-header":
+        import os
+
         dec = decrypt_header(sys.argv[2])
         print(f"復号結果: {dec.hex()}")
         print(f"ASCII:   {dec}")
         print(f"マジック一致: {dec[:4] == DLM_MAGIC}")
+        print()
+        print("フィールド詳細:")
+        file_size = os.path.getsize(sys.argv[2])
+        for k, v in parse_header_fields(dec, file_size=file_size).items():
+            print(f"  {k}: {v}")
     elif len(sys.argv) >= 3 and sys.argv[1] == "parse-segments":
         for offset, magic, total_size, flag, date in parse_segments(sys.argv[2]):
             print(f"offset={offset:#x} magic={magic!r} total_size={total_size} "
