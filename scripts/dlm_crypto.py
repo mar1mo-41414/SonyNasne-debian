@@ -330,22 +330,71 @@ def decrypt_body(path: str, chunk_size: int | None = None) -> bytes:
     return bytes(out)
 
 
-def probe_body_chunk_sizes(path: str, candidates: list[int | None]) -> list[tuple[int | None, bool, str]]:
-    """decrypt_bodyのchunk_size(Noneは従来の単一チェイン)をいくつか試し、
-    gzip展開が成功するかを調べる。
+def _gzip_header_len(data: bytes) -> int:
+    """gzipヘッダ(先頭のメタデータ)の長さを返す。deflate本体の開始位置が分かる。"""
+    if len(data) < 10 or data[0:2] != b"\x1f\x8b":
+        raise ValueError("gzipマジックが無い")
+    flg = data[3]
+    pos = 10
+    if flg & 4:  # FEXTRA
+        xlen = int.from_bytes(data[pos : pos + 2], "little")
+        pos += 2 + xlen
+    if flg & 8:  # FNAME
+        pos = data.index(b"\x00", pos) + 1
+    if flg & 16:  # FCOMMENT
+        pos = data.index(b"\x00", pos) + 1
+    if flg & 2:  # FHCRC
+        pos += 2
+    return pos
 
-    戻り値: [(chunk_size, gzip_ok, detail), ...]
+
+def inspect_gzip_decode(dec: bytes) -> str:
+    """gzip展開を試し、失敗してもどこまで正しくinflateできたかを報告する。
+
+    `gzip.GzipFile` はCRC不一致等でも例外を投げるだけで、途中まで展開できた
+    中身やサイズを教えてくれないので、`zlib.decompressobj` で生のdeflate本体を
+    直接展開して切り分ける(「サイズは合っているがCRCだけ違う」ような、
+    チャンクサイズの当たりに近い結果を見分けるため)。
     """
+    import zlib
+
+    try:
+        hdr_len = _gzip_header_len(dec)
+    except Exception as e:  # noqa: BLE001
+        return f"gzipヘッダ解析失敗: {type(e).__name__}: {e}"
+
+    d = zlib.decompressobj(-zlib.MAX_WBITS)
+    out = bytearray()
+    try:
+        out += d.decompress(dec[hdr_len:])
+        out += d.flush()
+    except zlib.error as e:
+        return f"inflate失敗: 出力{len(out)}バイトまで展開できたところでエラー: {e}"
+
     import gzip
     import io
 
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(dec)) as gz:
+            full = gz.read()
+        return f"OK: gzip展開完了・CRC一致 {len(full)} bytes"
+    except Exception as e:  # noqa: BLE001
+        return f"inflate完了(出力{len(out)}バイト)だが、gzipトレーラ(CRC32/ISIZE)検証NG: {type(e).__name__}: {e}"
+
+
+def probe_body_chunk_sizes(path: str, candidates: list[int | None]) -> list[tuple[int | None, bool, str]]:
+    """decrypt_bodyのchunk_size(Noneは従来の単一チェイン)をいくつか試し、
+    gzip展開がどこまで進むかを調べる。
+
+    戻り値: [(chunk_size, gzip_ok, detail), ...]
+    """
     results = []
     for cs in candidates:
         try:
             dec = decrypt_body(path, chunk_size=cs)
-            with gzip.GzipFile(fileobj=io.BytesIO(dec)) as gz:
-                out = gz.read()
-            results.append((cs, True, f"gzip展開OK: {len(out)} bytes"))
+            detail = inspect_gzip_decode(dec)
+            ok = detail.startswith("OK")
+            results.append((cs, ok, detail))
         except Exception as e:  # noqa: BLE001
             results.append((cs, False, f"{type(e).__name__}: {e}"))
     return results
@@ -416,7 +465,7 @@ if __name__ == "__main__":
         print(f"先頭バイト(gzipマジック期待値 1f8b): {dec[:4].hex()}")
     elif len(sys.argv) >= 3 and sys.argv[1] == "probe-body":
         args = sys.argv[2:]
-        candidates: list[int | None] = [None, 128, 256, 512, 1024, 2048, 4096]
+        candidates: list[int | None] = [None, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
         if "--chunks" in args:
             idx = args.index("--chunks")
             candidates = [None] + [int(x) for x in args[idx + 1].split(",")]
