@@ -113,9 +113,12 @@ NASNE_CUSTOM=1 sh scripts/kernel_build/build.sh      # → gpl_src/build/out/vml
 同じ用途であれば、公式ファームパッケージの `KNL.bin`(`ofw_tool.py split` の出力)でも流用できる(いずれもSonyが書いたオリジナルのKNLセグメントのヘッダを土台にするだけで、
 検証ロジック自体はSPI上の実バイトに依存しない)。
 
+> `ofw_tool.py split` の `KNL.bin` は**単体のセグメントファイル**(オフセット0開始)。`build_knl.py` は既定で「SPI全体ダンプ(16MB)の中の `0x100000` オフセット」
+> から読む作りなので、**`--raw` を付けないと、ファイル内の無関係な場所(カーネル本体のデータ)をヘッダとして誤読する**(実機で確認済みのバグ、修正済み)。
+
 ```bash
-python3 scripts/build_knl.py info   ofw_out/KNL.bin --slot KNL
-python3 scripts/build_knl.py build  ofw_out/KNL.bin knl_new.bin --slot KNL --kernel gpl_src/build/out/vmlinux_new.bin
+python3 scripts/build_knl.py info   ofw_out/KNL.bin --slot KNL --raw
+python3 scripts/build_knl.py build  ofw_out/KNL.bin knl_new.bin --slot KNL --raw --kernel gpl_src/build/out/vmlinux_new.bin
 python3 scripts/build_knl.py verify knl_new.bin
 ```
 
