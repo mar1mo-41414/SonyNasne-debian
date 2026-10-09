@@ -8,10 +8,16 @@
 ### `dlm_crypto.py` — `.dlm` の暗号(Blowfish変種)
 
 ```bash
-python3 scripts/dlm_crypto.py decrypt-header <file.dlm>            # 先頭64バイトのヘッダを復号して表示
-python3 scripts/dlm_crypto.py decrypt-body   <file.dlm> out.tar.gz  # ボディを復号して書き出す(rootfsの中身を取り出せる)
-python3 scripts/dlm_crypto.py parse-segments <spi.bin>              # SPIダンプ中の名前付きセグメントを列挙
+python3 scripts/dlm_crypto.py decrypt-header <file.dlm>                       # ヘッダを復号し、各フィールド(サイズ・バージョン・hwtype・日付・CRC)を表示
+python3 scripts/dlm_crypto.py decrypt-body    <file.dlm> out.tar --inflate    # ボディを復号し、生のtar本体を書き出す(rootfsの中身を取り出せる)
+python3 scripts/dlm_crypto.py parse-segments  <spi.bin>                       # SPIダンプ中の名前付きセグメントを列挙
+python3 scripts/dlm_crypto.py probe-tail      <file.dlm>                      # decrypt-bodyの末尾処理(tail_mode)の当たりを確認する診断
 ```
+
+`decrypt-body` は30MB超の大きいrootfs(v2.60で確認)では、ボディが8バイト境界に満たない(実機で8の倍数+6バイト)。
+既定の `tail_mode=cfb`(直前のCBCブロックを再暗号化したキーストリームで末尾をXORする)で、`tar -tvf`/`tar -xf` に正しく通ることを実機で確認済み
+(gzipトレーラ(CRC32/ISIZE)自体は一致しないままだが、tar本体の内容は正常。`--inflate` を付けるとトレーラの検証をスキップして生のtarを取り出す)。
+`--chunk <N>` によるチャンク分割(チャンク境界でIVをリセットする仮説)は実機検証で誤りと判明しているので使わないこと(診断用に残しているだけ)。
 
 他のツールがライブラリとして使う(`NasneBlowfish`)。仕組み: [docs/03](03_firmware_format.md)。
 

@@ -17,7 +17,9 @@
 | ウォッチドッグ停止([docs/06](06_mcu_watchdog.md))、地デジ受信・配信([docs/11](11_tv_streaming.md)) | ✅ 実機で確認 |
 | 公式rootfsの `.dlm` 注入による任意ファイル展開([docs/03](03_firmware_format.md)) | ✅ 実機で確認(Debian chroot起動の初期実装で使用) |
 | **本ドキュメントの「段階1スクリプトからの `/dev/mtd0` 書き込み」**(公式カーネル・公式rootfs上でのSPI書き換え) | ⚠️ **未検証**。`mtdtool` はDebian上(自前カーネル)での動作は確認済みだが、公式miniroot上のuserlandで動くかは別問題(下記参照) |
-| 段階1スクリプトを `/sbin/init` のラッパーとして仕込む設計 | ⚠️ 未検証。公式rootfsの実際の起動スクリプト構成を確認した上で調整が必要 |
+| `dlm_crypto.py decrypt-body` で公式rootfs(v2.60、30MB超)を取り出し、`tar` で展開する | ✅ 実機で確認(`--tail cfb --inflate` が必要。[docs/03](03_firmware_format.md)参照。末尾8バイト未満の処理に実装上のバグがあり、本ドキュメント執筆時点では未解決だった) |
+| 実機の公式rootfsの構成(`/sbin/init` は `busybox` への**シンボリックリンク**、`/etc/init.d/rcS` は実行可能シェルスクリプト) | ✅ 実機で確認。[docs/02](02_boot_chain.md)の推定通りだが、`/sbin/init`がシンボリックリンクだったため、段階1の仕込みは**rcS方式**(下記)に変更した |
+| 段階1スクリプトを `rcS` の先頭に差し込む設計 | ⚠️ 未検証(`/sbin/init`がbusyboxへのシンボリックリンクと確認できたため、initラッパー化は不採用に変更。rcSの実際の中身を見ながら調整が必要) |
 
 このドキュメントは「手動でここまでできるはず」という設計と手順のまとめです。実機での通し確認、スクリプトの自動化はこれから。差異が出た箇所は都度このファイルを更新してください。
 
@@ -80,13 +82,20 @@ sudo umount /mnt/nasne_sys1
 
 ```bash
 python3 scripts/ofw_tool.py split KRST3101_0260_SECURE.dlm ofw_out/   # ofw_out/DLM.bin = 00550066.dlmと同一(md5一致)
-python3 scripts/dlm_crypto.py decrypt-body backup/sys1/00550066.dlm official_rootfs.tar.gz   # 公式rootfsのtar.gzを取り出す
-mkdir official_rootfs && tar -C official_rootfs -xzf official_rootfs.tar.gz    # 中身を確認。rootとして展開(権限・デバイスファイルの保持にsudoが必要)
+python3 scripts/dlm_crypto.py decrypt-body backup/sys1/00550066.dlm official_rootfs_raw.tar --tail cfb --inflate   # 公式rootfsのtar本体を取り出す
+mkdir official_rootfs && sudo tar -C official_rootfs -xf official_rootfs_raw.tar    # 中身を確認。rootとして展開(権限・デバイスファイルの保持にsudoが必要)
 ```
 
-`official_rootfs/` の中身を見て、起動スクリプトの実際の構成(`/etc/init.d/rcS`、`/sbin/init` がbusyboxか等)を確認する。
-[docs/02](02_boot_chain.md) の記述(`/sbin/init(busybox)` → `/etc/init.d/rcS` → `/opt/dtvtuner/etc/startdtvtuner`)が実物と合っているか、ここで必ず確認すること
-(下の段階1の仕込み方は、これを前提にした設計)。
+> `decrypt-body` は30MB超のrootfsだとボディが8バイト境界に満たず、既定の `--tail cfb`(直前のCBCブロックを再暗号化したキーストリームで末尾をXORする)
+> と `--inflate`(gzipトレーラのCRC検証をスキップして生のtarを取り出す)を付けないと `tar` が途中で壊れる。詳細は[docs/03](03_firmware_format.md)。
+
+`official_rootfs/` の中身を見て、起動スクリプトの実際の構成を確認する。実機(v2.60)で確認した結果:
+- `sbin/init` は **`busybox` へのシンボリックリンク**(`/sbin/init -> ../bin/busybox`)。[docs/02](02_boot_chain.md)の推定通りだが、
+  「`/sbin/init` を直接リネームしてラップする」手は使えない(シンボリックリンクなので、`mv` するとリンクが消えるだけでbusybox本体には影響しないが、
+  ラップの意味がなくなる)。
+- `etc/init.d/rcS` は通常の実行可能シェルスクリプト。段階1の呼び出しは、**このファイルの先頭に1行追加する**方式にする(下記)。
+
+必ず `ls -la official_rootfs/sbin/init` と `cat official_rootfs/etc/init.d/rcS` で、自分のファームのバージョンでも同じ構成か確認してから次に進む。
 
 ## 手順1. 自作カーネルとDebianのrootfsを用意する(PC側)
 
@@ -190,30 +199,30 @@ reboot -f
 **検証に失敗した場合は `reboot` しない**(そのまま公式ファームとして起動を続ける。KNLの消去だけ終わって書き込みが不完全な場合は、
 次の電源再投入で4段目ブートがCRC不一致を検出し、BKNL(Bスロット、純正のまま)へ自動フォールバックするはず。[docs/05](05_kernel_and_direct_boot.md)「A/Bの安全網」参照)。
 
-### 2-3. `/sbin/init` のラッパー化
+### 2-3. `rcS` の先頭に段階1呼び出しを差し込む
 
-手順0で確認した実際の起動スクリプト構成に応じて、段階1スクリプトを**必ず最初に1回だけ**呼ばせる。
-構成が[docs/02](02_boot_chain.md)の通り(`/sbin/init(busybox)` → `/etc/init.d/rcS` → ...)であれば、`/etc/init.d/rcS` の先頭に1行差し込むのが素直だが、
-rcSの構文(busybox initのinittabがrcSをどう呼ぶか)を事前に壊さずに編集するのが難しい場合、より安全なのは**元の `/sbin/init` をラップする**方法:
+実機(v2.60)で確認した結果、`/sbin/init` は `busybox` への**シンボリックリンク**だった。この場合、「`/sbin/init` を `mv` して独自スクリプトに置き換える」
+手は使えない(シンボリックリンクの実体は `busybox` 1つなので、`init` という名前のリンクをどかしても `busybox` 自体は無事だが、
+`/sbin/init` という経路そのものが無くなり、`switch_root` の2番目の引数 `sbin/init` が解決できなくなる)。
+
+そこで、busybox initの起動シーケンス自体には触らず、**`/etc/init.d/rcS`(busybox initが`/etc/inittab`経由で呼ぶ、通常の実行可能シェルスクリプト)の
+先頭に段階1呼び出しを1行追加する**方式にする:
 
 ```bash
 cd official_rootfs
-sudo mv sbin/init sbin/init.sony
-sudo install -m 0755 /dev/stdin sbin/init <<'EOF'
-#!/bin/sh
-/sbin/nasne-stage1.sh || true
-exec /sbin/init.sony "$@"
-EOF
+head -1 etc/init.d/rcS   # シバン行(通常は #!/bin/sh)を確認
+sudo sed -i '1a /sbin/nasne-stage1.sh || true' etc/init.d/rcS   # シバン行の直後に1行挿入
 sudo install -m 0755 <path>/nasne-stage1.sh sbin/nasne-stage1.sh
 sudo install -m 0755 <path>/mtdtool          sbin/mtdtool
+head -5 etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 ```
 
-これなら、`switch_root /rfs sbin/init` で呼ばれる最初のプロセスが必ず段階1スクリプトを通る(busybox initがシェルスクリプトを直接execしても、カーネルの `execve` が
-シェバン行 `#!/bin/sh` を解釈するので問題ない)。元の `init.sony` には実行時の引数をそのまま渡す。
+`rcS` は `/sbin/init`(busybox)が `/etc/inittab` の記述に従って最初に実行するスクリプトなので、ここに差し込めば他のファイルを一切リネーム・移動せずに済む。
+`nasne-stage1.sh` 自体は[2-2](#2-2-段階1スクリプト本体)のまま(sys1の完了マーカーで1回だけ実行される設計)で変更不要。
 
-> ⚠️ この方式は、`/sbin/init` が「busyboxの multi-call バイナリへのシンボリックリンク/ハードリンク」ではなく独立した実行ファイルであることを前提にしている。
-> シンボリックリンクの場合はリンク先(`/bin/busybox` 等)を直接差し替えてはいけない(他のコマンドも壊れる)。実体をコピーしてから `init` という名前だけ付け替えること。
-> 手順0で必ず `ls -la official_rootfs/sbin/init` を確認する。
+> ⚠️ `sed` での1行挿入はシンプルだが、`rcS` の実際の中身(複数行コメント、ヒアドキュメントの有無など)によっては位置がずれる可能性がある。
+> 必ず挿入後に `cat etc/init.d/rcS` で全体を目で確認すること。もし自分のファームで `/sbin/init` が独立した実行ファイル(シンボリックリンクでない)なら、
+> `mv sbin/init sbin/init.sony` して新しい `/sbin/init` ラッパーから `exec /sbin/init.sony "$@"` する方式も使える(rcSより前段で確実に1回だけ通る)。
 
 ### 2-4. tar.gzに固めて `.dlm` を作る
 

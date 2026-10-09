@@ -375,20 +375,22 @@ def parse_header_fields(dec_header: bytes, file_size: int | None = None) -> dict
     return info
 
 
-def decrypt_body(path: str, chunk_size: int | None = None, tail_mode: str = "truncate") -> bytes:
+def decrypt_body(path: str, chunk_size: int | None = None, tail_mode: str = "cfb") -> bytes:
     """ボディを復号する(flag==1、body_encryptedの.dlmのみ有効)。
 
     FUN_00401ad0相当: ヘッダとは独立してIV=(0,0)から開始するBlowfish-CBC復号。
 
-    **実機検証の結果、`chunk_size`によるチャンク分割(各チャンクをIV(0,0)から独立に
-    CBC復号する仮説)は誤りと判明した**(128~32768の候補すべてが即座に
-    "invalid distance too far back"等でinflate失敗。チャンク境界でのIVリセットは
-    実機の挙動ではない)。`chunk_size=None`(ファイル全体を単一チェインとして復号)が
-    正しい方向で、実機の30MB超のrootfsでも86MB相当まで正しくinflateが進むことを
-    確認している。残る問題は**末尾が8バイト境界に満たない場合の扱い**で、
-    従来は単純に切り捨てていたが、その切り捨て分にdeflateの終端マーカーや
-    gzipトレーラが含まれていて展開が完結しない事例を確認した。`tail_mode`で
-    末尾の扱いを選べる(`NasneBlowfish.chain_decrypt_tail`参照)。
+    `chunk_size`によるチャンク分割(各チャンクをIV(0,0)から独立にCBC復号する仮説)は
+    実機検証で誤りと判明した(128~32768の候補すべてが即座に"invalid distance too
+    far back"等でinflate失敗)。`chunk_size=None`(ファイル全体を単一チェインとして
+    復号)が正しい。
+
+    末尾が8バイト境界に満たない場合(実機の30MB超のrootfsで確認: 8の倍数+6バイト)、
+    従来は単純に切り捨てていたが、gzipトレーラ(CRC32/ISIZE)の一部を失い展開が
+    完結しない事例を確認した。**`tail_mode="cfb"`(デフォルト。直前のCBCブロックを
+    再暗号化したキーストリームで末尾をXORする)で、実機の公式rootfs(v2.60)を
+    `tar -tvf`/`tar -xf`で正しく展開できることを確認済み**(gzipトレーラのCRC32
+    自体は一致しないままだが、tar本体の内容・ファイル一覧・展開は正常)。
     `chunk_size`は(誤りと分かった後も)診断用に残してあるが、通常はNoneのままでよい。
     """
     data = open(path, "rb").read()
@@ -572,7 +574,7 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 4 and sys.argv[1] == "decrypt-body":
         args = sys.argv[2:]
         chunk_size = None
-        tail_mode = "truncate"
+        tail_mode = "cfb"
         if "--chunk" in args:
             idx = args.index("--chunk")
             chunk_size = int(args[idx + 1])
