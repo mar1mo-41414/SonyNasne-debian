@@ -205,24 +205,43 @@ reboot -f
 手は使えない(シンボリックリンクの実体は `busybox` 1つなので、`init` という名前のリンクをどかしても `busybox` 自体は無事だが、
 `/sbin/init` という経路そのものが無くなり、`switch_root` の2番目の引数 `sbin/init` が解決できなくなる)。
 
-そこで、busybox initの起動シーケンス自体には触らず、**`/etc/init.d/rcS`(busybox initが`/etc/inittab`経由で呼ぶ、通常の実行可能シェルスクリプト)の
-先頭に段階1呼び出しを1行追加する**方式にする:
+そこで、busybox initの起動シーケンス自体には触らず、**`/etc/init.d/rcS`(busybox initが`/etc/inittab`経由で呼ぶ、通常の実行可能シェルスクリプト)に
+段階1呼び出しを1行追加する**方式にする。実機(v2.60)の `rcS` の中身:
+
+```sh
+#!/bin/sh
+trap "" SIGHUP
+mount -t proc none /proc        # ← これより前だと /proc が無く mtdtool が動かない
+mount -t usbfs none /proc/bus/usb
+mount -t sysfs none /sys
+/usr/bin/uevent_daemon
+start_udev                      # ← udevのcoldplugが終わるのを待ってから /dev/sda1 等を使う
+mount -t devpts none /dev/pts
+sysctl -p
+ifconfig lo 127.0.0.1 netmask 255.0.0.0 up
+route add -net 127.0.0.0 netmask 255.0.0.0 dev lo
+# ---- for DTVTuner ----
+/opt/dtvtuner/etc/startdtvtuner
+```
+
+**挿入位置は `start_udev` の直後**にする。`mtdtool` は標準スタートアップを使わず `/proc/self/cmdline` から引数を取る実装([docs/09](09_tools.md))なので、
+`mount -t proc` より前では動かない。また `/dev/sda1`・`/dev/mtd0` のデバイスノードも、`start_udev`(coldplugでの初回デバイススキャン)が終わっていないと
+存在しない可能性がある。ドライバ関連の `startdtvtuner` より前なので、SPI書き換え中にドライバと競合する心配もない。
 
 ```bash
 cd official_rootfs
-head -1 etc/init.d/rcS   # シバン行(通常は #!/bin/sh)を確認
-sudo sed -i '1a /sbin/nasne-stage1.sh || true' etc/init.d/rcS   # シバン行の直後に1行挿入
+cat etc/init.d/rcS   # 自分のファームでも同じ構成か必ず確認する(行の前後関係が違えば挿入位置も変える)
+sudo sed -i '/^start_udev$/a /sbin/nasne-stage1.sh || true' etc/init.d/rcS
 sudo install -m 0755 <path>/nasne-stage1.sh sbin/nasne-stage1.sh
 sudo install -m 0755 <path>/mtdtool          sbin/mtdtool
-head -5 etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
+cat etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 ```
 
-`rcS` は `/sbin/init`(busybox)が `/etc/inittab` の記述に従って最初に実行するスクリプトなので、ここに差し込めば他のファイルを一切リネーム・移動せずに済む。
 `nasne-stage1.sh` 自体は[2-2](#2-2-段階1スクリプト本体)のまま(sys1の完了マーカーで1回だけ実行される設計)で変更不要。
 
-> ⚠️ `sed` での1行挿入はシンプルだが、`rcS` の実際の中身(複数行コメント、ヒアドキュメントの有無など)によっては位置がずれる可能性がある。
-> 必ず挿入後に `cat etc/init.d/rcS` で全体を目で確認すること。もし自分のファームで `/sbin/init` が独立した実行ファイル(シンボリックリンクでない)なら、
-> `mv sbin/init sbin/init.sony` して新しい `/sbin/init` ラッパーから `exec /sbin/init.sony "$@"` する方式も使える(rcSより前段で確実に1回だけ通る)。
+> `mtdtool` は動的リンクバイナリ(`/lib/ld.so.1`要求)で、公式rootfs上で動くかは[2-1](#2-1-nasne上で動くspi書き込みツールを用意する)の時点では未検証だったが、
+> 実機の `tar -tvf` の一覧に `bin/busybox_dynamic`(動的リンク版busybox)があったため、この公式rootfsには動的リンクの実行環境(`/lib/ld.so.1`等)が
+> 既に含まれている可能性が高い。`ls -la official_rootfs/lib/ld.so.1 official_rootfs/dev/sda* official_rootfs/dev/mtd*` で確認すること。
 
 ### 2-4. tar.gzに固めて `.dlm` を作る
 
