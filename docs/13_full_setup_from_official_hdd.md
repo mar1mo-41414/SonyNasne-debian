@@ -246,9 +246,11 @@ file mtdtool   # "ELF 32-bit LSB executable, MIPS ... dynamically linked, interp
 
 sys1(段階1の作業領域としても使う。sys2は毎起動 `rm -rf` されるため永続化できない)に完了マーカーを置く設計にする。
 
-`nasne-stage1.sh`(公式rootfsの `/sbin/` に置く):
+リポジトリのルート(このドキュメントのコマンドをどこで実行しているかの基準ディレクトリ。`official_rootfs/` や `mtdtool` もこの下にある)に、
+`nasne-stage1.sh` というファイルを作る:
 
-```sh
+```bash
+cat > nasne-stage1.sh <<'EOF'
 #!/bin/sh
 # 1回目の起動(公式カーネル)でだけ、/dev/mtd0のKNLを自作カーネルへ書き換える。
 # sys1(/dev/sda1)に完了マーカーを置いて、2回目以降は何もしない(フォールバックで純正initが再度動いた場合の保険)。
@@ -287,6 +289,8 @@ sync
 umount $MNT
 sync
 reboot -f
+EOF
+chmod +x nasne-stage1.sh
 ```
 
 **検証に失敗した場合は `reboot` しない**(そのまま公式ファームとして起動を続ける。KNLの消去だけ終わって書き込みが不完全な場合は、
@@ -325,8 +329,10 @@ route add -net 127.0.0.0 netmask 255.0.0.0 dev lo
 cd official_rootfs
 cat etc/init.d/rcS   # 自分のファームでも同じ構成か必ず確認する(行の前後関係が違えば挿入位置も変える)
 sudo sed -i '/^start_udev$/a /sbin/nasne-stage1.sh || true' etc/init.d/rcS
-sudo install -m 0755 <path>/nasne-stage1.sh sbin/nasne-stage1.sh
-sudo install -m 0755 <path>/mtdtool          sbin/mtdtool
+# ../nasne-stage1.sh と ../mtdtool は、2-2・2-1でリポジトリのルートに作ったファイル
+# (official_rootfsに cd した直後なので、1つ上の ".." から見える)
+sudo install -m 0755 ../nasne-stage1.sh sbin/nasne-stage1.sh
+sudo install -m 0755 ../mtdtool          sbin/mtdtool
 cat etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 ```
 
