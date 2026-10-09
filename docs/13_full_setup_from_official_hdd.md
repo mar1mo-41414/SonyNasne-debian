@@ -16,12 +16,15 @@
 | SPIのKNL差し替え → p3のDebianへ直起動([docs/05](05_kernel_and_direct_boot.md)) | ✅ 実機で確認(CH341AでSPIを書いた場合) |
 | ウォッチドッグ停止([docs/06](06_mcu_watchdog.md))、地デジ受信・配信([docs/11](11_tv_streaming.md)) | ✅ 実機で確認 |
 | 公式rootfsの `.dlm` 注入による任意ファイル展開([docs/03](03_firmware_format.md)) | ✅ 実機で確認(Debian chroot起動の初期実装で使用) |
-| **本ドキュメントの「段階1スクリプトからの `/dev/mtd0` 書き込み」**(公式カーネル・公式rootfs上でのSPI書き換え) | ⚠️ **未検証**。`mtdtool` はDebian上(自前カーネル)での動作は確認済みだが、公式miniroot上のuserlandで動くかは別問題(下記参照) |
-| `dlm_crypto.py decrypt-body` で公式rootfs(v2.60、30MB超)を取り出し、`tar` で展開する | ✅ 実機で確認(`--tail cfb --inflate` が必要。[docs/03](03_firmware_format.md)参照。末尾8バイト未満の処理に実装上のバグがあり、本ドキュメント執筆時点では未解決だった) |
-| 実機の公式rootfsの構成(`/sbin/init` は `busybox` への**シンボリックリンク**、`/etc/init.d/rcS` は実行可能シェルスクリプト) | ✅ 実機で確認。[docs/02](02_boot_chain.md)の推定通りだが、`/sbin/init`がシンボリックリンクだったため、段階1の仕込みは**rcS方式**(下記)に変更した |
-| 段階1スクリプトを `rcS` の先頭に差し込む設計 | ⚠️ 未検証(`/sbin/init`がbusyboxへのシンボリックリンクと確認できたため、initラッパー化は不採用に変更。rcSの実際の中身を見ながら調整が必要) |
+| 段階1スクリプトからの `/dev/mtd0` 書き込み(公式rootfs上での `mtdtool` 実行、SPI書き換え) | ✅ 実機で確認。`mtdtool`(動的リンクバイナリ)は公式rootfs上で実際に動いた。erase→write→verify OK→reboot まで1回成功した |
+| `rcS` の先頭(`start_udev` の直後)に段階1呼び出しを差し込む設計 | ✅ 実機で確認。少なくとも1回は正しく実行された |
+| `dlm_crypto.py decrypt-body` で公式rootfs(v2.60、30MB超)を取り出し、`tar` で展開する | ✅ 実機で確認(`--tail cfb --inflate` が必要。[docs/03](03_firmware_format.md)参照) |
+| 実機の公式rootfsの構成(`/sbin/init` は `busybox` への**シンボリックリンク**、`/etc/init.d/rcS` は実行可能シェルスクリプト) | ✅ 実機で確認。[docs/02](02_boot_chain.md)の推定通り |
+| **段階1成功 → 2回目起動(自作カーネル) → Debianへの`switch_root`の通し** | ⚠️ 1回はswitch_rootまで到達した形跡があるが、その後安定して動いていない。原因は下記の「procmngによるHDDロールバック」の可能性が高い |
+| **procmngが、HDD(sys1)の`00550066.dlm`をバンクの内容へ自動的にロールバックする現象** | ⚠️ **重大な未解明の問題。実機で複数回確認**。[まだ詰めていないところ](#まだ詰めていないところ)・[トラブルシュート](#トラブルシュート)参照。段階1スクリプトの判定方式を、この現象に影響されないよう「HDDマーカー」から「SPIのKNL読み戻し」に変更済み(根本原因への対策ではない) |
 
-このドキュメントは「手動でここまでできるはず」という設計と手順のまとめです。実機での通し確認、スクリプトの自動化はこれから。差異が出た箇所は都度このファイルを更新してください。
+このドキュメントは「手動でここまでできるはず」という設計と手順のまとめです。SPIの書き換え自体は実機で成立することを確認できたが、
+HDD側で起きる自動ロールバックという想定外の壁に今ぶつかっている。差異が出た箇所は都度このファイルを更新してください。
 
 ## 全体の流れ
 
@@ -249,22 +252,27 @@ file mtdtool   # "ELF 32-bit LSB executable, MIPS ... dynamically linked, interp
 
 ### 2-2. 段階1スクリプト本体
 
-sys1(段階1の作業領域としても使う。sys2は毎起動 `rm -rf` されるため永続化できない)に完了マーカーを置く設計にする。
+**完了判定はHDD側のマーカーファイルではなく、SPIのKNLヘッダを読み戻して「もう自作版になっているか」を直接確認する方式にする。**
+実機で、**procmngがHDD(sys1)の`00550066.dlm`を、何らかの異常検出(詳細未解明。p3=sda3がDebianに置き換わっていることを検出した可能性が高い)
+をきっかけに、Aバンク/Bバンクの内容へ自動的にロールバックしてしまう事例を確認した**(現用の`00550066.dlm`がv1.00のバンクコピーと
+バイト同一になっていた)。HDD上に書く `.stage1_done` のようなマーカーは、この自動ロールバックの対象になり得るため、「段階1は1回だけ」
+という判定の根拠には使えない。SPI(KNL領域)自体の内容で判定すれば、HDD側で何が起きても判定を誤らない。
 
 リポジトリのルート(このドキュメントのコマンドをどこで実行しているかの基準ディレクトリ。`official_rootfs/` や `mtdtool` もこの下にある)に、
 `nasne-stage1.sh` というファイルを作る:
 
 **診断のため、各ステップの結果をsys1に残るログファイル(`/disk0/.stage1_debug.log`)に書き出すようにしてある**
 (`set -e` は使わず、各コマンドの終了コードを個別に見て、失敗した時点のログも必ずsys1に残してから終了する。
-途中でハングする/sshが使えない状況でも、HDDをPCに戻して `.stage1_debug.log` を見れば、どこで失敗したかが分かる):
+途中でハングする/sshが使えない状況でも、HDDをPCに戻して `.stage1_debug.log` を見れば、どこで失敗したかが分かる。
+ただしこのログ自体もHDD(sys1)上にあるので、ロールバックが起きれば消えることがある — あくまで診断用の補助情報):
 
 ```bash
 cat > nasne-stage1.sh <<'EOF'
 #!/bin/sh
 # 1回目の起動(公式カーネル)でだけ、/dev/mtd0のKNLを自作カーネルへ書き換える。
-# sys1(/dev/sda1)に完了マーカーを置いて、2回目以降は何もしない(フォールバックで純正initが再度動いた場合の保険)。
+# 「すでに自作版か」の判定は、SPIのKNLヘッダ(64バイト)を読み戻して、書き込み予定のヘッダと
+# バイト比較するだけ(HDD側のマーカーは使わない。理由は上の説明を参照)。
 MNT=/tmp/disk0
-MARKER=$MNT/.stage1_done
 KNL=$MNT/knl_new.bin
 DBGLOG=/tmp/stage1_debug.log
 
@@ -283,11 +291,15 @@ if ! mount -t ext3 -o rw /dev/sda1 "$MNT" >> "$DBGLOG" 2>&1; then
 fi
 log "mount /dev/sda1 OK"
 
-if [ -e "$MARKER" ]; then
-    log "marker exists, skipping"
+log "checking current KNL header against target (SPI readback)"
+dd if=/dev/mtd0ro bs=64 count=1 skip=16384 of=/tmp/cur_knl_hdr.bin >> "$DBGLOG" 2>&1   # 0x100000 / 64 = 16384
+head -c 64 "$KNL" > /tmp/new_knl_hdr.bin
+if cmp -s /tmp/cur_knl_hdr.bin /tmp/new_knl_hdr.bin; then
+    log "KNL header already matches target, skipping (SPI already has the target kernel)"
     umount "$MNT"
     exit 0
 fi
+log "KNL header differs from target, proceeding to write"
 
 log "checking mtdtool exists/runs"
 ls -la /sbin/mtdtool >> "$DBGLOG" 2>&1
@@ -325,8 +337,7 @@ if ! cmp -s /tmp/verify_trim.bin "$KNL"; then
 fi
 log "verify OK"
 
-log "OK, marking done and rebooting"
-touch "$MARKER"
+log "OK, rebooting (next boot's KNL readback check will see the new header and skip)"
 sync
 umount "$MNT"
 sync
@@ -432,6 +443,12 @@ HDDをnasneに挿して電源を入れる。
 このときの所要時間・LEDの挙動は未検証。**最初は電源を入れたまま数分待ち、`ping` が通るか、PCに繋いだ状態でSPIが実際に書き変わったかを確認する**のが安全
 (可能であれば、この段階でもCH341Aでの読み出し確認を併用して様子を見るとよい)。
 
+> ⚠️ **[トラブルシュート](#トラブルシュート)の「HDD(sys1)の`00550066.dlm`が自動的にロールバックされる」現象に注意**。段階1が成功して
+> `reboot` した後も、**何らかの理由でSony純正の起動に戻ってしまった場合**は、電源を切ってHDDをPCに戻し、`00550066.dlm` の
+> ヘッダ(`decrypt-header`)が手順0でバックアップしたものと変わっていないか、毎回必ず確認すること。変わっていたら、段階1スクリプト
+> 自体がHDD上から失われている(次にnasneに挿してもKNLは書き換わらない)ので、`backup/sys1/00550066.dlm` を一旦書き戻し、
+> カスタム`.dlm`の作成(手順2)からやり直す必要がある。
+
 ## 手順5. 2回目の起動(自作カーネル → Debian直起動)
 
 リブート後、4段目ブートが新しいKNLを読み、自作カーネルが起動する。内蔵initramfsの `/nasne_init` が `/dev/sda3`(p3、Debian)を見つけ、
@@ -481,8 +498,9 @@ Mirakurunから使う場合は、別PCでMirakurunを動かし、[docs/11](11_tv
 | 症状 | 考えられる原因 / 対処 |
 |---|---|
 | 1回目の起動後、いつまでもLEDが点滅したまま・SPIが書き変わらない | `.dlm` の展開失敗(ヘッダ不正・CRC不一致・容量不足)、または `rcS` の段階1呼び出しまで届いていない(`sed` の挿入位置がファームのバージョンで変わっている等)。HDDをPCに戻し、`build_dlm.py verify` と `tar tzf` でサイズ確認、`official_rootfs/etc/init.d/rcS` の中身を再確認 |
-| 段階1が動いたログが無い(sys1に `.stage1_done` が無い) | [2-2](#2-2-段階1スクリプト本体)のログ付き版なら、sys1の `.stage1_debug.log` を見れば、どのステップ(mount・mtdtool起動・erase・write・verify)で失敗したかが分かる。`mtdtool` が動かなかった場合(`/lib/ld.so.1` 不在など)は、ログの `mtdtool usage-check exit=...` が非ゼロになる |
-| **ウォッチドッグは止まっている(5分以上再起動なし)のに `.stage1_done` が無く、pingは通るがtelnet/ssh/公式WebUIも不通**(実機で発生) | procmngはある程度起動している(ウォッチドッグ停止まで到達)が、段階1スクリプトが失敗して(`/sbin/nasne-stage1.sh \|\| true` で握りつぶされ)`rcS` は継続、`startdtvtuner` まで進んだと考えられる。[docs/02](02_boot_chain.md)によると `startdtvtuner` は `/dev/sda3`(p3)を録画領域としてマウントする処理を含むが、手順3で**p3はもうDebianのrootfsに置き換えてある**ため、ここで公式ユーザーランドの一部処理(録画領域の初期化チェック等)がおかしくなっている可能性がある。まず `.stage1_debug.log` で段階1の失敗箇所を特定して直すのが先。段階1が `reboot -f` まで到達すれば、`startdtvtuner` のp3処理に行き着く前に次の起動(自作カーネル)に切り替わるので、この問題自体は起きないはず |
+| 段階1がまた実行される(SPIはすでに自作版なのに書き込みが走る) | [2-2](#2-2-段階1スクリプト本体)のKNL読み戻し判定が機能していない。`nasne-stage1.sh` 冒頭の `cmp` 結果を `.stage1_debug.log` で確認(ヘッダ64バイトが一致していないなら、`knl_new.bin` 自体が前回書き込んだものと違う可能性。`build_knl.py` を再実行してファイルが変わっていないか確認) |
+| 段階1のログ(`.stage1_debug.log`)に何も残っていない(sys1に書き込んだ直後の内容と変わらない、または全く無い) | [2-2](#2-2-段階1スクリプト本体)のログ付き版なら、sys1の `.stage1_debug.log` を見れば、どのステップ(mount・KNL読み戻し判定・mtdtool起動・erase・write・verify)で失敗したかが分かる。`mtdtool` が動かなかった場合(`/lib/ld.so.1` 不在など)は、ログの `mtdtool usage-check exit=...` が非ゼロになる。ログ自体が全く残っていない(前回のままに見える)場合は、下記の「HDD(sys1)が自動的にロールバックされる」を参照 |
+| **HDD(sys1)の`00550066.dlm`が、いつの間にか別バージョン(バンクの内容と同一)に戻っている**(実機で確認した重大な既知の問題) | procmngが何らかの異常(p3=sda3がDebianに置き換わっていることの検出が濃厚)をきっかけに、現用の`00550066.dlm`をAバンク/Bバンク(`11002200/`・`33004400/`)のコピーへ自動的にロールバックする挙動を実機で確認した。発生すると、段階1スクリプト自体(カスタム`.dlm`のボディに仕込んだもの)がHDD上から失われ、以降は公式の`rcS`がそのまま実行される。確認方法: `python3 scripts/dlm_crypto.py decrypt-header /mnt/nasne_sys1/00550066.dlm` の `major_version` や `date` が、手順0でバックアップした`backup/sys1/00550066.dlm`と違う値になっていないか、`ls -la /mnt/nasne_sys1/11002200/00550066.dlm` 等とサイズが一致していないか確認する。**トリガーとなる条件・回避策は未解明**(調査中。[2-2](#2-2-段階1スクリプト本体)のKNL読み戻し判定は、この現象が起きても段階1自体の冪等性だけは保てるようにする対策だが、根本原因への対策ではない)。発生したら `backup/sys1/00550066.dlm` を書き戻してやり直す |
 | 書き込み途中で電源が落ちた・`reboot` 後も公式ファームのまま | 4段目ブートがKNLのCRC不一致を検出し、BKNL(Bスロット)へフォールバックした可能性。これは安全に働いた証拠。原因(段階1スクリプトの `allowed()` 範囲・サイズ計算)を見直し、やり直す |
 | CRCは正しいが起動途中で固まる(フォールバックが効かない) | [docs/05](05_kernel_and_direct_boot.md)の通り、CRC一致・内容不正の場合はA/Bのフォールバックが働かない。HDDをPCに戻し、`00550066.dlm` を手順0のバックアップに戻して公式ファームの `.dlm` のまま起動させ、SPIを元のダンプ(`backup`時に未取得なら、別途CH341Aで読み出した正常なKNL)に書き戻す必要がある |
 | 2回目の起動でDebianに届かない(起動カウンタが2でSony経路に戻る) | [docs/05](05_kernel_and_direct_boot.md)の通り。`rc.local` が走っていない、Debian側のp3の構成を確認 |
@@ -491,8 +509,24 @@ Mirakurunから使う場合は、別PCでMirakurunを動かし、[docs/11](11_tv
 
 ## まだ詰めていないところ
 
-- `mtdtool` が公式rootfs上で実際に動くか(動的リンク実行環境(`ld.so.1`等)の存在は確認済みだが、実行自体はまだ未確認)。動かない場合は nostdlib 静的バイナリで書き直す。
-- `rcS` への段階1呼び出しの仕込みが、公式の `switch_root` → busybox init → `rcS` という流れの中で実際に1回だけ正しく実行されるか(実機での通し確認はまだ)。
-- 段階1スクリプトの各ステップのログを、2回目の起動後(Debian側)からも読める場所(sys1など)に残す仕組み。
-- 1回目の起動から段階1完了・rebootまでの所要時間、途中のLED挙動。
-- `knl_new.bin` の展開後カーネル先頭8バイトが `0000000000000000` だった点(`gpl_src/build/out/vmlinux_new.bin` 自体の構造に依存する可能性。実際にブートできるかは実機確認が必要)。
+実機で `mtdtool`(動的リンクでも実際に動いた)・段階1スクリプト(erase→write→verify OK→reboot)・`rcS` への仕込みは、
+少なくとも1回は成功することを確認している。残っている大きな課題は次の2つ:
+
+- **procmngによるHDD(sys1)の自動ロールバック(重大、未解明)**: [トラブルシュート](#トラブルシュート)参照。段階1が成功しても、
+  その後の起動(procmngが動くタイミング)で、現用の`00550066.dlm`がバンクの内容(確認した事例ではv1.00)に戻ってしまう事例を複数回確認した。
+  トリガー条件(p3=sda3がDebianであること自体か、ボディのサイズか、展開後の内容の何らかの不整合か)は未解明。これが解決しないと、
+  「2回目の起動」に正しく進めるかどうかが安定しない。
+  - 対策の方向性(実績のある別実装からの助言、未検証): ボディを「公式rootfs全体」ではなく、**段階1に必要な最小限のファイル
+    (busybox相当、段階1スクリプト、`mtdtool`、`xcode4drv.ko`だけ)に絞る**。「ボディが大きすぎてsys2の想定を超えると起動不能になった」
+    という実績があるとのことなので、サイズそのものが今回のロールバックの引き金になっている可能性がある。試す場合は
+    `custom_rootfs.tar.gz`(手順2-4)の実際のサイズを確認し、公式rootfsそのままのサイズと比較すること。
+  - [2-2](#2-2-段階1スクリプト本体)のKNL読み戻し判定は、この問題が起きても段階1の冪等性(やり直しが安全に効く)だけは保てるように
+    した対策。根本原因への対策ではない。
+- `sda3` 検出タイムアウトを40秒→180秒に拡大した(`scripts/kernel_build/initramfs/nasne_init`)効果は、上のロールバック問題に
+  行き着く前に確認できていない。ロールバック問題が解決したら、改めて2回目の起動(自作カーネル)が安定するか確認すること。
+
+解決済み・検証済みの事項(参考):
+- `mtdtool` は実機の公式rootfs上で動作した(動的リンク環境ありで問題なし)。
+- `knl_new.bin` の展開後カーネル先頭8バイトが `0000000000000000` だった点は、KNLの展開先物理アドレス(`0x10000000`)とジャンプ先
+  (`0xB0040000`、[docs/02](02_boot_chain.md))の間に`0x40000`のオフセットがあることに由来する可能性が高く、特に問題ないと考えている
+  (実際にブート自体は、段階1のverifyを経て少なくとも一度はswitch_rootまで到達した実績がある)。
