@@ -341,7 +341,10 @@ cat etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 
 ### 2-4. tar.gzに固めて `.dlm` を作る
 
+**2-3で `cd official_rootfs` したままなら、まずリポジトリのルート(`official_rootfs/` が見える場所)に戻る**:
+
 ```bash
+cd ..   # 2-3で official_rootfs に cd したままの場合。すでにルートにいるなら不要
 sudo tar -C official_rootfs --numeric-owner -p -czf custom_rootfs.tar.gz .
 python3 scripts/build_dlm.py selftest backup/sys1/00550066.dlm            # まずテンプレートの自己検証(OKになるはず)
 python3 scripts/build_dlm.py build --template backup/sys1/00550066.dlm \
