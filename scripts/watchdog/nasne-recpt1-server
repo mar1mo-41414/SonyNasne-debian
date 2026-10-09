@@ -9,7 +9,8 @@
 ### END INIT INFO
 # 使い方(別のPC・録画ソフトから):
 #   http://<nasne>:8301/tuner/<UHF ch>[?sid=0xNNNN&sec=N]   復号済みのTS(元画質)を配信
-#   http://<nasne>:8301/scan                                全UHFチャンネルのサービス一覧(約80秒)
+#   http://<nasne>:8301/scan                                全UHFチャンネルのサービス一覧(約80秒。サービス名も出し、/var/lib/nasne-recpt1/services.tsv に保存)
+#   http://<nasne>:8301/playlist.m3u8                       /scan の結果から作ったM3U(VLC等でそのまま開ける。先に /scan を1回実行しておく)
 #   http://<nasne>:8301/status                              tuner idle|busy
 # 前提: /usr/local/sbin に nasne-recpt1、xcode4drv.ko、rc.xcode4(公式ドライバ)。
 BIN=/usr/local/sbin/nasne-recpt1

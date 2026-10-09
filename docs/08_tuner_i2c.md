@@ -83,7 +83,7 @@ dtvtunerの下位ボードI2C層(`FUN_005e337c`=書き、`FUN_005e3688`=読み�
   C/N[dB] = `((((f×2.4e-5 − 0.0016)×f + 0.0398)×f + 0.5491)×f) + 3.0965`、`f = 10×log10(5505024 / 値)`(純正と同じ換算)。
 
 共同受信設備(ケーブルテレビの同軸)につないだ環境で、UHF 13〜62 を順に選局したところ、いくつかのチャンネルでロックし、C/N 32〜35dB・TMCC取得済みだった。
-PCから試すツール: [scripts/nasne_fe.py](../scripts/nasne_fe.py)(`--host <ip> t-init / t-tune <ch> / t-scan / t-status / t-standby`。nasne側に `i2cx`(バッチモード `-b` 対応版)が必要)。
+PCから試すツール: [scripts/nasne_fe.py](../scripts/nasne_fe.py)(`--host <ip> t-init / t-tune <ch> / t-scan / t-status / t-standby`、衛星側は `s-init / s-tune / s-scan / s-sweep / s-status`。nasne側に `i2cx`(バッチモード `-b` 対応版)が必要)。
 
 ## 衛星(ISDB-S)側の手順(純正コードの解析結果。実機のBS/CSアンテナ無しの環境で試験したため**動作未確認**)
 
@@ -95,6 +95,18 @@ PCから試すツール: [scripts/nasne_fe.py](../scripts/nasne_fe.py)(`--host <
   復調IC `0x0A`=0xFF、`0x11`=0x40、`0x03`=1 → reg `0xC3` の bit4 が落ちるのを待つ(TMCC有効)。
 - **状態**: reg `0xC3` bit4=0 でTMCC有効、reg `0xBA`&0x7F = AGC、reg `0xBC/0xBD` = C/N の元データ。
 - 地デジのアンテナ入力は生きているが、BS/CS入力の信号が無い環境(AGC最大、TMCC無効)でしか試していない。BS給電(アンテナ電源)の制御箇所は未特定。
+
+### IF帯の掃引で、BS/CSの信号が来ているかを調べる
+
+TMCCがロックするかどうかは選局手順の正しさにも左右されるので、まず「そもそも信号が来ているか」を、復調ICのAGC(reg `0xBA` & 0x7F。127=最大ゲイン=信号なし、小さいほど強い)で見る。
+`nasne_fe.py --host <ip> s-sweep [from] [to] [step]` が、IF周波数を掃引して一覧する(既定 950〜2150MHz、10MHz刻み。BS/CS110のIFは1032〜2150MHz)。
+
+共同受信設備の同軸(BS/CSは来ていないと思われる環境)で掃引した結果:
+- BS/CS-IF帯の大部分(1010〜1890MHz)は127(信号なし)。
+- 920〜1000MHz に強い広帯域の山(最小30程度)、1900〜1940MHz に平らな弱い山(97前後)が見えた。前者は有線放送の下りの上端、後者は携帯電話等の漏れ込みなど、BSではない信号と思われる(未確認)。
+- BS-1〜23の全チャンネルでTMCCは無効。
+
+つまり**この入力にはBS/CS衛星の信号が来ていない**と判断できる。受信機として動くかどうかの確認には、BS/CSが実際に来ている入力での試験が必要。
 
 ## 分かったこと・分かっていないこと
 

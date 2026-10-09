@@ -18,6 +18,8 @@
  *
  * ビルド: mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o nasne-recpt1 nasne_recpt1.c
  */
+#include "jis0208_utf16.inc"      /* gen_jis_table.py で生成。ARIB文字列(サービス名)のUTF-8化に使う */
+
 #define SYS_exit   4001
 #define SYS_write  4004
 #define SYS_open   4005
@@ -33,6 +35,8 @@
 #define SYS_gettimeofday 4078
 #define SYS_flock  4143
 #define SYS_rt_sigaction 4194
+#define SYS_rename 4038
+#define SYS_mkdir  4039
 
 static long sys6(long n, long a, long b, long c, long d, long e, long f) {
     register long v0 __asm__("$2") = n;
@@ -88,9 +92,17 @@ static unsigned long psi_len;
 static void dec(unsigned long v) { char b[12]; int i = 11; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); ws(b + i); }
 static void err(const char *m) { sys3(SYS_write, 2, (long)m, slen(m)); }
 static void errhex(unsigned long v) { char b[9]; int i; for (i = 0; i < 8; i++) { int n = (v >> ((7 - i) * 4)) & 0xf; b[i] = n < 10 ? '0' + n : 'a' + n - 10; } b[8] = 0; err(b); }
+static int logv;     /* --listen のときは常に1: 行程の節目をstderr(ログ)へ出す(固まった箇所の特定用) */
+static void lgx(const char *m, unsigned long v);
 static void msleep(unsigned long ms) { long ts[2]; ts[0] = ms / 1000; ts[1] = (ms % 1000) * 1000000; sys3(SYS_nanosleep, (long)ts, 0, 0); }
+static unsigned long now_ms(void);
 static unsigned long now_ms(void) { long tv[2]; sys3(SYS_gettimeofday, (long)tv, 0, 0); return tv[0] * 1000UL + tv[1] / 1000; }
 
+static void lgx(const char *m, unsigned long v) {
+    if (!logv) return;
+    { char b[12]; int i = 11; unsigned long t = now_ms() % 100000000UL; b[i] = 0; do { b[--i] = '0' + t % 10; t /= 10; } while (t); err("["); err(b + i); err("] "); }
+    err(m); err(" "); errhex(v); err("\n");
+}
 static void on_sig(int s) { (void)s; stop_flag = 1; }
 static void set_sig(int sig) {
     /* MIPS o32 の kernel sigaction: { unsigned long sa_flags; void *sa_handler; unsigned long sa_mask[4]; } */
@@ -202,7 +214,7 @@ static int recv_pt(unsigned long tmo, unsigned char **p, unsigned long *sz) {
 
 /* PATとPMTを集める。戻り値: 0=成功 */
 static unsigned char sec_buf[8][1100]; static unsigned long sec_have[8]; static unsigned long sec_pid[8], sec_nsec;
-struct svc { unsigned long pn, pmt, pcr, ecm, vpid, vst, apid, ast; int ok; };
+struct svc { unsigned long pn, pmt, pcr, ecm, vpid, vst, apid, ast; int ok, seg1; };      /* seg1: ワンセグ(PMTのPIDが0x1FC8)。SECUREDTSを開くとファームが固まるため扱わない */
 static struct svc svcs[8]; static int nsvc;
 
 static void feed(const unsigned char *q) {
@@ -243,7 +255,7 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
             for (j = 8; j + 4 <= ln - 4 && sec_nsec < 8; j += 4) {
                 unsigned long pn = (s[j] << 8) | s[j + 1], pid = ((s[j + 2] & 0x1f) << 8) | s[j + 3];
                 if (!pn) continue;
-                sec_pid[sec_nsec] = pid; sec_have[sec_nsec] = 0; svcs[nsvc].pn = pn; svcs[nsvc].pmt = pid; svcs[nsvc].ok = 0; nsvc++; sec_nsec++;
+                sec_pid[sec_nsec] = pid; sec_have[sec_nsec] = 0; svcs[nsvc].pn = pn; svcs[nsvc].pmt = pid; svcs[nsvc].ok = 0; svcs[nsvc].seg1 = (pid == 0x1fc8); nsvc++; sec_nsec++;
             }
             pat_done = 1;
         }
@@ -264,13 +276,13 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
                 svcs[i].ok = 1;
             }
             if (all) {
-                for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].vpid && svcs[i].apid && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
+                for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].vpid && svcs[i].apid && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
                 return -1;
             }
         }
     }
     /* 時間切れ: 取れた範囲で選ぶ */
-    for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].ok && svcs[i].vpid && svcs[i].apid && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
+    for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].ok && svcs[i].vpid && svcs[i].apid && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
     return -1;
 }
 
@@ -312,9 +324,12 @@ static int open_streams(struct svc *s) {
     return 0;
 }
 static void close_streams(void) {
+    lgx("close_streams: sec", h_sec0);
     clr(tb, 0xb4 / 4 + 2);
     if (h_sec0 || h_sec1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_sec0; tb[0xa8 / 4] = h_sec1; ioc(tb, 0xb4, 0x11, 5000); h_sec0 = h_sec1 = 0; }
+    lgx("close_streams: pt", h_pt0);
     if (h_pt0 || h_pt1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_pt0; tb[0xa8 / 4] = h_pt1; ioc(tb, 0xb4, 0x11, 5000); h_pt0 = h_pt1 = 0; }
+    lgx("close_streams: generic", h_g0);
     if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 
@@ -383,19 +398,25 @@ static void send_headers(int sock) {
 static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
+    lgx("session start hz", hz);
     rc = acquire_tuner();
     if (rc == 3) { err("チューナー使用中\n"); if (http) http_status(ofd, "HTTP/1.0 503 Service Unavailable", "tuner busy\n"); return 3; }
     if (rc) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "driver/firmware error\n"); release_tuner(); return 1; }
+    lgx("tuner acquired", 0);
     if (!fe_tune(hz)) { err("ロックしなかった(信号なし)\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "no signal\n"); release_tuner(); return 1; }
     clr(ob_pt, 0x484 / 4 + 2);
     ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = 0; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
     if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) { err("PSIストリームを開けない\n"); if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "psi stream\n"); release_tuner(); return 1; }
     h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4];
+    lgx("psi stream opened", h_pt0);
     sel = discover(want_sid, 8000);
+    lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
     s = &svcs[sel];
     if (verbose) { err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid); err(" audio 0x"); errhex(s->apid); err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n"); }
+    lgx("open_streams begin", 0);
     if (open_streams(s) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
+    lgx("streaming begin", 0);
     if (http) send_headers(ofd);
     t_start = now_ms();
     while (!stop_flag) {
@@ -423,8 +444,11 @@ static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_m
         if (olen) flush_out();
     }
     if (olen) flush_out();
+    lgx("loop end stop_flag", (unsigned long)stop_flag);
     close_streams();
+    lgx("closed", 0);
     release_tuner();
+    lgx("session end", 0);
     return 0;
 }
 
@@ -432,12 +456,139 @@ static void hexw(unsigned long v) { char b[9]; int i, started = 0, o = 0; for (i
 static void outs(const char *x) { sys3(4004, out_fd, (long)x, slen(x)); }
 static void outdec(unsigned long v) { char b[12]; int i = 11; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); outs(b + i); }
 
+
+/* ---- SDT(サービス名)と ARIB 8単位符号 → UTF-8 ---- */
+#define GS_NONE 0
+#define GS_KANJI 1
+#define GS_ALNUM 2
+#define GS_HIRA 3
+#define GS_KATA 4
+#define GS_X0201K 5
+#define GS_UNK1 6
+#define GS_UNK2 7
+static int put_u8(unsigned char *o, int n, int max, unsigned cp) {
+    if (cp < 0x80) { if (n + 1 < max) o[n++] = (unsigned char)cp; }
+    else if (cp < 0x800) { if (n + 2 < max) { o[n++] = 0xc0 | (cp >> 6); o[n++] = 0x80 | (cp & 0x3f); } }
+    else { if (n + 3 < max) { o[n++] = 0xe0 | (cp >> 12); o[n++] = 0x80 | ((cp >> 6) & 0x3f); o[n++] = 0x80 | (cp & 0x3f); } }
+    return n;
+}
+static int gset_of(int two, unsigned f) {
+    if (two) return f == 0x42 || f == 0x39 ? GS_KANJI : GS_UNK2;
+    switch (f) {
+        case 0x4a: case 0x36: return GS_ALNUM;
+        case 0x30: case 0x37: return GS_HIRA;
+        case 0x31: case 0x38: return GS_KATA;
+        case 0x49: return GS_X0201K;
+        default: return GS_UNK1;
+    }
+}
+/* hira/kata の 0x21〜0x7E → Unicode */
+static unsigned kana_cp(int set, unsigned b) {
+    unsigned base = set == GS_HIRA ? 0x3041 : 0x30a1;
+    if (b >= 0x21 && b <= (set == GS_HIRA ? 0x73u : 0x76u)) return base + (b - 0x21);
+    switch (b) {
+        case 0x77: return set == GS_HIRA ? 0x309d : 0x30fd;
+        case 0x78: return set == GS_HIRA ? 0x309e : 0x30fe;
+        case 0x79: return 0x30fc; case 0x7a: return 0x3002; case 0x7b: return 0x300c; case 0x7c: return 0x300d;
+        case 0x7d: return 0x3001; case 0x7e: return 0x30fb;
+    }
+    return '?';
+}
+/* ARIB STD-B24 の8単位符号(初期状態: G0=漢字 G1=英数 G2=ひらがな G3=カタカナ(放送の運用に合わせた。実際に1b7c+カタカナで来る)、GL=G0 GR=G2)を UTF-8 にする。戻り値は出力バイト数 */
+static int arib_to_utf8(const unsigned char *s, int len, unsigned char *o, int max) {
+    int g[4], gl = 0, gr = 2, ss = -1, i = 0, n = 0;
+    g[0] = GS_KANJI; g[1] = GS_ALNUM; g[2] = GS_HIRA; g[3] = GS_KATA;
+    while (i < len) {
+        unsigned b = s[i++]; int set, hi = b >= 0xa1 && b <= 0xfe, gl_ok = b >= 0x21 && b <= 0x7e;
+        if (b == 0x0f) { gl = 0; continue; } if (b == 0x0e) { gl = 1; continue; }
+        if (b == 0x19) { ss = 2; continue; } if (b == 0x1d) { ss = 3; continue; }
+        if (b == 0x1b && i < len) {
+            unsigned c = s[i++];
+            if (c == 0x6e) gl = 2; else if (c == 0x6f) gl = 3; else if (c == 0x7e) gr = 1; else if (c == 0x7d) gr = 2; else if (c == 0x7c) gr = 3;
+            else if (c >= 0x28 && c <= 0x2b && i < len) { unsigned f = s[i++]; if (f == 0x20 && i < len) i++; else g[c - 0x28] = gset_of(0, f); }
+            else if (c == 0x24 && i < len) {
+                unsigned d = s[i++];
+                if (d >= 0x29 && d <= 0x2b && i < len) { unsigned f = s[i++]; if (f == 0x20 && i < len) i++; else g[d - 0x28] = gset_of(1, f); }
+                else g[0] = gset_of(1, d);
+            }
+            continue;
+        }
+        if (b == 0x20 || b == 0xa0) { n = put_u8(o, n, max, ' '); continue; }
+        if (!gl_ok && !hi) continue;
+        set = ss >= 0 ? g[ss] : (hi ? g[gr] : g[gl]); ss = -1;
+        if (hi) b -= 0x80;
+        if (set == GS_KANJI || set == GS_UNK2) {
+            unsigned c2, cp;
+            if (i >= len) break;
+            c2 = s[i++] & 0x7f;
+            cp = (set == GS_KANJI && b >= 0x21 && b <= 0x74 && c2 >= 0x21 && c2 <= 0x7e) ? jis0208[(b - 0x21) * 94 + (c2 - 0x21)] : 0;
+            n = put_u8(o, n, max, cp ? cp : '?');
+        } else if (set == GS_ALNUM) n = put_u8(o, n, max, b);
+        else if (set == GS_HIRA || set == GS_KATA) n = put_u8(o, n, max, kana_cp(set, b));
+        else if (set == GS_X0201K) n = put_u8(o, n, max, b >= 0x21 && b <= 0x5f ? 0xff61 + (b - 0x21) : '?');
+        else n = put_u8(o, n, max, '?');
+    }
+    if (n < max) o[n] = 0;
+    return n;
+}
+
+struct sdt_ent { unsigned long sid; unsigned char name[100]; };
+static struct sdt_ent sdt_tab[16]; static int nsdt;
+static void sdt_parse(const unsigned char *s) {
+    unsigned long ln = (((s[1] & 0xf) << 8) | s[2]) + 3, e = 11;
+    while (e + 5 <= ln - 4 && nsdt < 16) {
+        unsigned long sid = (s[e] << 8) | s[e + 1], dl = ((s[e + 3] & 0xf) << 8) | s[e + 4], d = e + 5, de = e + 5 + dl;
+        int k;
+        for (k = 0; k < nsdt; k++) if (sdt_tab[k].sid == sid) break;
+        if (k == nsdt && de <= ln - 4) {
+            for (; d + 2 <= de; d += 2 + s[d + 1]) {
+                if (s[d] == 0x48 && d + 4 <= de) {          /* サービス記述子: type, provider長+名, service名長+名 */
+                    unsigned long pl = s[d + 3], nl;
+                    if (d + 4 + pl >= de) break;
+                    nl = s[d + 4 + pl];
+                    if (d + 5 + pl + nl > de) nl = de - (d + 5 + pl);
+                    sdt_tab[k].sid = sid; arib_to_utf8(s + d + 5 + pl, (int)nl, sdt_tab[k].name, sizeof(sdt_tab[k].name));
+                    nsdt++;
+                    break;
+                }
+            }
+        }
+        e = de;
+    }
+}
+/* PSIストリームから PID 0x11 の SDT(自TS, table_id 0x42)を集める */
+static void collect_sdt(unsigned long tmo_ms) {
+    unsigned long t0 = now_ms(); unsigned seen = 0;
+    nsdt = 0; sec_nsec = 1; sec_pid[0] = 0x11; sec_have[0] = 0;
+    while (now_ms() - t0 < tmo_ms && !stop_flag) {
+        unsigned char *p; unsigned long sz, k;
+        if (!recv_pt(500, &p, &sz)) continue;
+        for (k = 0; k + 188 <= sz; k += 188) if (p[k] == 0x47) {
+            feed(p + k);
+            if (sec_complete(0)) {
+                unsigned char *s = sec_buf[0];
+                if (s[0] == 0x42) { unsigned sn = s[6], ls = s[7]; if (!(seen & (1u << (sn & 7)))) { seen |= 1u << (sn & 7); sdt_parse(s); } if (seen == (1u << (ls + 1)) - 1) return; }
+                sec_have[0] = 0;
+            }
+        }
+    }
+}
+static const char *sdt_name(unsigned long sid) { int k; for (k = 0; k < nsdt; k++) if (sdt_tab[k].sid == sid) return (const char *)sdt_tab[k].name; return 0; }
+
+/* サービス一覧のキャッシュ: /var/lib/nasne-recpt1/services.tsv(「ch<TAB>sid(10進)<TAB>名前」)。/playlist.m3u8 が使う */
+#define CACHE_DIR "/var/lib/nasne-recpt1"
+#define CACHE_TMP CACHE_DIR "/services.tsv.tmp"
+#define CACHE_FILE CACHE_DIR "/services.tsv"
+static long cache_fd = -1;
+
 /* チャンネルスキャン: UHF 13〜62 を順に選局し、ロックしたものについてサービス一覧を出力 */
 static int scan(int ofd) {
     unsigned long ch; int rc;
     out_fd = ofd; stop_flag = 0;
     rc = acquire_tuner();
     if (rc) { err("チューナーを確保できない\n"); return rc; }
+    sys3(SYS_mkdir, (long)"/var/lib", 0755, 0); sys3(SYS_mkdir, (long)CACHE_DIR, 0755, 0);
+    cache_fd = sys3(SYS_open, (long)CACHE_TMP, 0x100 | 0x200 | 0x1 /* O_CREAT|O_TRUNC|O_WRONLY(MIPS) */, 0644);
     for (ch = 13; ch <= 62 && !stop_flag; ch++) {
         unsigned long hz = uhf_hz(ch), t0; int i, n;
         unsigned char r = 0xff; static const unsigned char on[] = { 0x01, 0x01 };
@@ -449,14 +600,76 @@ static int scan(int ofd) {
         if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) continue;
         h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4]; prev_pt = 0xff;
         discover(0, 5000);
+        collect_sdt(3000);
         close_streams();
         outs("ch="); outdec(ch); outs(" freq="); outdec(hz / 1000); outs("kHz");
         (void)t0; (void)r; (void)n;
-        for (i = 0; i < nsvc; i++) if (svcs[i].ok) { outs(" sid=0x"); hexw(svcs[i].pn); outs(svcs[i].vpid ? "(tv)" : "(data)"); }
+        for (i = 0; i < nsvc; i++) if (svcs[i].ok) {
+            const char *nm = sdt_name(svcs[i].pn); int tv = svcs[i].vpid != 0 && !svcs[i].seg1;
+            outs(" sid=0x"); hexw(svcs[i].pn); outs(tv ? "(tv)" : svcs[i].seg1 ? "(1seg)" : "(data)");
+            if (nm && *nm) { outs(" name=\""); { const char *q; for (q = nm; *q; q++) { char c[2]; c[0] = *q == '"' ? '\'' : *q; c[1] = 0; outs(c); } } outs("\""); }
+            if (tv && cache_fd >= 0) {
+                int w; char tmp[12]; unsigned long v = ch; int ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                v = svcs[i].pn; ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                if (nm && *nm) sys3(SYS_write, cache_fd, (long)nm, slen(nm));
+                sys3(SYS_write, cache_fd, (long)"\n", 1); (void)w;
+            }
+        }
         outs("\n");
     }
     release_tuner();
+    if (cache_fd >= 0) {
+        sys3(SYS_close, cache_fd, 0, 0); cache_fd = -1;
+        if (!stop_flag) sys3(SYS_rename, (long)CACHE_TMP, (long)CACHE_FILE, 0);      /* 最後まで走ったときだけ置き換える */
+    }
     return 0;
+}
+
+/* リクエストの Host: ヘッダ(無ければ空)を取り出す */
+static int get_host(const char *req, char *out, int max) {
+    const char *q; int n = 0;
+    for (q = req; *q; q++) {
+        if ((q == req || q[-1] == '\n') && (q[0] | 32) == 'h' && (q[1] | 32) == 'o' && (q[2] | 32) == 's' && (q[3] | 32) == 't' && q[4] == ':') {
+            q += 5; while (*q == ' ') q++;
+            while (*q && *q != '\r' && *q != '\n' && n < max - 1) out[n++] = *q++;
+            break;
+        }
+    }
+    out[n] = 0; return n;
+}
+static void send_playlist(int sock, const char *req) {
+    static char buf[16384]; char host[128]; long f, r, total = 0; int hl = get_host(req, host, sizeof(host)), i, start;
+    static char out[24576]; int on = 0;
+    f = sys3(SYS_open, (long)CACHE_FILE, 0, 0);
+    if (f < 0) { http_status(sock, "HTTP/1.0 404 Not Found", "サービス一覧のキャッシュがありません。先に /scan を実行してください(約80秒)\n"); return; }
+    while ((r = sys3(SYS_read, f, (long)(buf + total), sizeof(buf) - 1 - total)) > 0) total += r;
+    sys3(SYS_close, f, 0, 0); buf[total] = 0;
+    if (!hl) { host[0] = 0; }
+#define OPUT(str) do { const char *z_ = (str); while (*z_ && on < (int)sizeof(out) - 1) out[on++] = *z_++; } while (0)
+    OPUT("#EXTM3U\n");
+    for (i = 0, start = 0; i <= total; i++) {
+        if (i == total || buf[i] == '\n') {
+            if (i > start) {
+                char *ln = buf + start; char *t1, *t2; char chs[8], sidd[12], sidh[8]; unsigned long sid = 0; int k;
+                buf[i] = 0;
+                t1 = ln; while (*t1 && *t1 != '\t') t1++;
+                if (*t1) { *t1++ = 0; t2 = t1; while (*t2 && *t2 != '\t') t2++; if (*t2) *t2++ = 0; else t2 = t1 + slen(t1); }
+                else t2 = t1;
+                for (k = 0; k < 7 && ln[k]; k++) chs[k] = ln[k]; chs[k] = 0;
+                for (k = 0; k < 11 && t1[k]; k++) sidd[k] = t1[k]; sidd[k] = 0;
+                sid = parse_dec(sidd);
+                for (k = 0; k < 4; k++) { int nb = (sid >> ((3 - k) * 4)) & 0xf; sidh[k] = nb < 10 ? '0' + nb : 'a' + nb - 10; } sidh[4] = 0;
+                OPUT("#EXTINF:-1 group-title=\"UHF"); OPUT(chs); OPUT("\","); if (*t2) OPUT(t2); else { OPUT("UHF"); OPUT(chs); OPUT(" 0x"); OPUT(sidh); }
+                OPUT("\nhttp://"); OPUT(host); OPUT("/tuner/"); OPUT(chs); OPUT("?sid=0x"); OPUT(sidh); OPUT("\n");
+            }
+            start = i + 1;
+        }
+    }
+#undef OPUT
+    { const char *h = "HTTP/1.0 200 OK\r\nContent-Type: audio/x-mpegurl; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"; sys3(4004, sock, (long)h, slen(h)); }
+    sys3(4004, sock, (long)out, on);
 }
 
 static int listen_port(unsigned long port) {
@@ -489,6 +702,10 @@ static int listen_port(unsigned long port) {
                 long l2 = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);
                 int busy = sys3(SYS_flock, l2, 2 | 4, 0) < 0;
                 http_status(c, "HTTP/1.0 200 OK", busy ? "busy\n" : "idle\n");
+                sys3(SYS_exit, 0, 0, 0);
+            }
+            if (starts(p, "playlist")) {                                       /* /playlist.m3u8: /scan のキャッシュからVLC等向けのM3Uを作る */
+                send_playlist(c, req);
                 sys3(SYS_exit, 0, 0, 0);
             }
             if (starts(p, "scan")) {                                           /* /scan: 全UHFチャンネルのサービス一覧 */
@@ -535,7 +752,7 @@ int main_c(long *sp) {
         else if (a[0] == '-' && a[1] == '-') { /* --b25 --strip 等の recpt1 オプションは無視 */ }
         else if (npos < 3) pos[npos++] = a;
     }
-    if (port) return listen_port(port);        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
+    if (port) { logv = 1; return listen_port(port); }        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
     set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
     if (do_scan) return scan(1);
     if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [-v] <UHF ch 13-62 | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }

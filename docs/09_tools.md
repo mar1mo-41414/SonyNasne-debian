@@ -105,12 +105,14 @@ docker run --rm -v "$PWD":/w -w /w nasne-kcc:gcc432 sh -c \
   'mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o i2cx scripts/tools/i2cx.c'
 ```
 
-`mtdtool.c` と `physrd.c` だけは glibc の `syscall()` を使う動的リンクの小物なので、ホストのクロスコンパイラ(Debian/Ubuntu の `gcc-mipsel-linux-gnu`)で、標準スタートアップを使わずにビルドする(`/lib/ld.so.1` を要求する通常のMIPSバイナリになる):
+`physrd.c` だけは glibc の `syscall()` を使う動的リンクの小物なので、ホストのクロスコンパイラ(Debian/Ubuntu の `gcc-mipsel-linux-gnu`)で、標準スタートアップを使わずにビルドする(`/lib/ld.so.1` を要求する通常のMIPSバイナリになる):
 
 ```bash
-mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o mtdtool scripts/tools/mtdtool.c
 mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/physrd.c
 ```
+
+`mtdtool.c` は(上のDocker環境で)静的バイナリにビルドできる。公式rootfsの環境でもDebianでも同じバイナリがそのまま動く。
+`nasne_recpt1.c` は `jis0208_utf16.inc`(サービス名のUTF-8化に使う表。`gen_jis_table.py` で生成)を `#include` するので、ソースのあるディレクトリでビルドすること。
 
 ドライバを使うツール(`mcui2c`、`i2cx`、`i2cscan`、`boxioctl`、`bcas`)は、公式ドライバ(`rc.xcode4`)がロード済みで `/dev/vixs/xcodedrv` があることが前提。
 
@@ -125,7 +127,8 @@ mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/ph
 | `tools/drvsh` | 同一fdで ioctl を連続実行するスクリプト実行ツール(ストリームの同時利用の実験用)。[docs/12](12_ts_and_bcas_decrypt.md) |
 | `tools/boxioctl` | `boxioctl <cmd_hex> <size_hex> [off=val]... [-d words]`: ドライバのioctlを汎用に試す。例 `boxioctl 103 b0 -d 0x2c`(ファーム状態)。[docs/07](07_driver_ioctl_bcas.md) |
 | `tools/bcas` | `bcas status\|activate\|id\|deactivate ...` / `bcas m<hex>`: B-CASカードの実験([docs/07](07_driver_ioctl_bcas.md)) |
-| `tools/mtdtool` | `mtdtool erase <dev> <off> <len>` / `write <dev> <off> <file>`: `/dev/mtd0` の許可範囲(KNL / BKNL / 未使用領域)だけを消去・書き込み([docs/05](05_kernel_and_direct_boot.md)) |
+| `tools/mtdtool` | `mtdtool erase\|write\|verify\|flash <dev> <off> <len\|file>` / `dump <dev> <off> <len> <out>`: `/dev/mtd0` の許可範囲(KNL / BKNL / 未使用領域)だけを消去・書き込み・比較。`flash` は消去→書き込み→読み戻し比較を一括([docs/05](05_kernel_and_direct_boot.md)、[docs/13](13_full_setup_from_official_hdd.md)) |
+| `stage1/*` | 公式HDDの `00550066.dlm` 差し替えだけでSPI書き換え→Debian直起動へ移行するツール一式([docs/13](13_full_setup_from_official_hdd.md)) |
 | `tools/physrd` | `physrd w <phys_hex> <nwords>` / `physrd r <phys_hex> <nbytes>`: `/dev/mem` 経由の読み出し専用(SoCレジスタ・RAM) |
 | `tools/physio` | `physio r <phys> <nwords>` / `physio w <phys> <value>`: `/dev/mem` 経由の読み書き。**書き込みは危険** |
 

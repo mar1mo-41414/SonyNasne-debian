@@ -2,17 +2,20 @@
 """nasne のチューナー(復調IC + RFチューナーIC)を、PCからssh経由でI2C操作して選局・状態確認する実験ツール。
 
 nasne側に `i2cx`(scripts/userspace_tools/i2cx.c, -b バッチモード)が /usr/local/sbin にあり、公式ドライバ(rc.xcode4)が
-ロード済みでファームが動いていることが前提。手順は dtvtuner の逆コンパイルから起こしたもの(docs/08_tuner_i2c.md)。
+ロード済みでファームが動いていることが前提。手順は dtvtuner の逆コンパイルから起こしたもの(docs/23_tuner_i2c.md)。
 
 ISDB-S 側(バス1、復調IC 8bit 0x22、RFチューナー 8bit 0xC6 をパススルー 0xFE 経由で操作):
   s-init                 初期化(復調ICの設定表、チューナーの初期レジスタ)。電源投入後に1回
   s-tune <BS ch | IF_kHz> [--pol 1|0]   選局して、ロック状態とC/Nを表示
   s-scan                 BS-1〜23(奇数ch)を順に選局して、ロック/C/Nを一覧
+  s-sweep [from] [to] [step]   IF周波数[MHz]を掃引して、AGC(信号の強さ)を一覧(既定 950〜2150 を10MHz刻み)。BS/CS-IF(1032〜2150MHz)に
+                         信号が来ているかを、TMCCのロックを待たずに調べる。AGC=127(0x7f)は信号なし、小さいほど強い
   s-status               選局せずに現在のステータスだけ表示
   t-init                 ISDB-T(地デジ)側の初期化(復調IC 8bit 0x20、RFチューナー 8bit 0xC0)
   t-tune <UHF ch | MHz>  選局して、ロック状態を表示 (例: t-tune 27 / t-tune 521.143)
   t-scan [from] [to]     UHFチャンネル(既定13〜52)を順に選局して、ロックしたものを一覧(-v で全部)
   t-standby              T側をスタンバイに戻す
+  t-capture <ch|MHz> <out.ts> [packets_x64KB]  選局して、TSパススルーでTSを受信しPCに保存(nasne側に tsrecv が必要。既定120回≒17MB)
   t-status               選局せずにステータスだけ表示
   raw                    標準入力のバッチをそのままnasneの i2cx -b に流す
 
@@ -338,12 +341,15 @@ def main():
     sub.add_parser("s-init")
     p = sub.add_parser("s-tune"); p.add_argument("target"); p.add_argument("--pol", type=int, default=1)
     sub.add_parser("s-scan")
+    p = sub.add_parser("s-sweep"); p.add_argument("first", nargs="?", type=int, default=950); p.add_argument("last", nargs="?", type=int, default=2150)
+    p.add_argument("step", nargs="?", type=int, default=10); p.add_argument("--pol", type=int, default=1)
     sub.add_parser("s-status")
     sub.add_parser("t-init")
     p = sub.add_parser("t-tune"); p.add_argument("target")
     p = sub.add_parser("t-scan"); p.add_argument("first", nargs="?", type=int, default=13); p.add_argument("last", nargs="?", type=int, default=52)
     sub.add_parser("t-status")
     sub.add_parser("t-standby")
+    p = sub.add_parser("t-capture"); p.add_argument("target"); p.add_argument("out"); p.add_argument("count", nargs="?", type=int, default=120)
     sub.add_parser("raw")
     a = ap.parse_args()
     fe = Fe(a.host, a.verbose)
@@ -363,6 +369,14 @@ def main():
             ifk = bs_if_khz(ch)
             st, _ = fe.s_tune(ifk)
             print("BS-%-2d IF=%7d  %s" % (ch, ifk, fmt(st)))
+    elif a.cmd == "s-sweep":
+        fe.s_init()
+        print("IF[MHz]  AGC(127=信号なし。小さいほど強い)")
+        for mhz in range(a.first, a.last + 1, a.step):
+            st, _ = fe.s_tune(mhz * 1000, a.pol, wait_ms=60)
+            agc = (st["b0"][0] & 0x7f) if st["b0"] else None
+            print("%6d   %3s  %s" % (mhz, agc if agc is not None else "-", "#" * ((127 - agc) // 4) if agc is not None else ""))
+        fe.s_init()                                   # スタンバイに戻す
     elif a.cmd == "s-status":
         print(fmt(fe.s_status(fe.run(fe.s_status_lines()))))
     elif a.cmd == "t-init":
@@ -393,6 +407,22 @@ def main():
             if a.verbose or t_info(t_status(res[-5:]))["locked"]:
                 print(line)
         fe.run(t_standby_lines())
+    elif a.cmd == "t-capture":
+        f = t_freq_hz(a.target)
+        res = fe.run(t_tune_lines(f) + ["sleep 500"] + t_status_lines())
+        info = t_info(t_status(res[-5:]))
+        print("選局 %.3fMHz: %s" % (f / 1e6, t_fmt(t_status(res[-5:]))))
+        if not info["locked"]:
+            sys.exit("ロックしていないので中止")
+        remote = "/tmp/nasne_fe_capture.ts"
+        r = subprocess.run(["ssh"] + SSH_OPTS + ["root@" + a.host, "cd /usr/local/sbin && timeout 120 ./tsrecv 0 20000 0 0 %x %s" % (a.count, remote)],
+                           capture_output=True, timeout=180)
+        txt = r.stdout.decode(errors="replace")
+        for ln in txt.splitlines():
+            if "OPEN_TS" in ln or "TSパケット" in ln:
+                print(ln)
+        subprocess.run(["scp"] + SSH_OPTS + ["root@%s:%s" % (a.host, remote), a.out], check=True)
+        print("保存:", a.out)
     elif a.cmd == "t-standby":
         fe.run(t_standby_lines())
         print("T側をスタンバイにしました")

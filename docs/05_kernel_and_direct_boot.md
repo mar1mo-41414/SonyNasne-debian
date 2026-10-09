@@ -110,10 +110,12 @@ Linuxが動く状態(純正カーネル/自前カーネルで起動したnasne)�
 未使用の `0xb0000-0xcffff` のみ。BOOT/BFWF/FMAP/INFO/INF2/ECC/RFSは拒否)。
 
 ```bash
-mtdtool erase /dev/mtd0 0x100000 0x210000      # 64KB単位
-mtdtool write /dev/mtd0 0x100000 /tmp/KNL_new.bin
-dd if=/dev/mtd0ro bs=65536 skip=16 count=34 | head -c <セグメントサイズ> | md5sum    # 書いたファイルのmd5と一致を確認
+mtdtool flash /dev/mtd0 0x100000 /tmp/KNL_new.bin    # 消去(64KB単位に切り上げ)→書き込み→読み戻し比較を一括
+mtdtool verify /dev/mtd0 0x100000 /tmp/KNL_new.bin   # 比較だけ(一致なら終了コード0)
+mtdtool dump /dev/mtd0 0 0xd00000 spi_backup.bin     # 読み出して保存(許可範囲の制限なし)
 ```
+
+> `mtdtool` の拒否動作(許可範囲外は `REFUSED`)を試すときは、範囲外が確実なアドレス(例 `0x10000`)を使うこと。`0x100000` はKNLの許可範囲内なので**本当に消える**。
 
 ウォッチドッグ([docs/06](06_mcu_watchdog.md))で約5.5分ごとにリセットされるので、再起動直後に作業を始めること。
 

@@ -24,9 +24,11 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え) |
 | ✅ できる | **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
 | ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)をオフラインで生成。HDD全損機の復旧 |
+| ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
 | ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
 | ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
 | ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
+| ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
 | △ 未検証 | tvheadend・EPGStation 本体との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
 | ❌ できない | PWR LEDの点灯(Debian起動中は点滅のまま)、`halt`/`poweroff`による電源断(純正も電源断の手段は電源ケーブルのみ) |
@@ -67,7 +69,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [11_tv_streaming](docs/11_tv_streaming.md) | **地デジの受信・配信**(`nasne-recpt1`) |
 | [12_ts_and_bcas_decrypt](docs/12_ts_and_bcas_decrypt.md) | TS取得とB-CAS復号のioctlレベルの手順 |
 | [10_status_and_limits](docs/10_status_and_limits.md) | できること・できないこと・未解明 |
-| [13_full_setup_from_official_hdd](docs/13_full_setup_from_official_hdd.md) | **公式HDDの状態からの一連の手順**(SPI書き換えもnasne自身で実行) |
+| [13_full_setup_from_official_hdd](docs/13_full_setup_from_official_hdd.md) | **公式HDDの `00550066.dlm` を1ファイル差し替えるだけで、Debian直起動まで**(SPI書き換えもnasne自身で実行) |
+| [14_newer_debian_kernel_and_distribution](docs/14_newer_debian_kernel_and_distribution.md) | Debian・カーネルを新しくできるか / 成果物を配布してよいか |
 | [boxster_cmd_table](docs/boxster_cmd_table.md) | ドライバのioctlコマンド番号表 |
 
 ## 必要なもの
@@ -93,6 +96,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
    ├─ build_debian_rootfs.sh  … Debian wheezy (mipsel) のrootfs作成
    ├─ fetch_gpl_sources.sh    … SIE公開のGPLソースの取得
    ├─ kernel_build/           … 自前カーネルのビルド(Docker)と内蔵initramfs
+   ├─ stage1/                 … 公式HDDの00550066.dlm差し替えだけでDebian直起動へ移行するツール一式
    ├─ watchdog/               … MCUウォッチドッグ停止(mcui2c、initサービス)
    ├─ tools/                  … 実機用のツール(`nasne-recpt1`(TS取得・HTTP配信)、I2C、ioctl、/dev/mem、MTD書き込み、B-CAS)
    ├─ nasne_fe.py             … チューナーのI2C操作(PCからssh経由)

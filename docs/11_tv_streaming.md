@@ -21,6 +21,7 @@ Debian直起動のnasneで、**地デジをB-CASカードで復号し、元の�
 | ✅ | 終了時(秒数経過・シグナル・接続切断)にストリームを必ず閉じる。2つ目の要求にはチューナー使用中(exit 3 / HTTP 503)を返す |
 | ⚠️ | **同時に1チャンネル・1サービスのみ**。1回の接続で出力されるのは選んだ1サービス(+全サービス分のSI)で、チャンネル全体(全サービス)のTSではない |
 | ⚠️ | チューナー(地デジ)は1系統だけ扱っている。2つ目のチューナー・BS/CSは未検証(BSはアンテナのない環境で試験したため。コードは純正の手順を再現済みだが動作未確認) |
+| ⚠️ | **ワンセグは扱わない**。ワンセグ(PMTのPIDが0x1FC8、SDTのservice_typeが0xC0)に対して復号ストリームを開くと、ファームが応答しなくなり、受信側の処理がドライバ内で戻らなくなる(`SIGKILL` も効かず、`reboot -f` が必要)。一覧(`/scan`・M3U)には `(1seg)` として載せず、明示的に指定されても404を返す |
 | ⚠️ | 開始まで約2〜4秒かかる(選局、ロック待ち、PAT/PMT取得、ストリーム確立) |
 | ⚠️ | サービス名・番組表の文字(ARIB文字コード)はそのまま出力しているだけ。デコードは録画ソフト側 |
 
@@ -58,7 +59,8 @@ nasne-recpt1 --scan                      # UHF 13〜62 をスキャンして、�
 ```
 GET /tuner/<UHF ch>[?sid=0xNNNN][&sec=N]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了
 GET /<UHF ch>                              同上(短縮形)
-GET /scan                                  サービス一覧(テキスト。約80秒かかる)
+GET /scan                                  サービス一覧(テキスト。約80秒かかる)。サービス名も出し、結果を保存する
+GET /playlist.m3u8                         /scan の保存結果から作ったM3U(VLCなどでそのまま開ける)
 GET /status                                idle または busy
 ```
 
@@ -67,8 +69,11 @@ GET /status                                idle または busy
 ```bash
 curl http://<nasne>:8301/tuner/27 | ffplay -
 curl -s http://<nasne>:8301/scan
-# ch=27 freq=557142kHz sid=0x0400(tv) sid=0x0401(tv) sid=0x0408(tv)
+# ch=27 freq=557142kHz sid=0x0400(tv) name="局名1" sid=0x0401(tv) name="局名2" sid=0x0408(1seg) name="局名携帯"
 ```
+
+サービス名は SDT(ARIBの8単位符号)をUTF-8に直して出す。`(tv)` が地デジのテレビ、`(1seg)` がワンセグ、`(data)` がデータ放送。
+`/scan` は結果を nasne 上の `/var/lib/nasne-recpt1/services.tsv` に保存する(最後まで走ったときだけ置き換える)。
 
 ### 録画ソフトとの連携
 
@@ -110,9 +115,21 @@ Mirakurunのチャンネルスキャン(自動)は、チャンネル全体のTS�
 
 Mirakurunのデコーダー(`decoder`)設定は不要(nasne が復号済みのTSを出す)。複数サービスの同時視聴は、チューナーが1系統なので不可(同じチャンネルの別サービスも不可)。
 
-#### VLC / ffmpeg / Kodi / Jellyfin など
+#### VLC(プレイリスト再生)
 
-`http://<nasne>:8301/tuner/<ch>?sid=0x....` を再生/IPTVチャンネルとして登録する(mpv で URL を直接再生できることを確認した。VLC・Kodi・Jellyfin は未確認。M3Uを作って登録するのが簡単)。
+先に `curl http://<nasne>:8301/scan` を1回実行して(約80秒)、サービス一覧を保存する。あとは
+
+```bash
+vlc http://<nasne>:8301/playlist.m3u8
+```
+
+で、局名つきのプレイリストが開く(**VLCで再生できることを確認済み**)。M3Uは `#EXTINF:-1 group-title="UHF27",局名` の形で、各エントリの URL は
+`http://<アクセスしたアドレス>:8301/tuner/27?sid=0x....`(リクエストの `Host:` ヘッダのアドレスを使う)。
+チューナーは1系統なので、**同時に再生できるのは1チャンネルだけ**。プレイリストを次の項目へ送ると、直前の接続が閉じ終わる前に次を開いて `503` になることがあるが、少し待てば再生できる。
+
+#### ffmpeg / Kodi / Jellyfin など
+
+`http://<nasne>:8301/tuner/<ch>?sid=0x....` を再生/IPTVチャンネルとして登録する(mpv で URL を直接再生できることを確認した。Kodi・Jellyfin は未確認。上の `playlist.m3u8` をそのままIPTVのM3Uとして使える)。
 
 #### tvheadend
 

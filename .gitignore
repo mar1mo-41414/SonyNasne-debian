@@ -10,6 +10,8 @@ scripts/kernel_build/dl/
 # 実機用ツールのビルド出力(ソースだけ管理)
 scripts/tools/*
 !scripts/tools/*.c
+!scripts/tools/*.inc
+!scripts/tools/*.py
 scripts/watchdog/mcui2c
 
 # 解析対象のSonyファーム・SPIダンプ・個体情報は絶対に入れない
@@ -17,3 +19,21 @@ SPI_dump/
 SampleData/
 start-note.md
 .DS_Store
+
+# 作業ディレクトリ(Sonyのファームの展開物・バックアップ・生成物。絶対にコミットしない)
+official_rootfs/
+official_rootfs_raw.tar
+ofw_out/
+backup/
+build_stage1/
+custom_rootfs.tar.gz
+custom_*.dlm
+knl_new.bin
+/i2cx
+/mcui2c
+/mtdtool
+/nasne-recpt1
+*.tar
+*.tar.gz
+*.tar.zst
+*.tgz
