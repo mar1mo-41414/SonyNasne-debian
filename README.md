@@ -67,6 +67,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [11_tv_streaming](docs/11_tv_streaming.md) | **地デジの受信・配信**(`nasne-recpt1`) |
 | [12_ts_and_bcas_decrypt](docs/12_ts_and_bcas_decrypt.md) | TS取得とB-CAS復号のioctlレベルの手順 |
 | [10_status_and_limits](docs/10_status_and_limits.md) | できること・できないこと・未解明 |
+| [13_full_setup_from_official_hdd](docs/13_full_setup_from_official_hdd.md) | **公式HDDの状態からの一連の手順**(SPI書き換えもnasne自身で実行) |
 | [boxster_cmd_table](docs/boxster_cmd_table.md) | ドライバのioctlコマンド番号表 |
 
 ## 必要なもの

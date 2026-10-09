@@ -301,19 +301,54 @@ def decrypt_header(path: str) -> bytes:
     return bf.chain_decrypt(data)
 
 
-def decrypt_body(path: str) -> bytes:
+def decrypt_body(path: str, chunk_size: int | None = None) -> bytes:
     """ボディを復号する(flag==1、body_encryptedの.dlmのみ有効)。
 
     FUN_00401ad0相当: ヘッダとは独立してIV=(0,0)から開始するBlowfish-CBC復号。
-    実機は512バイト単位でストリーム処理するため末尾が8バイト境界に満たない
-    場合があるが、この実装は8の倍数に切り捨てて処理する(末尾数バイトの誤差は
-    tar/gzipのパディング領域に収まることを実データで確認済み)。
+
+    `chunk_size` を省略した場合(従来動作)は、ファイル全体を単一のCBCチェインとして
+    8バイト境界まで復号する。**この前提は小さいファイル(rootfsサイズが小さい版)では
+    通ったが、30MB超の公式rootfsでは先頭の数百バイトしか正しく復号されず、
+    `tar`/`gzip` が "unexpected end of file" で失敗することを確認している**
+    (実機は512バイト単位のバッファでストリーム処理しており、おそらくチャンク境界で
+    IV(0,0)にリセットしている可能性がある。未確定)。`chunk_size` を指定すると、
+    入力をそのバイト数ごとに分割し、**各チャンクをIV=(0,0)から独立にCBC復号**する。
+    どの値が正しいかは実機バイナリ(`FUN_00401ad0`)を読むまで確定しないため、
+    `probe-body` サブコマンドで候補をいくつか試して当たりを付けること。
     """
     data = open(path, "rb").read()
     body = data[64:]
-    n = len(body) - (len(body) % 8)
     bf = NasneBlowfish()
-    return bf.chain_decrypt(body[:n], iv=(0, 0))
+    if chunk_size is None:
+        n = len(body) - (len(body) % 8)
+        return bf.chain_decrypt(body[:n], iv=(0, 0))
+    out = bytearray()
+    for i in range(0, len(body), chunk_size):
+        piece = body[i : i + chunk_size]
+        n = len(piece) - (len(piece) % 8)
+        out += bf.chain_decrypt(piece[:n], iv=(0, 0))
+    return bytes(out)
+
+
+def probe_body_chunk_sizes(path: str, candidates: list[int | None]) -> list[tuple[int | None, bool, str]]:
+    """decrypt_bodyのchunk_size(Noneは従来の単一チェイン)をいくつか試し、
+    gzip展開が成功するかを調べる。
+
+    戻り値: [(chunk_size, gzip_ok, detail), ...]
+    """
+    import gzip
+    import io
+
+    results = []
+    for cs in candidates:
+        try:
+            dec = decrypt_body(path, chunk_size=cs)
+            with gzip.GzipFile(fileobj=io.BytesIO(dec)) as gz:
+                out = gz.read()
+            results.append((cs, True, f"gzip展開OK: {len(out)} bytes"))
+        except Exception as e:  # noqa: BLE001
+            results.append((cs, False, f"{type(e).__name__}: {e}"))
+    return results
 
 
 def parse_segments(path: str):
@@ -368,11 +403,28 @@ if __name__ == "__main__":
             print(f"offset={offset:#x} magic={magic!r} total_size={total_size} "
                   f"flag={flag} date={date}")
     elif len(sys.argv) >= 4 and sys.argv[1] == "decrypt-body":
-        dec = decrypt_body(sys.argv[2])
-        with open(sys.argv[3], "wb") as f:
+        args = sys.argv[2:]
+        chunk_size = None
+        if "--chunk" in args:
+            idx = args.index("--chunk")
+            chunk_size = int(args[idx + 1])
+            del args[idx : idx + 2]
+        dec = decrypt_body(args[0], chunk_size=chunk_size)
+        with open(args[1], "wb") as f:
             f.write(dec)
-        print(f"復号完了: {sys.argv[3]} ({len(dec)} bytes)")
+        print(f"復号完了: {args[1]} ({len(dec)} bytes)" + (f" (chunk_size={chunk_size})" if chunk_size else ""))
         print(f"先頭バイト(gzipマジック期待値 1f8b): {dec[:4].hex()}")
+    elif len(sys.argv) >= 3 and sys.argv[1] == "probe-body":
+        args = sys.argv[2:]
+        candidates: list[int | None] = [None, 128, 256, 512, 1024, 2048, 4096]
+        if "--chunks" in args:
+            idx = args.index("--chunks")
+            candidates = [None] + [int(x) for x in args[idx + 1].split(",")]
+            del args[idx : idx + 2]
+        print("decrypt_bodyのchunk_sizeごとに復号→gzip展開を試す(Noneは従来の単一チェイン):")
+        for cs, ok, detail in probe_body_chunk_sizes(args[0], candidates):
+            label = cs if cs is not None else "default(単一チェイン)"
+            print(f"  chunk={label}: {'OK' if ok else 'NG'} {detail}")
     else:
         print(__doc__)
         print()
