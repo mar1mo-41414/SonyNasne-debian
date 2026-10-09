@@ -15,6 +15,12 @@
 >
 > ⚠️ 自己責任です。SPIフラッシュの内容を壊すと起動しなくなる可能性があります(その場合の回復手段は[トラブルシュート](#トラブルシュート)参照)。
 > **作業前に、このHDDの `00550066.dlm` を含むsys1の内容と、p3(録画データ含む)を必ずバックアップしてください**。
+>
+> ⚠️ **この手順自体はCH341Aを使わないが、SPIに触る作業(手順4)の前に、CH341A等で元のSPI全体(16MB)を一度ダンプしておくことを強く勧める。**
+> 実機で、HDD(sys1)上に残っていた古い段階1スクリプトの残骸が原因でSPIのKNL領域が中途半端に消去される事故が発生し、
+> 「4段目ブートがA(KNL)の異常を検知してB(BKNL)へ自動フォールバックする」という安全網([docs/05](05_kernel_and_direct_boot.md))が
+> **実際には機能しなかった**(別の正常起動確認済みのHDDに挿し替えても起動しなかった=HDDの内容に関係なくSPI自体が壊れていた)。
+> このときはCH341Aでの直接書き戻しで復旧できた。手順自体に必須ではないが、**何かあったときの最後の復旧手段を事前に確保しておくこと**。
 
 ## 検証状況(正直に)
 
@@ -28,6 +34,7 @@
 | 実機の公式rootfsの構成(`/sbin/init` は `busybox` への**シンボリックリンク**、`/etc/init.d/rcS` は実行可能シェルスクリプト) | ✅ 実機で確認。[docs/02](02_boot_chain.md)の推定通り |
 | `rcS`末尾の`startdtvtuner`呼び出しを削除し、`chroot`でDebianへ処理を渡す設計 | ⚠️ **本ドキュメントでの新方式。別の実績ある実装(`pivot_root`/`chroot`でp3に処理を渡すもの)を参考にしたが、この形(chroot内からさらにSPIを書き換えて`reboot`する部分まで含めて)はこのリポジトリの実機でまだ通し確認していない** |
 | procmngによるHDD(sys1)の自動ロールバック現象 | ⚠️ 以前の方式(公式rootfsの`rcS`から直接SPI書き換え、`startdtvtuner`はそのまま動かす)で複数回確認した重大な問題。今回`startdtvtuner`自体を呼ばない設計にしたことで、理論上は再発しないはずだが未確認 |
+| **`official_rootfs/`の再利用による旧設計の残骸混入でSPI破損(実機で発生)** | ❌ **実際に発生した事故**。過去の作業で使った`official_rootfs/`ディレクトリ(`rcS`に古い`/sbin/nasne-stage1.sh`呼び出しが残っていた)をそのまま再利用し、新しい`rcS`編集を上書きで追記したため、古い段階1呼び出しも一緒にtarに固められてしまった。古いスクリプトが(今回の設計では存在しない)sys1上の`knl_new.bin`を見に行って不一致判定→SPIのKNL領域をerase→write失敗、という形でSPIが破損し、**A/Bフォールバックも機能せず**起動不能になった。CH341Aでの書き戻しで復旧。[手順0](#手順0-バックアップと下調べ)に`official_rootfs/`を毎回作り直す手順を追加した |
 
 このドキュメントは「手動でここまでできるはず」という設計と手順のまとめです。差異が出た箇所は都度このファイルを更新してください。
 
@@ -74,6 +81,9 @@
   ```
 - 対象のnasneから抜いたHDD(USB-SATA変換で接続)。**公式ファームで正常起動している状態のもの**
 - B-CASカード(TV視聴まで確認する場合)
+- **(手順自体では使わないが、強く推奨)CH341A等のSPIライタ**。[手順4](#手順4-1回目の起動公式カーネルchrootspi書き換え)でSPIに触る前に、
+  予備知識として元のSPI全体(16MB)をダンプできる手段を確保しておくと安心。A/Bフォールバックが実機で機能しなかった事例があり、
+  何かあったときの復旧手段がこれしかない場面があった(詳細は[トラブルシュート](#トラブルシュート))
 
 ---
 
@@ -96,11 +106,16 @@ sudo umount /mnt/nasne_sys1
 ```bash
 python3 scripts/ofw_tool.py split KRST3101_0260_SECURE.dlm ofw_out/   # ofw_out/DLM.bin = 00550066.dlmと同一(md5一致)
 python3 scripts/dlm_crypto.py decrypt-body backup/sys1/00550066.dlm official_rootfs_raw.tar --tail cfb --inflate   # 公式rootfsのtar本体を取り出す
+rm -rf official_rootfs   # ⚠️ 既に存在する場合は必ず削除してから展開する(下の注記参照)
 mkdir official_rootfs && sudo tar -C official_rootfs -xf official_rootfs_raw.tar    # 中身を確認。rootとして展開(権限・デバイスファイルの保持にsudoが必要)
 ```
 
 > `decrypt-body` は30MB超のrootfsだとボディが8バイト境界に満たず、既定の `--tail cfb`(直前のCBCブロックを再暗号化したキーストリームで末尾をXORする)
 > と `--inflate`(gzipトレーラのCRC検証をスキップして生のtarを取り出す)を付けないと `tar` が途中で壊れる。詳細は[docs/03](03_firmware_format.md)。
+>
+> ⚠️ **`official_rootfs/` は毎回(やり直すたびに)必ず`rm -rf`してから作り直すこと。実機で、過去のお試し作業で編集済みの`official_rootfs/`を
+> そのまま再利用してしまい、古い`rcS`編集(今は使っていない`/sbin/nasne-stage1.sh`呼び出し)が残ったままtarに固められ、SPIを破損させる事故が
+> 発生した**(詳細は[トラブルシュート](#トラブルシュート))。このディレクトリは「毎回使い捨て」が前提。
 
 `official_rootfs/` の中身を見て、起動スクリプトの実際の構成を確認する。実機(v2.60)で確認した結果:
 - `sbin/init` は **`busybox` へのシンボリックリンク**。このファイル自体は変更しない。
@@ -294,6 +309,20 @@ log() { echo "$(date) $*" >> "$LOG"; }
 : > "$LOG"
 log "start (inside chroot)"
 
+# 安全チェック: 書き込み予定のカーネルファイルが実在し、サイズがKNL領域(0x280000=2.5MB)を
+# 超えていないかを、SPIをerase/writeする前に必ず確認する(存在しない/空のファイルを書こうとして
+# eraseだけ実行してしまう事故が実機で発生したため。これが無いと中途半端な消去だけで終わりうる)。
+if [ ! -s "$KNL" ]; then
+    log "ABORT: $KNL が存在しない、または空。SPIには触らない"
+    exit 1
+fi
+SIZE_CHECK=$(wc -c < "$KNL")
+if [ "$SIZE_CHECK" -gt $((0x280000)) ]; then
+    log "ABORT: $KNL のサイズ($SIZE_CHECK)がKNL領域を超えている。SPIには触らない"
+    exit 1
+fi
+log "sanity check OK ($KNL: $SIZE_CHECK bytes)"
+
 log "checking current KNL header against target (SPI readback)"
 dd if=/dev/mtd0ro bs=64 count=1 skip=16384 of=/tmp/cur_knl_hdr.bin >> "$LOG" 2>&1   # 0x100000 / 64 = 16384
 head -c 64 "$KNL" > /tmp/new_knl_hdr.bin
@@ -387,6 +416,15 @@ cd ..
 > 成功時(`nasne-stage1.sh`がSPI書き換え→`reboot -f`まで進む)は、この`chroot`状態のまま再起動される。**procmngは一度も起動しない**。
 > 失敗時(mount失敗・SPI書き換え失敗)は、`telnetd`(認証なし)だけが残る。この場合も`startdtvtuner`は呼ばない
 > (p3は既にDebianなので、公式機能を動かしても意味がないどころか、以前見られたロールバックの再発リスクがあるため)。
+
+**tarに固める前に、古い設計の残骸(`/sbin/nasne-stage1.sh`・`/sbin/mtdtool`)が残っていないか必ず確認する**
+(このSPI破損事故の原因そのもの。[手順0](#手順0-バックアップと下調べ)で`official_rootfs/`を毎回作り直していれば出ないはずだが、
+念のため確認してから進む):
+
+```bash
+ls official_rootfs/sbin/nasne-stage1.sh official_rootfs/sbin/mtdtool 2>&1   # 両方とも「そのようなファイルはありません」が正しい
+grep -rn 'nasne-stage1\|mtdtool' official_rootfs/etc/init.d/rcS             # 何も出ないのが正しい(今回の設計ではofficial_rootfs側に置かない)
+```
 
 tar.gzに固めて `.dlm` を作る:
 
@@ -495,14 +533,15 @@ Mirakurunから使う場合は、別PCでMirakurunを動かし、[docs/11](11_tv
 
 | 症状 | 考えられる原因 / 対処 |
 |---|---|
-| sshもtelnetも通らない、pingも通らない | mount・chrootより前(outer rcS)で止まっている可能性。`.dlm`の展開失敗(ヘッダ不正・CRC不一致)、または`sed`の行削除がファームのバージョンで一致していない(手順0で確認した`rcS`の最後の行が本当に`/opt/dtvtuner/etc/startdtvtuner`か再確認) |
+| sshもtelnetも通らない、pingも通らない、かつHDDをPCに戻しても`.dlm`やログに変化が無い(**実機で発生**) | **SPI自体が壊れている可能性が高い**。`official_rootfs/`を使い回して古い設計の残骸(`/sbin/nasne-stage1.sh`等)が混入し、そのスクリプトがSPIのKNLを中途半端にeraseしてしまった事故が実機で発生した。別の正常起動確認済みのHDDに挿し替えても同じ症状が出るなら、HDDではなくSPI側が原因と確定できる。A/Bフォールバックは機能しない事例があるので、CH341Aでの直接読み書き(ダンプしてあるなら書き戻し、無ければ読み出して状態を確認)が最後の手段になる。再発防止には[手順0](#手順0-バックアップと下調べ)の`rm -rf official_rootfs`と[手順2](#手順2-rcs-の末尾を-chroot--spi書き換えに差し替える)のtar前の残骸チェックを必ず行う |
+| sshもtelnetも通らない、pingも通らない(上記のSPI破損ではなく、まだ公式カーネル起動中の場合) | mount・chrootより前(outer rcS)で止まっている可能性。`.dlm`の展開失敗(ヘッダ不正・CRC不一致)、または`sed`の行削除がファームのバージョンで一致していない(手順0で確認した`rcS`の最後の行が本当に`/opt/dtvtuner/etc/startdtvtuner`か再確認) |
 | pingは通るがsshもtelnetも通らない | telnetdの起動自体が失敗している可能性(rcSの構文エラーで途中で止まった等)。HDDをPCに戻し`official_rootfs/etc/init.d/rcS`の構文を`sh -n`等で確認 |
 | telnetは通るが`/tmp/nasne_debug.log`が無い/短い | outer rcSの追記ブロックまで到達していない。`sed`で削除したはずの行がまだ残っている、または追記位置がずれている(`cat etc/init.d/rcS`で最終確認したか) |
 | `mount /dev/sda3 FAILED`がログに出る | p3のファイルシステムが壊れている、または`mkfs.ext3`がうまくいっていない。HDDをPCに戻し`fsck.ext3 /dev/sdX3`で確認 |
 | `nasne-stage1.log`が無い/`chroot sshd started`の後で止まっている | `chroot /mnt/p3 /usr/local/sbin/nasne-stage1.sh`自体が失敗している可能性。`/mnt/p3/usr/local/sbin/nasne-stage1.sh`の実行権限(手順1-5)、シェバン(`#!/bin/sh`)を確認 |
 | `nasne-stage1.log`に`mtdtool usage-check`や`erase`/`write`が無い、または非ゼロ終了 | `mtdtool`がDebian wheezy chroot内で動いていない。`file /mnt/p3/usr/local/sbin/mtdtool`で動的リンクMIPSバイナリになっているか、`/mnt/p3/lib/ld.so.1`の存在を確認 |
-| `VERIFY FAILED`でrebootしない | SPIへの書き込み自体は(部分的に)発生している可能性がある。そのまま電源を入れ直すと、4段目ブートがCRC不一致を検出してBKNL(Bスロット、純正)へ自動フォールバックするはず([docs/05](05_kernel_and_direct_boot.md))。フォールバックしたら`knl_new.bin`のサイズ・ヘッダを見直し、`build_knl.py`からやり直す |
-| CRCは正しいが起動途中で固まる(フォールバックが効かない) | [docs/05](05_kernel_and_direct_boot.md)の通り、CRC一致・内容不正の場合はA/Bのフォールバックが働かない。HDDをPCに戻し、`00550066.dlm`を手順0のバックアップに戻して公式ファームの`.dlm`のまま起動させ、SPIを元のダンプに書き戻す必要がある |
+| `VERIFY FAILED`でrebootしない | SPIへの書き込み自体は(部分的に)発生している可能性がある。そのまま電源を入れ直すとCRC不一致でBKNL(Bスロット、純正)へ自動フォールバックする**ことがある**が、**実機でフォールバックが機能しなかった事例もある**([docs/05](05_kernel_and_direct_boot.md))。フォールバックしなければCH341Aでの書き戻しが必要。フォールバックした場合は`knl_new.bin`のサイズ・ヘッダを見直し、`build_knl.py`からやり直す |
+| CRCは正しいが起動途中で固まる、またはCRC不一致でもフォールバックが効かない | [docs/05](05_kernel_and_direct_boot.md)の通り、CRC一致・内容不正の場合はA/Bのフォールバックが働かない。**さらに実機では、CRC不一致(SPIが中途半端にerase済みの状態)でもフォールバックしない事例が確認されている**。CH341Aで元のSPIダンプに書き戻す必要がある |
 | 2回目の起動でDebianに届かない(起動カウンタが2でSony経路に戻る) | [docs/05](05_kernel_and_direct_boot.md)の通り。`rc.local`が走っていない、Debian側のp3の構成を確認 |
 | 約333秒ごとに再起動する(2回目起動後) | ウォッチドッグ未停止。[docs/06](06_mcu_watchdog.md) |
 | 元の公式ファームに戻したい | `00550066.dlm`を手順0のバックアップで上書き、p3もバックアップ(録画データ)から戻す。SPIのKNLも元のダンプ(または`ofw_out/KNL.bin`ベースで再構築したもの)に書き戻す |
