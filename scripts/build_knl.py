@@ -10,12 +10,16 @@
   4. [13]==0x10 なら gunzip して物理0x10000000(KSEG0 0x90000000)へ展開(上限8MB)。署名検証は無い
 
 サブコマンド:
-  info   <spi.bin> [--slot KNL|BKNL]               元セグメントの検証結果を表示
-  extract<spi.bin> <out_vmlinux.bin> [--slot ..]   復号+gunzipした生カーネルを書き出す
-  build  <spi.bin> <out_segment.bin> --slot KNL|BKNL [--kernel vmlinux.bin] [--marker-from A --marker-to B]
+  info   <spi.bin> [--slot KNL|BKNL] [--raw]        元セグメントの検証結果を表示
+  extract<spi.bin> <out_vmlinux.bin> [--slot ..] [--raw]   復号+gunzipした生カーネルを書き出す
+  build  <spi.bin> <out_segment.bin> --slot KNL|BKNL [--raw] [--kernel vmlinux.bin] [--marker-from A --marker-to B]
                                                    セグメントを再構築(--kernel省略時は元カーネル、
                                                    --marker-*は同一長のバイト列置換でカーネル内文字列を差し替え)
   verify <segment.bin>                             セグメント単体をローダと同じ手順で検証・展開テスト
+
+`<spi.bin>` は既定でSPI全体ダンプ(16MB、CH341A等で読んだもの)を想定し、`--slot`のオフセットから読む。
+CH341Aを使わずPC側で用意する場合、`ofw_tool.py split`の出力(`KNL.bin`、単体セグメント・オフセット0開始)
+を使うには **`--raw` を付けること**(付けないと、ファイル中の無関係な場所をヘッダとして誤読する)。
 """
 import argparse
 import gzip
@@ -92,8 +96,12 @@ def parse_segment(seg: bytes):
     return r
 
 
-def read_slot(spi: bytes, slot: str) -> bytes:
-    off = SLOT_OFFSET[slot]
+def read_slot(spi: bytes, slot: str, raw: bool = False) -> bytes:
+    """spiがSPI全体ダンプ(16MB)ならslotのオフセットから読む。rawの場合は、
+    spi自体が単体のセグメントファイル(オフセット0開始、例: ofw_tool.py split の KNL.bin)
+    であるとみなし、オフセット0から読む(CH341A等でSPIダンプを取っていない場合用)。
+    """
+    off = 0 if raw else SLOT_OFFSET[slot]
     h = NasneBlowfish().chain_decrypt(spi[off:off + 64])
     size = int.from_bytes(h[4:8], "big")
     return spi[off:off + size]
@@ -133,6 +141,9 @@ def main():
         if c in ("extract", "build"):
             s.add_argument("out")
         s.add_argument("--slot", default="KNL", choices=["KNL", "BKNL"])
+        s.add_argument("--raw", action="store_true",
+                       help="spiが単体セグメントファイル(ofw_tool.py split の出力等、オフセット0開始)の場合に指定。"
+                            "SPI全体ダンプでない限り必須")
         if c == "build":
             s.add_argument("--kernel")
             s.add_argument("--marker-from")
@@ -150,7 +161,7 @@ def main():
         sys.exit(0 if r["ok"] else 1)
 
     spi = open(a.spi, "rb").read()
-    seg = read_slot(spi, a.slot)
+    seg = read_slot(spi, a.slot, raw=a.raw)
     r = parse_segment(seg)
     if a.cmd == "info":
         print(f"{a.slot}: magic={r['magic']!r} size={r['size']:#x} ok={r['ok']} {r['reason']}")
