@@ -33,8 +33,11 @@ sh scripts/fetch_gpl_sources.sh     # gpl_src/ に取得(sha256検証つき)
 Sonyのビルドは Timesys 製の GCC 4.3.2 だが、素の GCC 4.3.2 で問題なく通る。
 
 ```bash
-# ツールチェーンのソースを scripts/kernel_build/dl/ に置く(GNUのミラーから取得)
-#   binutils-2.19.1.tar.bz2, gcc-core-4.3.2.tar.bz2
+# ツールチェーンのソースを scripts/kernel_build/dl/ に置く(GNUのFTPアーカイブから取得)
+mkdir -p scripts/kernel_build/dl
+wget -O scripts/kernel_build/dl/binutils-2.19.1.tar.bz2 https://ftp.gnu.org/gnu/binutils/binutils-2.19.1.tar.bz2
+wget -O scripts/kernel_build/dl/gcc-core-4.3.2.tar.bz2  https://ftp.gnu.org/gnu/gcc/gcc-4.3.2/gcc-core-4.3.2.tar.bz2
+
 docker build -t nasne-kcc:gcc432 scripts/kernel_build
 
 mkdir -p gpl_src/build && tar xjf gpl_src/mips-linux-2.6.29.tar.bz2 -C gpl_src/build   # gpl_src/build/mips-linux-2.6.29 ができる
