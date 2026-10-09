@@ -254,44 +254,81 @@ sys1(段階1の作業領域としても使う。sys2は毎起動 `rm -rf` され
 リポジトリのルート(このドキュメントのコマンドをどこで実行しているかの基準ディレクトリ。`official_rootfs/` や `mtdtool` もこの下にある)に、
 `nasne-stage1.sh` というファイルを作る:
 
+**診断のため、各ステップの結果をsys1に残るログファイル(`/disk0/.stage1_debug.log`)に書き出すようにしてある**
+(`set -e` は使わず、各コマンドの終了コードを個別に見て、失敗した時点のログも必ずsys1に残してから終了する。
+途中でハングする/sshが使えない状況でも、HDDをPCに戻して `.stage1_debug.log` を見れば、どこで失敗したかが分かる):
+
 ```bash
 cat > nasne-stage1.sh <<'EOF'
 #!/bin/sh
 # 1回目の起動(公式カーネル)でだけ、/dev/mtd0のKNLを自作カーネルへ書き換える。
 # sys1(/dev/sda1)に完了マーカーを置いて、2回目以降は何もしない(フォールバックで純正initが再度動いた場合の保険)。
-set -e
 MNT=/tmp/disk0
 MARKER=$MNT/.stage1_done
 KNL=$MNT/knl_new.bin
+DBGLOG=/tmp/stage1_debug.log
 
-mkdir -p $MNT
-mount -t ext3 -o rw /dev/sda1 $MNT
+log() {
+    echo "$(date) $*" >> "$DBGLOG"
+    cp "$DBGLOG" "$MNT/.stage1_debug.log" 2>/dev/null
+}
+
+: > "$DBGLOG"
+log "start"
+
+mkdir -p "$MNT"
+if ! mount -t ext3 -o rw /dev/sda1 "$MNT" >> "$DBGLOG" 2>&1; then
+    log "mount /dev/sda1 FAILED"
+    exit 1
+fi
+log "mount /dev/sda1 OK"
 
 if [ -e "$MARKER" ]; then
-    umount $MNT
+    log "marker exists, skipping"
+    umount "$MNT"
     exit 0
 fi
 
-echo "stage1: erasing KNL" 
-/sbin/mtdtool erase /dev/mtd0 0x100000 0x280000
+log "checking mtdtool exists/runs"
+ls -la /sbin/mtdtool >> "$DBGLOG" 2>&1
+/sbin/mtdtool >> "$DBGLOG" 2>&1
+log "mtdtool usage-check exit=$?"
 
-echo "stage1: writing new kernel"
-/sbin/mtdtool write /dev/mtd0 0x100000 "$KNL"
-
-echo "stage1: verifying"
-SIZE=$(wc -c < "$KNL")
-dd if=/dev/mtd0ro bs=65536 skip=16 count=40 of=/tmp/verify.bin 2>/dev/null
-head -c "$SIZE" /tmp/verify.bin > /tmp/verify_trim.bin
-if ! cmp -s /tmp/verify_trim.bin "$KNL"; then
-    echo "stage1: VERIFY FAILED - not rebooting, SPI left untouched by reboot" 
-    umount $MNT
+log "erasing KNL"
+/sbin/mtdtool erase /dev/mtd0 0x100000 0x280000 >> "$DBGLOG" 2>&1
+RC=$?
+log "erase exit=$RC"
+if [ "$RC" -ne 0 ]; then
+    log "ERASE FAILED, aborting (not rebooting)"
+    umount "$MNT"
     exit 1
 fi
 
-echo "stage1: OK, marking done and rebooting"
+log "writing new kernel"
+/sbin/mtdtool write /dev/mtd0 0x100000 "$KNL" >> "$DBGLOG" 2>&1
+RC=$?
+log "write exit=$RC"
+if [ "$RC" -ne 0 ]; then
+    log "WRITE FAILED, aborting (not rebooting)"
+    umount "$MNT"
+    exit 1
+fi
+
+log "verifying"
+SIZE=$(wc -c < "$KNL")
+dd if=/dev/mtd0ro bs=65536 skip=16 count=40 of=/tmp/verify.bin >> "$DBGLOG" 2>&1
+head -c "$SIZE" /tmp/verify.bin > /tmp/verify_trim.bin
+if ! cmp -s /tmp/verify_trim.bin "$KNL"; then
+    log "VERIFY FAILED - not rebooting, SPI left untouched"
+    umount "$MNT"
+    exit 1
+fi
+log "verify OK"
+
+log "OK, marking done and rebooting"
 touch "$MARKER"
 sync
-umount $MNT
+umount "$MNT"
 sync
 reboot -f
 EOF
@@ -444,7 +481,8 @@ Mirakurunから使う場合は、別PCでMirakurunを動かし、[docs/11](11_tv
 | 症状 | 考えられる原因 / 対処 |
 |---|---|
 | 1回目の起動後、いつまでもLEDが点滅したまま・SPIが書き変わらない | `.dlm` の展開失敗(ヘッダ不正・CRC不一致・容量不足)、または `rcS` の段階1呼び出しまで届いていない(`sed` の挿入位置がファームのバージョンで変わっている等)。HDDをPCに戻し、`build_dlm.py verify` と `tar tzf` でサイズ確認、`official_rootfs/etc/init.d/rcS` の中身を再確認 |
-| 段階1スクリプトが動いたログが無い(sys1に `.stage1_done` が無い) | `mtdtool` が動かなかった可能性(`/lib/ld.so.1` 不在など)。公式rootfs上で `ldd` 相当の確認ができないため、代わりに段階1スクリプトの各行に `echo ... > /tmp/stage1.log` を追加し、sys1へコピーするようにして原因を特定する |
+| 段階1が動いたログが無い(sys1に `.stage1_done` が無い) | [2-2](#2-2-段階1スクリプト本体)のログ付き版なら、sys1の `.stage1_debug.log` を見れば、どのステップ(mount・mtdtool起動・erase・write・verify)で失敗したかが分かる。`mtdtool` が動かなかった場合(`/lib/ld.so.1` 不在など)は、ログの `mtdtool usage-check exit=...` が非ゼロになる |
+| **ウォッチドッグは止まっている(5分以上再起動なし)のに `.stage1_done` が無く、pingは通るがtelnet/ssh/公式WebUIも不通**(実機で発生) | procmngはある程度起動している(ウォッチドッグ停止まで到達)が、段階1スクリプトが失敗して(`/sbin/nasne-stage1.sh \|\| true` で握りつぶされ)`rcS` は継続、`startdtvtuner` まで進んだと考えられる。[docs/02](02_boot_chain.md)によると `startdtvtuner` は `/dev/sda3`(p3)を録画領域としてマウントする処理を含むが、手順3で**p3はもうDebianのrootfsに置き換えてある**ため、ここで公式ユーザーランドの一部処理(録画領域の初期化チェック等)がおかしくなっている可能性がある。まず `.stage1_debug.log` で段階1の失敗箇所を特定して直すのが先。段階1が `reboot -f` まで到達すれば、`startdtvtuner` のp3処理に行き着く前に次の起動(自作カーネル)に切り替わるので、この問題自体は起きないはず |
 | 書き込み途中で電源が落ちた・`reboot` 後も公式ファームのまま | 4段目ブートがKNLのCRC不一致を検出し、BKNL(Bスロット)へフォールバックした可能性。これは安全に働いた証拠。原因(段階1スクリプトの `allowed()` 範囲・サイズ計算)を見直し、やり直す |
 | CRCは正しいが起動途中で固まる(フォールバックが効かない) | [docs/05](05_kernel_and_direct_boot.md)の通り、CRC一致・内容不正の場合はA/Bのフォールバックが働かない。HDDをPCに戻し、`00550066.dlm` を手順0のバックアップに戻して公式ファームの `.dlm` のまま起動させ、SPIを元のダンプ(`backup`時に未取得なら、別途CH341Aで読み出した正常なKNL)に書き戻す必要がある |
 | 2回目の起動でDebianに届かない(起動カウンタが2でSony経路に戻る) | [docs/05](05_kernel_and_direct_boot.md)の通り。`rc.local` が走っていない、Debian側のp3の構成を確認 |
