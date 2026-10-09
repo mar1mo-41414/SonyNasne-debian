@@ -209,11 +209,17 @@ sudo umount /tmp/debian-root/proc /tmp/debian-root/sys
 sudo rm -f /tmp/debian-root/usr/bin/qemu-mipsel-static
 ```
 
-`/etc/rc2.d/`〜`/etc/rc5.d/`に`S05nasne-mcu-wd`・`S20nasne-recpt1-server`のシンボリックリンクができていることを確認:
+`/etc/rc2.d/`〜`/etc/rc5.d/`に2つのサービスへのシンボリックリンクができていることを確認:
 
 ```bash
 ls /tmp/debian-root/etc/rc2.d/ | grep nasne
 ```
+
+> **数字は `defaults 05`/`defaults 20` のとおりにはならない(実機で確認)**: wheezyの `update-rc.d` は `insserv` 経由でLSBヘッダ
+> (`### BEGIN INIT INFO` の `Required-Start`)の依存関係から優先度を自動計算するため、指定した数字は実質ヒントに過ぎない。
+> 実機では `S01nasne-mcu-wd` → `S02nasne-recpt1-server` になった。**大事なのは数字そのものではなく順序**で、
+> `nasne-recpt1-server` のヘッダに `Required-Start: $local_fs $network nasne-mcu-wd` とある(`nasne-mcu-wd` の後と明記)ので、
+> 必ず `nasne-mcu-wd` が先に実行される。`ls` の結果が「`nasne-mcu-wd` の番号 < `nasne-recpt1-server` の番号」になっていればOK。
 
 B-CASカードは、この後の手順5(2回目起動)でDebianが立ち上がった後、実機にそのまま挿しておけばよい(ソフト的な設定は不要)。
 
