@@ -369,6 +369,7 @@ sync && sudo umount /mnt/nasne_sys1
 
 # p3をDebianに置き換える(録画データは消える)
 sudo mkfs.ext3 -L debian /dev/sdX3
+sudo mkdir -p /mnt/p3
 sudo mount /dev/sdX3 /mnt/p3 && sudo cp -a /tmp/debian-root/. /mnt/p3/
 sync && sudo umount /mnt/p3
 ```
