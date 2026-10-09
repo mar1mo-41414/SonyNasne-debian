@@ -29,26 +29,30 @@ HDD側で起きる自動ロールバックという想定外の壁に今ぶつ�
 ## 全体の流れ
 
 ```
-1. PCでHDDを準備する
+1. PCでHDDを準備する(1回目)
    ├─ sys1 の 00550066.dlm を自作版に差し替える
    │    ヘッダ: そのHDD自身の 00550066.dlm をテンプレートにする(→ マネージャの日付検査に自動で通る)
-   │    ボディ: 公式rootfs + 「1回目だけ動く段階1スクリプト」
+   │    ボディ: 公式rootfs + 「段階1スクリプト」(SPI読み戻しで冪等、何度動いても安全)
    ├─ sys1 に、書き込み先の新カーネル(KNLセグメント)も置く
-   └─ p3 を ext3 にして Debian (wheezy) を置く。nasne-recpt1 / ドライバ / nasne-mcu-wd もここに入れる
+   └─ p3 は**まだ触らない**(公式のまま)。procmngがp3の異常を検出してHDD(sys1)を
+       自動ロールバックする現象を確認したため(下記トラブルシュート参照)
 
-2. 1回目の起動(まだ公式カーネル)
+2. 1回目の起動(まだ公式カーネル、p3は公式のまま)
    公式の miniroot init が自作 .dlm を展開し、段階1スクリプトが動く:
    ├─ /dev/mtd0 の KNL だけを自作カーネル(内蔵initramfs入り)に書き換え、読み戻して確認する
-   ├─ sys1に完了印を書く(2回目以降は何もしない)
+   │    (完了判定はHDD側マーカーではなくSPI自体の読み戻し。procmngのロールバックに影響されない)
    └─ reboot
 
-3. 2回目の起動(自作カーネル)
+3. PCでHDDを準備する(2回目): 段階1完了(SPIが自作カーネルになったこと)を確認してから、
+   ここで初めて p3 を ext3 にして Debian (wheezy) を置く。nasne-recpt1 / ドライバ / nasne-mcu-wd もここに入れる
+
+4. 2回目の起動(自作カーネル)
    自作カーネルの /nasne_init が p3 の Debian へ switch_root する。Debian側のサービスが:
    ├─ ウォッチドッグ停止 (nasne-mcu-wd)
    ├─ rc.xcode4 でチューナードライバ読み込み
    └─ nasne-recpt1 --listen (HTTP配信サーバ)
 
-4. curl http://<nasne>:8301/tuner/<ch> | ffplay -  で視聴
+5. curl http://<nasne>:8301/tuner/<ch> | ffplay -  で視聴
 ```
 
 仕組みの元ネタ: `.dlm` とヘッダ検査は[docs/03](03_firmware_format.md)、ブートチェーンは[docs/02](02_boot_chain.md)、カーネル差し替えと直起動は[docs/05](05_kernel_and_direct_boot.md)、ウォッチドッグは[docs/06](06_mcu_watchdog.md)、TV視聴は[docs/11](11_tv_streaming.md)。
@@ -389,7 +393,7 @@ sudo install -m 0755 ../mtdtool          sbin/mtdtool
 cat etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 ```
 
-`nasne-stage1.sh` 自体は[2-2](#2-2-段階1スクリプト本体)のまま(sys1の完了マーカーで1回だけ実行される設計)で変更不要。
+`nasne-stage1.sh` 自体は[2-2](#2-2-段階1スクリプト本体)のまま(SPIのKNL読み戻しで冪等に判定する設計)で変更不要。
 `mtdtool` が公式rootfs上で動くかどうかの検証状況は[2-1](#2-1-nasne上で動くspi書き込みツールを用意する)参照。
 
 ### 2-4. tar.gzに固めて `.dlm` を作る
@@ -412,15 +416,52 @@ python3 scripts/build_dlm.py verify custom_00550066.dlm                   # OK�
 > **HDD側からは原因を切り分けられない**([docs/03](03_firmware_format.md))。`sys2` は1GBだが、公式rootfsのサイズ次第では余裕が少ないことがあるので、
 > 事前に `tar tzf custom_rootfs.tar.gz | wc -l` や展開サイズを確認しておく。
 
-## 手順3. HDDに書き込む
+## 手順3. HDDに書き込む(sys1のみ。p3はまだ触らない)
+
+**procmngによるHDDロールバック([トラブルシュート](#トラブルシュート)参照)を避けるため、p3はこの時点では一切変更しない**
+(公式の状態・録画データが入っているならそのまま)。段階1(SPI書き換え)が完了したことを確認した**後で**、手順3-2としてp3をDebianに書き換える。
 
 ```bash
 sudo mount /dev/sdX1 /mnt/nasne_sys1
 sudo cp custom_00550066.dlm /mnt/nasne_sys1/00550066.dlm
 sudo cp knl_new.bin        /mnt/nasne_sys1/knl_new.bin
 sync && sudo umount /mnt/nasne_sys1
+```
 
-# p3をDebianに置き換える(録画データは消える)
+`00110022.dlm` や各バンクディレクトリ(`11002200/`、`33004400/`)、p3は**一切変更しない**(マネージャは正規のものがそのまま使われる)。
+
+## 手順4. 1回目の起動(公式カーネルのまま、p3はまだ公式のまま)
+
+HDDをnasneに挿して電源を入れる。**この時点ではp3がまだ公式のままなので、procmngは通常通り動くはず**。
+
+1. 公式のminiroot `/init` が `00110022.dlm`・`00550066.dlm` を検証(ヘッダのhwtype・日付・CRCはテンプレート継承なので通る)。
+2. ボディを `/rfs` に展開し、`sbin/init`(busyboxへのシンボリックリンク、無改変)へ `switch_root`。
+3. busybox initが `/etc/inittab` 経由で `rcS` を実行し、[2-3](#2-3-rcs-の先頭に段階1呼び出しを差し込む)で仕込んだ呼び出しにより `nasne-stage1.sh` が走る。
+   `/dev/mtd0` のKNLを `knl_new.bin` に書き換え、読み戻して確認する(SPI読み戻し判定なので、何度起動しても安全に繰り返せる)。
+4. OKなら `reboot`。NGなら公式ファームのまま起動を続ける(ログや挙動から原因を確認する。[トラブルシュート](#トラブルシュート))。
+
+このときの所要時間・LEDの挙動は未検証。**最初は電源を入れたまま数分待ち、`ping` が通るか確認する**のが安全
+(可能であれば、この段階でもCH341Aでの読み出し確認を併用して様子を見るとよい)。
+
+## 手順4-1. 段階1完了の確認と、p3へのDebian書き込み
+
+リブート後(または数分待った後)、**一旦電源ケーブルを抜いて**HDDをPCに戻し、段階1が成功したかを確認する:
+
+```bash
+sudo mount /dev/sdX1 /mnt/nasne_sys1
+cat /mnt/nasne_sys1/.stage1_debug.log   # "verify OK" "rebooting" まで進んでいること
+python3 scripts/dlm_crypto.py decrypt-header /mnt/nasne_sys1/00550066.dlm   # major_version/dateが手順0のbackupと一致することも確認
+sudo umount /mnt/nasne_sys1
+```
+
+> ⚠️ ここで `00550066.dlm` のヘッダが手順0のバックアップと変わっていたら(ロールバックが発生していたら)、段階1スクリプト自体が
+> HDD上から失われている。`backup/sys1/00550066.dlm` を書き戻し、カスタム`.dlm`の作成(手順2)からやり直す必要がある
+> (この時点ではp3はまだ公式のままで実害は無いはず)。
+
+`.stage1_debug.log` が `verify OK` まで進んでいれば、**SPIのKNLは自作カーネルに書き換わっている**。ここで初めてp3をDebianに書き換える
+(録画データは消える):
+
+```bash
 mount | grep debian-root   # 何も出ないこと(出たら手順1-4の umount が効いていない。上の注記を参照)
 sudo mkfs.ext3 -L debian /dev/sdX3
 sudo mkdir -p /mnt/p3
@@ -428,26 +469,9 @@ sudo mount /dev/sdX3 /mnt/p3 && sudo cp -a /tmp/debian-root/. /mnt/p3/
 sync && sudo umount /mnt/p3
 ```
 
-`00110022.dlm` や各バンクディレクトリ(`11002200/`、`33004400/`)は**一切変更しない**(マネージャは正規のものがそのまま使われる)。
-
-## 手順4. 1回目の起動(公式カーネルのまま)
-
-HDDをnasneに挿して電源を入れる。
-
-1. 公式のminiroot `/init` が `00110022.dlm`・`00550066.dlm` を検証(ヘッダのhwtype・日付・CRCはテンプレート継承なので通る)。
-2. ボディを `/rfs` に展開し、`sbin/init`(busyboxへのシンボリックリンク、無改変)へ `switch_root`。
-3. busybox initが `/etc/inittab` 経由で `rcS` を実行し、[2-3](#2-3-rcs-の先頭に段階1呼び出しを差し込む)で仕込んだ呼び出しにより `nasne-stage1.sh` が走る。
-   `/dev/mtd0` のKNLを `knl_new.bin` に書き換え、読み戻して確認する。
-4. OKなら `reboot`。NGなら公式ファームのまま起動を続ける(ログや挙動から原因を確認する。[トラブルシュート](#トラブルシュート))。
-
-このときの所要時間・LEDの挙動は未検証。**最初は電源を入れたまま数分待ち、`ping` が通るか、PCに繋いだ状態でSPIが実際に書き変わったかを確認する**のが安全
-(可能であれば、この段階でもCH341Aでの読み出し確認を併用して様子を見るとよい)。
-
-> ⚠️ **[トラブルシュート](#トラブルシュート)の「HDD(sys1)の`00550066.dlm`が自動的にロールバックされる」現象に注意**。段階1が成功して
-> `reboot` した後も、**何らかの理由でSony純正の起動に戻ってしまった場合**は、電源を切ってHDDをPCに戻し、`00550066.dlm` の
-> ヘッダ(`decrypt-header`)が手順0でバックアップしたものと変わっていないか、毎回必ず確認すること。変わっていたら、段階1スクリプト
-> 自体がHDD上から失われている(次にnasneに挿してもKNLは書き換わらない)ので、`backup/sys1/00550066.dlm` を一旦書き戻し、
-> カスタム`.dlm`の作成(手順2)からやり直す必要がある。
+この後は、もう1回目の起動(公式カーネル・procmng経由)に戻ることを想定しない。もし何らかの理由でSony純正の起動に戻ってしまった場合
+(フォールバック等)、p3はもうDebianになっているので、また同じロールバックが起きる可能性がある。その場合は
+[トラブルシュート](#トラブルシュート)を参照。
 
 ## 手順5. 2回目の起動(自作カーネル → Debian直起動)
 
