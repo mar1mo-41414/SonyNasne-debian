@@ -422,6 +422,25 @@ def _gzip_header_len(data: bytes) -> int:
     return pos
 
 
+def inflate_raw(dec: bytes) -> bytes:
+    """gzipヘッダをスキップし、deflate本体だけを生のままinflateする(トレーラのCRC32/ISIZE検証はしない)。
+
+    実機検証で、3種のtail_modeすべてが同じ出力サイズ(86026240バイト)になり、
+    CRC不一致の値も末尾の数文字が共通していた。これは「deflate本体の展開自体は
+    もう正しく完了していて、違いはgzipトレーラ8バイトの復号結果だけ」という
+    可能性を示すため、トレーラを無視して生のtar本体を取り出し、`tar`コマンドで
+    直接検証できるようにする。
+    """
+    import zlib
+
+    hdr_len = _gzip_header_len(dec)
+    d = zlib.decompressobj(-zlib.MAX_WBITS)
+    out = bytearray()
+    out += d.decompress(dec[hdr_len:])
+    out += d.flush()
+    return bytes(out)
+
+
 def inspect_gzip_decode(dec: bytes) -> str:
     """gzip展開を試し、失敗してもどこまで正しくinflateできたかを報告する。
 
@@ -562,13 +581,25 @@ if __name__ == "__main__":
             idx = args.index("--tail")
             tail_mode = args[idx + 1]
             del args[idx : idx + 2]
+        inflate = False
+        if "--inflate" in args:
+            idx = args.index("--inflate")
+            inflate = True
+            del args[idx : idx + 1]
         dec = decrypt_body(args[0], chunk_size=chunk_size, tail_mode=tail_mode)
-        with open(args[1], "wb") as f:
-            f.write(dec)
-        print(f"復号完了: {args[1]} ({len(dec)} bytes)"
+        print(f"復号完了(gzip, 未検証): {len(dec)} bytes"
               + (f" (chunk_size={chunk_size})" if chunk_size else "")
               + f" (tail_mode={tail_mode})")
         print(f"先頭バイト(gzipマジック期待値 1f8b): {dec[:4].hex()}")
+        if inflate:
+            try:
+                dec = inflate_raw(dec)
+                print(f"--inflate: gzipトレーラのCRC検証なしで生のtar本体を取り出し ({len(dec)} bytes)")
+            except Exception as e:  # noqa: BLE001
+                print(f"--inflate失敗: {type(e).__name__}: {e}", file=sys.stderr)
+                sys.exit(1)
+        with open(args[1], "wb") as f:
+            f.write(dec)
     elif len(sys.argv) >= 3 and sys.argv[1] == "probe-tail":
         args = sys.argv[2:]
         tail_modes = ["truncate", "cfb", "zeropad"]
