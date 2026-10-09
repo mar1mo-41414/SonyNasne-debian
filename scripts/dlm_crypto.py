@@ -280,6 +280,50 @@ class NasneBlowfish:
             prev_l, prev_r = saved_l, saved_r
         return bytes(out)
 
+    def chain_decrypt_tail(self, data: bytes, iv=(0, 0), endian="little", tail_mode: str = "truncate") -> bytes:
+        """chain_decrypt と同じだが、8バイト境界に満たない末尾の扱いを選べる。
+
+        実機で30MB超のrootfsを復号すると、末尾が8バイト境界に満たない場合がある
+        (今回の実機で確認: ボディ31646046バイト = 8*3955755 + 6)。従来の
+        `chain_decrypt`はこの余りを単純に切り捨てていたが、その余りの中に
+        deflateの終端マーカー/gzipトレーラが含まれていて展開が完結しないことを
+        実機データで確認した。`tail_mode`で余りの扱いを選べるようにする:
+
+          "truncate": 末尾を切り捨てる(chain_decryptと同じ、従来動作)
+          "cfb":      末尾を、直前のCBCブロック(暗号文)を再暗号化したキーストリーム
+                      でXORする(CFB風。ストリーム処理の実装によくあるパターン)
+          "zeropad":  末尾をゼロパディングして8バイトブロックとして通常のCBC復号し、
+                      先頭の必要バイト数だけ切り出す
+
+        どちらが実機(FUN_00401ad0)と一致するかは未確定。`probe-body`で両方試すこと。
+        """
+        n = len(data) - (len(data) % 8)
+        full = self.chain_decrypt(data[:n], iv=iv, endian=endian)
+        tail = data[n:]
+        if not tail or tail_mode == "truncate":
+            return full
+        if n == 0:
+            prev_l, prev_r = iv
+        else:
+            last_block = data[n - 8 : n]
+            prev_l = int.from_bytes(last_block[0:4], endian)
+            prev_r = int.from_bytes(last_block[4:8], endian)
+        if tail_mode == "cfb":
+            ks_l, ks_r = self._encrypt_block(prev_l, prev_r)
+            keystream = ks_l.to_bytes(4, endian) + ks_r.to_bytes(4, endian)
+            tail_dec = bytes(a ^ b for a, b in zip(tail, keystream))
+            return full + tail_dec
+        if tail_mode == "zeropad":
+            padded = tail + b"\x00" * (8 - len(tail))
+            L = int.from_bytes(padded[0:4], endian)
+            R = int.from_bytes(padded[4:8], endian)
+            dl, dr = self._decrypt_block(L, R)
+            dl ^= prev_l
+            dr ^= prev_r
+            tail_dec = (dl.to_bytes(4, endian) + dr.to_bytes(4, endian))[: len(tail)]
+            return full + tail_dec
+        raise ValueError(f"unknown tail_mode: {tail_mode}")
+
     def chain_encrypt(self, data: bytes, iv=(0, 0), endian="little") -> bytes:
         """chain_decrypt の逆操作。自作ヘッダを実機互換の暗号文に変換する際に使う。"""
         assert len(data) % 8 == 0
@@ -331,27 +375,27 @@ def parse_header_fields(dec_header: bytes, file_size: int | None = None) -> dict
     return info
 
 
-def decrypt_body(path: str, chunk_size: int | None = None) -> bytes:
+def decrypt_body(path: str, chunk_size: int | None = None, tail_mode: str = "truncate") -> bytes:
     """ボディを復号する(flag==1、body_encryptedの.dlmのみ有効)。
 
     FUN_00401ad0相当: ヘッダとは独立してIV=(0,0)から開始するBlowfish-CBC復号。
 
-    `chunk_size` を省略した場合(従来動作)は、ファイル全体を単一のCBCチェインとして
-    8バイト境界まで復号する。**この前提は小さいファイル(rootfsサイズが小さい版)では
-    通ったが、30MB超の公式rootfsでは先頭の数百バイトしか正しく復号されず、
-    `tar`/`gzip` が "unexpected end of file" で失敗することを確認している**
-    (実機は512バイト単位のバッファでストリーム処理しており、おそらくチャンク境界で
-    IV(0,0)にリセットしている可能性がある。未確定)。`chunk_size` を指定すると、
-    入力をそのバイト数ごとに分割し、**各チャンクをIV=(0,0)から独立にCBC復号**する。
-    どの値が正しいかは実機バイナリ(`FUN_00401ad0`)を読むまで確定しないため、
-    `probe-body` サブコマンドで候補をいくつか試して当たりを付けること。
+    **実機検証の結果、`chunk_size`によるチャンク分割(各チャンクをIV(0,0)から独立に
+    CBC復号する仮説)は誤りと判明した**(128~32768の候補すべてが即座に
+    "invalid distance too far back"等でinflate失敗。チャンク境界でのIVリセットは
+    実機の挙動ではない)。`chunk_size=None`(ファイル全体を単一チェインとして復号)が
+    正しい方向で、実機の30MB超のrootfsでも86MB相当まで正しくinflateが進むことを
+    確認している。残る問題は**末尾が8バイト境界に満たない場合の扱い**で、
+    従来は単純に切り捨てていたが、その切り捨て分にdeflateの終端マーカーや
+    gzipトレーラが含まれていて展開が完結しない事例を確認した。`tail_mode`で
+    末尾の扱いを選べる(`NasneBlowfish.chain_decrypt_tail`参照)。
+    `chunk_size`は(誤りと分かった後も)診断用に残してあるが、通常はNoneのままでよい。
     """
     data = open(path, "rb").read()
     body = data[64:]
     bf = NasneBlowfish()
     if chunk_size is None:
-        n = len(body) - (len(body) % 8)
-        return bf.chain_decrypt(body[:n], iv=(0, 0))
+        return bf.chain_decrypt_tail(body, iv=(0, 0), tail_mode=tail_mode)
     out = bytearray()
     for i in range(0, len(body), chunk_size):
         piece = body[i : i + chunk_size]
@@ -430,6 +474,24 @@ def probe_body_chunk_sizes(path: str, candidates: list[int | None]) -> list[tupl
     return results
 
 
+def probe_tail_modes(path: str, tail_modes: list[str]) -> list[tuple[str, bool, str]]:
+    """decrypt_bodyのtail_mode(末尾の8バイト未満の扱い)をいくつか試し、
+    gzip展開がどこまで進むかを調べる。chunk_sizeは常にNone(単一チェイン)で固定。
+
+    戻り値: [(tail_mode, gzip_ok, detail), ...]
+    """
+    results = []
+    for tm in tail_modes:
+        try:
+            dec = decrypt_body(path, chunk_size=None, tail_mode=tm)
+            detail = inspect_gzip_decode(dec)
+            ok = detail.startswith("OK")
+            results.append((tm, ok, detail))
+        except Exception as e:  # noqa: BLE001
+            results.append((tm, False, f"{type(e).__name__}: {e}"))
+    return results
+
+
 def parse_segments(path: str):
     """公式アップデータ(KRST3101_XXXX_SECURE.dlm)や、SPIダンプの一部を
     [KNL][RFS][DLM]形式のセグメント連結コンテナとしてパースする。
@@ -491,15 +553,32 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 4 and sys.argv[1] == "decrypt-body":
         args = sys.argv[2:]
         chunk_size = None
+        tail_mode = "truncate"
         if "--chunk" in args:
             idx = args.index("--chunk")
             chunk_size = int(args[idx + 1])
             del args[idx : idx + 2]
-        dec = decrypt_body(args[0], chunk_size=chunk_size)
+        if "--tail" in args:
+            idx = args.index("--tail")
+            tail_mode = args[idx + 1]
+            del args[idx : idx + 2]
+        dec = decrypt_body(args[0], chunk_size=chunk_size, tail_mode=tail_mode)
         with open(args[1], "wb") as f:
             f.write(dec)
-        print(f"復号完了: {args[1]} ({len(dec)} bytes)" + (f" (chunk_size={chunk_size})" if chunk_size else ""))
+        print(f"復号完了: {args[1]} ({len(dec)} bytes)"
+              + (f" (chunk_size={chunk_size})" if chunk_size else "")
+              + f" (tail_mode={tail_mode})")
         print(f"先頭バイト(gzipマジック期待値 1f8b): {dec[:4].hex()}")
+    elif len(sys.argv) >= 3 and sys.argv[1] == "probe-tail":
+        args = sys.argv[2:]
+        tail_modes = ["truncate", "cfb", "zeropad"]
+        if "--modes" in args:
+            idx = args.index("--modes")
+            tail_modes = args[idx + 1].split(",")
+            del args[idx : idx + 2]
+        print("decrypt_bodyのtail_modeごとに復号→gzip展開を試す(chunk_size=None固定):")
+        for tm, ok, detail in probe_tail_modes(args[0], tail_modes):
+            print(f"  tail={tm}: {'OK' if ok else 'NG'} {detail}")
     elif len(sys.argv) >= 3 and sys.argv[1] == "probe-body":
         args = sys.argv[2:]
         candidates: list[int | None] = [None, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
