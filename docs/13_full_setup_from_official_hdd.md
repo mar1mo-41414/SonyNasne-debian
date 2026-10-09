@@ -423,8 +423,12 @@ cd ..
 
 ```bash
 ls official_rootfs/sbin/nasne-stage1.sh official_rootfs/sbin/mtdtool 2>&1   # 両方とも「そのようなファイルはありません」が正しい
-grep -rn 'nasne-stage1\|mtdtool' official_rootfs/etc/init.d/rcS             # 何も出ないのが正しい(今回の設計ではofficial_rootfs側に置かない)
+grep -rn 'nasne-stage1\|mtdtool' official_rootfs/etc/init.d/rcS             # 下の行だけ出るのが正しい
 ```
+
+> 2行目の`grep`は、`chroot /mnt/p3 /usr/local/sbin/nasne-stage1.sh ...`という行(**今回の設計で正しく挿入した、p3=Debian側のスクリプトを
+> 呼ぶ行**)にも`nasne-stage1`という文字列が含まれるので、これは1行だけヒットする。問題なのは**それ以外に**ヒットする行がある場合
+> (`/sbin/nasne-stage1.sh`や`/sbin/mtdtool`のように`official_rootfs`自身のパスを指しているもの)で、そちらが無いことを確認する。
 
 tar.gzに固めて `.dlm` を作る:
 
