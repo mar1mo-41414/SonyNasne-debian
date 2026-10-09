@@ -209,6 +209,11 @@ sudo umount /tmp/debian-root/proc /tmp/debian-root/sys
 sudo rm -f /tmp/debian-root/usr/bin/qemu-mipsel-static
 ```
 
+> **`umount` が本当に効いたか必ず確認する**: `mount | grep debian-root` を実行して**何も表示されない**こと。chroot内の何かがまだ `/proc`/`/sys` を
+> 使用中だと通常の `umount` が `busy` で失敗し、`/tmp/debian-root/proc` にホストの本物の `/proc` がマウントされたまま残ってしまう。
+> この状態で後の手順3の `cp -a /tmp/debian-root/. /mnt/p3/` を実行すると、ホストの実行中プロセス情報(`/proc/1/task/1/mem` 等の特殊ファイル)を
+> 誤ってコピーしようとして読み込みエラーになる。残っていたら `sudo umount -l /tmp/debian-root/proc /tmp/debian-root/sys`(lazy umount)で外すこと。
+
 `/etc/rc2.d/`〜`/etc/rc5.d/`に2つのサービスへのシンボリックリンクができていることを確認:
 
 ```bash
@@ -368,6 +373,7 @@ sudo cp knl_new.bin        /mnt/nasne_sys1/knl_new.bin
 sync && sudo umount /mnt/nasne_sys1
 
 # p3をDebianに置き換える(録画データは消える)
+mount | grep debian-root   # 何も出ないこと(出たら手順1-4の umount が効いていない。上の注記を参照)
 sudo mkfs.ext3 -L debian /dev/sdX3
 sudo mkdir -p /mnt/p3
 sudo mount /dev/sdX3 /mnt/p3 && sudo cp -a /tmp/debian-root/. /mnt/p3/
