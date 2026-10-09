@@ -134,23 +134,107 @@ Debianのrootfsを作る(未展開のまま、あとでp3へコピーする):
 sudo SSH_PUBKEY=~/.ssh/id_rsa.pub ./scripts/build_debian_rootfs.sh /tmp/debian-root
 ```
 
-p3に置く設定は[docs/05](05_kernel_and_direct_boot.md)③の表の通り(`/etc/nasne-direct-boot`、`/etc/rc.local` で起動カウンタを空にする、`/etc/network/interfaces` など)に加えて、
-[docs/06](06_mcu_watchdog.md)のウォッチドッグ停止サービス、[docs/11](11_tv_streaming.md)の `nasne-recpt1-server` を `/tmp/debian-root` の中に仕込んでおく(MIPS用バイナリのビルド方法は各ドキュメント参照)。
+これで `/tmp/debian-root` に、sshd・root用SSH鍵(RSA)までは設定済みのDebian wheezy (mipsel) ができる。
+以下、このディレクトリに**直接**ファイルを置いていく(nasneにsshでログインできるのは2回目起動後なので、`scp`/`ssh`は使わず、PC上のパスとして直接書き込む)。
+
+### 1-1. 直起動フラグと基本設定([docs/05](05_kernel_and_direct_boot.md)③相当)
+
+```bash
+sudo touch /tmp/debian-root/etc/nasne-direct-boot
+
+# 起動成功の印(rc.local)。rc.localが無ければ作る。
+sudo tee -a /tmp/debian-root/etc/rc.local >/dev/null <<'EOF'
+: > /var/lib/nasne-boot-count
+exit 0
+EOF
+sudo chmod +x /tmp/debian-root/etc/rc.local
+
+# Ethernet(カーネルにSynopGMAC組み込み済み、dhcp)
+sudo tee /tmp/debian-root/etc/network/interfaces >/dev/null <<'EOF'
+auto lo
+iface lo inet loopback
+
+allow-hotplug eth0
+iface eth0 inet dhcp
+EOF
+```
+
+### 1-2. 公式ドライバ(xcode4drv.ko、rc.xcode4)を取り出す
+
+手順0で取り出した `official_rootfs/` の中に、公式ドライバ一式が入っている([docs/06](06_mcu_watchdog.md)の前提)。
+
+```bash
+find official_rootfs/opt/dtvtuner -iname 'xcode4drv.ko' -o -iname 'rc.xcode4'   # 実際のパスを確認(バージョンにより多少違う可能性がある)
+sudo mkdir -p /tmp/debian-root/usr/local/sbin
+sudo cp official_rootfs/opt/dtvtuner/lib/modules/xcode4drv.ko /tmp/debian-root/usr/local/sbin/
+sudo cp official_rootfs/opt/dtvtuner/lib/modules/rc.xcode4    /tmp/debian-root/usr/local/sbin/
+sudo chmod +x /tmp/debian-root/usr/local/sbin/rc.xcode4
+```
+
+### 1-3. MIPS用バイナリをクロスビルドする(mcui2c, nasne-recpt1, i2cx)
+
+[docs/05](05_kernel_and_direct_boot.md)①で作ったDocker環境 `nasne-kcc:gcc432`(nostdlib・静的リンクのクロスコンパイラ)を使う。
+`i2cx` は手順6([docs/08](08_tuner_i2c.md)のチューナー選局、`scripts/nasne_fe.py`がsshで呼ぶ)用に必要なので、ここで一緒にビルドしておく:
+
+```bash
+docker run --rm -v "$PWD":/w -w /w nasne-kcc:gcc432 \
+  mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o mcui2c scripts/watchdog/mcui2c.c
+docker run --rm -v "$PWD":/w -w /w nasne-kcc:gcc432 \
+  mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o nasne-recpt1 scripts/tools/nasne_recpt1.c
+docker run --rm -v "$PWD":/w -w /w nasne-kcc:gcc432 \
+  mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o i2cx scripts/tools/i2cx.c
+
+sudo cp mcui2c nasne-recpt1 i2cx /tmp/debian-root/usr/local/sbin/
+sudo chmod +x /tmp/debian-root/usr/local/sbin/mcui2c /tmp/debian-root/usr/local/sbin/nasne-recpt1 /tmp/debian-root/usr/local/sbin/i2cx
+```
+
+### 1-4. 起動時サービス(nasne-mcu-wd, nasne-recpt1-server)を仕込む
+
+```bash
+sudo cp scripts/watchdog/nasne-mcu-wd         /tmp/debian-root/etc/init.d/
+sudo cp scripts/watchdog/nasne-recpt1-server  /tmp/debian-root/etc/init.d/
+sudo chmod +x /tmp/debian-root/etc/init.d/nasne-mcu-wd /tmp/debian-root/etc/init.d/nasne-recpt1-server
+```
+
+`update-rc.d`(ランレベルごとの起動シンボリックリンク作成)はMIPSバイナリなので、`build_debian_rootfs.sh` と同じ要領で
+`chroot` + `qemu-mipsel-static` を使う(同スクリプトが最後にqemuバイナリを消しているので、入れ直す):
+
+```bash
+sudo cp "$(command -v qemu-mipsel-static)" /tmp/debian-root/usr/bin/
+sudo mount -t proc  proc  /tmp/debian-root/proc
+sudo mount -t sysfs sysfs /tmp/debian-root/sys
+sudo chroot /tmp/debian-root update-rc.d nasne-mcu-wd defaults 05          # docs/06: ウォッチドッグは早めに止める
+sudo chroot /tmp/debian-root update-rc.d nasne-recpt1-server defaults 20  # docs/11: ドライバ起動後でよい
+sudo umount /tmp/debian-root/proc /tmp/debian-root/sys
+sudo rm -f /tmp/debian-root/usr/bin/qemu-mipsel-static
+```
+
+`/etc/rc2.d/`〜`/etc/rc5.d/`に`S05nasne-mcu-wd`・`S20nasne-recpt1-server`のシンボリックリンクができていることを確認:
+
+```bash
+ls /tmp/debian-root/etc/rc2.d/ | grep nasne
+```
+
+B-CASカードは、この後の手順5(2回目起動)でDebianが立ち上がった後、実機にそのまま挿しておけばよい(ソフト的な設定は不要)。
 
 ## 手順2. 「段階1スクリプト」を作り、公式rootfsに足す
 
 ### 2-1. nasne上で動くSPI書き込みツールを用意する
 
-[docs/09](09_tools.md)の手順で、Docker (`nasne-kcc:gcc432`) で `mtdtool` をビルドする:
+`mtdtool` はglibcの `syscall()` を使う動的リンクの小物なので、Dockerの `nasne-kcc:gcc432`(nostdlibの古いクロスツールチェーン)ではなく、
+**ホストのクロスコンパイラ**(Debian/Ubuntuの `gcc-mipsel-linux-gnu` パッケージ)でビルドする([docs/09](09_tools.md)):
 
 ```bash
+sudo apt install gcc-mipsel-linux-gnu   # 未導入なら
 mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o mtdtool scripts/tools/mtdtool.c
+file mtdtool   # "ELF 32-bit LSB executable, MIPS ... dynamically linked, interpreter /lib/ld.so.1" になっていることを確認(実機で確認済み)
 ```
 
-> ⚠️ **未検証ポイント**: `mtdtool` は `/lib/ld.so.1` を要求する動的リンクバイナリ([docs/09](09_tools.md))。
-> Debian上では動作確認済みだが、**公式miniroot/sys2のuserlandにMIPS用glibcの動的リンカ(`/lib/ld.so.1`)と対応する `libc.so` があるか**は未確認。
-> 無ければ `mtdtool` はそのまま動かない。切り分け方法は[トラブルシュート](#トラブルシュート)。代替として、`scripts/tools/*.c` と同じ作法(`-nostdlib -static`、素のsyscall)で
-> MTD書き込み専用の小さなツールを書き直せば、この依存を無くせる(未実装)。
+`mtdtool` は `/lib/ld.so.1` を要求する動的リンクバイナリ。Debian上では動作確認済みだが、**公式miniroot/sys2のuserlandにMIPS用glibcの動的リンカと
+対応する `libc.so` があるか**は、実機の `official_rootfs/lib/ld.so.1 -> ld-2.9.so` の存在と、`tar -tvf` 一覧の `bin/busybox_dynamic`(動的リンク版busybox)
+から、**動的リンクの実行環境が公式rootfsに含まれていることを確認済み**(実機検証)。`mtdtool` 自身が実際に動くかは1回目の起動で初めて確認できる
+(未検証なら[トラブルシュート](#トラブルシュート)。代替として `scripts/tools/*.c` と同じ作法(`-nostdlib -static`、素のsyscall)でMTD書き込み専用の
+小さなツールを書き直せば、この依存自体を無くせる)。
 
 ### 2-2. 段階1スクリプト本体
 
@@ -241,10 +325,7 @@ cat etc/init.d/rcS   # 挿入結果を確認(構文を壊していないか)
 ```
 
 `nasne-stage1.sh` 自体は[2-2](#2-2-段階1スクリプト本体)のまま(sys1の完了マーカーで1回だけ実行される設計)で変更不要。
-
-> `mtdtool` は動的リンクバイナリ(`/lib/ld.so.1`要求)で、公式rootfs上で動くかは[2-1](#2-1-nasne上で動くspi書き込みツールを用意する)の時点では未検証だったが、
-> 実機の `tar -tvf` の一覧に `bin/busybox_dynamic`(動的リンク版busybox)があったため、この公式rootfsには動的リンクの実行環境(`/lib/ld.so.1`等)が
-> 既に含まれている可能性が高い。`ls -la official_rootfs/lib/ld.so.1 official_rootfs/dev/sda* official_rootfs/dev/mtd*` で確認すること。
+`mtdtool` が公式rootfs上で動くかどうかの検証状況は[2-1](#2-1-nasne上で動くspi書き込みツールを用意する)参照。
 
 ### 2-4. tar.gzに固めて `.dlm` を作る
 
@@ -284,8 +365,9 @@ sync && sudo umount /mnt/p3
 HDDをnasneに挿して電源を入れる。
 
 1. 公式のminiroot `/init` が `00110022.dlm`・`00550066.dlm` を検証(ヘッダのhwtype・日付・CRCはテンプレート継承なので通る)。
-2. ボディを `/rfs` に展開し、ラップした `/sbin/init` へ `switch_root`。
-3. `nasne-stage1.sh` が走り、`/dev/mtd0` のKNLを `knl_new.bin` に書き換え、読み戻して確認する。
+2. ボディを `/rfs` に展開し、`sbin/init`(busyboxへのシンボリックリンク、無改変)へ `switch_root`。
+3. busybox initが `/etc/inittab` 経由で `rcS` を実行し、[2-3](#2-3-rcs-の先頭に段階1呼び出しを差し込む)で仕込んだ呼び出しにより `nasne-stage1.sh` が走る。
+   `/dev/mtd0` のKNLを `knl_new.bin` に書き換え、読み戻して確認する。
 4. OKなら `reboot`。NGなら公式ファームのまま起動を続ける(ログや挙動から原因を確認する。[トラブルシュート](#トラブルシュート))。
 
 このときの所要時間・LEDの挙動は未検証。**最初は電源を入れたまま数分待ち、`ping` が通るか、PCに繋いだ状態でSPIが実際に書き変わったかを確認する**のが安全
@@ -314,26 +396,32 @@ cat /var/log/nasne-recpt1.log
 
 ## 手順6. TVチューナーとして使う
 
-[docs/08](08_tuner_i2c.md)・[docs/11](11_tv_streaming.md)の通り。まずはPCから選局確認:
+地デジのアンテナ線とB-CASカードを挿した状態で電源を入れる(ソフト的な設定は不要。カードはnasne純正と同じスロットにそのまま挿す)。
+手順1-4で `nasne-mcu-wd` サービスを `update-rc.d` 済みなので、Debian起動時に `rc.xcode4` が自動でドライバ(`xcode4drv.ko`)をロードする。
+
+まずPCから選局確認([docs/08](08_tuner_i2c.md)。`nasne_fe.py` はsshでnasneに接続し、手順1-3で配置した `i2cx` を呼ぶ):
 
 ```bash
-python3 scripts/nasne_fe.py --host <nasneのIP> t-scan 13 62    # ロックするチャンネルを確認
+python3 scripts/nasne_fe.py --host <nasneのIP> t-init             # 地デジ側の初期化(初回/スタンバイ復帰後)
+python3 scripts/nasne_fe.py --host <nasneのIP> t-scan 13 62       # ロックするチャンネルを一覧表示
 ```
 
-視聴:
+視聴([docs/11](11_tv_streaming.md)。手順1-4で `nasne-recpt1-server` を自動起動済みなので、HTTPでTSが取れる):
 
 ```bash
-curl http://<nasneのIP>:8301/tuner/27 | ffplay -
-curl -s http://<nasneのIP>:8301/scan      # サービスID一覧(sid=0x...)
+curl http://<nasneのIP>:8301/scan             # サービスID一覧を取得(sid=0x...(tv))。約80秒かかる
+curl http://<nasneのIP>:8301/tuner/27 | ffplay -               # UHF 27をそのまま再生
+curl http://<nasneのIP>:8301/tuner/27?sid=0x0400 | ffplay -    # サービスを指定して再生
 ```
 
-Mirakurunからの利用は[docs/11](11_tv_streaming.md)の `tuners.yml` / `channels.yml` の設定例を参照。
+Mirakurunから使う場合は、別PCでMirakurunを動かし、[docs/11](11_tv_streaming.md)の `tuners.yml`(`command: curl -s http://<nasneのIP>:8301/tuner/<ch>`)・
+`channels.yml`(サービスごとに `channel: '<ch>?sid=0x...'` を1エントリずつ、`/scan` で調べたサービスIDを使う)をそのまま設定すればよい(nasne側の追加作業は無い)。
 
 ## トラブルシュート
 
 | 症状 | 考えられる原因 / 対処 |
 |---|---|
-| 1回目の起動後、いつまでもLEDが点滅したまま・SPIが書き変わらない | `.dlm` の展開失敗(ヘッダ不正・CRC不一致・容量不足)、または `/sbin/init` ラッパーまで届いていない。HDDをPCに戻し、`build_dlm.py verify` と `tar tzf` でサイズ確認 |
+| 1回目の起動後、いつまでもLEDが点滅したまま・SPIが書き変わらない | `.dlm` の展開失敗(ヘッダ不正・CRC不一致・容量不足)、または `rcS` の段階1呼び出しまで届いていない(`sed` の挿入位置がファームのバージョンで変わっている等)。HDDをPCに戻し、`build_dlm.py verify` と `tar tzf` でサイズ確認、`official_rootfs/etc/init.d/rcS` の中身を再確認 |
 | 段階1スクリプトが動いたログが無い(sys1に `.stage1_done` が無い) | `mtdtool` が動かなかった可能性(`/lib/ld.so.1` 不在など)。公式rootfs上で `ldd` 相当の確認ができないため、代わりに段階1スクリプトの各行に `echo ... > /tmp/stage1.log` を追加し、sys1へコピーするようにして原因を特定する |
 | 書き込み途中で電源が落ちた・`reboot` 後も公式ファームのまま | 4段目ブートがKNLのCRC不一致を検出し、BKNL(Bスロット)へフォールバックした可能性。これは安全に働いた証拠。原因(段階1スクリプトの `allowed()` 範囲・サイズ計算)を見直し、やり直す |
 | CRCは正しいが起動途中で固まる(フォールバックが効かない) | [docs/05](05_kernel_and_direct_boot.md)の通り、CRC一致・内容不正の場合はA/Bのフォールバックが働かない。HDDをPCに戻し、`00550066.dlm` を手順0のバックアップに戻して公式ファームの `.dlm` のまま起動させ、SPIを元のダンプ(`backup`時に未取得なら、別途CH341Aで読み出した正常なKNL)に書き戻す必要がある |
@@ -343,7 +431,8 @@ Mirakurunからの利用は[docs/11](11_tv_streaming.md)の `tuners.yml` / `chan
 
 ## まだ詰めていないところ
 
-- `mtdtool` を公式rootfs上でそのまま動かせるか(動的リンカの有無)。動かない場合は nostdlib 静的バイナリで書き直す。
-- `/sbin/init` ラッパー方式が実際の公式rootfsの構成(busybox multi-call、inittabの参照形式)と噛み合うか。
+- `mtdtool` が公式rootfs上で実際に動くか(動的リンク実行環境(`ld.so.1`等)の存在は確認済みだが、実行自体はまだ未確認)。動かない場合は nostdlib 静的バイナリで書き直す。
+- `rcS` への段階1呼び出しの仕込みが、公式の `switch_root` → busybox init → `rcS` という流れの中で実際に1回だけ正しく実行されるか(実機での通し確認はまだ)。
 - 段階1スクリプトの各ステップのログを、2回目の起動後(Debian側)からも読める場所(sys1など)に残す仕組み。
 - 1回目の起動から段階1完了・rebootまでの所要時間、途中のLED挙動。
+- `knl_new.bin` の展開後カーネル先頭8バイトが `0000000000000000` だった点(`gpl_src/build/out/vmlinux_new.bin` 自体の構造に依存する可能性。実際にブートできるかは実機確認が必要)。
