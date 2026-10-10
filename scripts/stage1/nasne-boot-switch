@@ -1,0 +1,28 @@
+#!/bin/sh
+# nasne-boot-switch — 次の再起動で公式アプリ(procmng/dtvtuner)を1回だけ起動する。その次の起動からは Debian に戻る。
+#   nasne-boot-switch official-once   予約する(その後 reboot)
+#   nasne-boot-switch rescue-once     次の再起動を、Sony環境+telnetだけ(調査用)にする
+#   nasne-boot-switch cancel          予約を取り消す
+#   nasne-boot-switch status
+# 仕組み: /etc/nasne-boot-official-once を置くと、自作カーネルの /nasne_init が Sony のminirootへ戻り、
+#         00550066.dlm の段階1(rcS)が印を消して公式アプリを起動する。SPIのカーネルは書き換えない。
+# 条件: XFSの公式p3を残すモード(--p3-mode image)で入れてあること(/data がXFSのp3)。p3をext3で初期化したモードでは公式アプリはp3を使えない。
+MARK=/etc/nasne-boot-official-once
+case "$1" in
+  official-once)
+    if ! grep -q ' /data xfs ' /proc/mounts; then
+        echo "このnasneはXFSの公式p3を残す構成ではありません(/data がXFSではない)。公式アプリは動きません" >&2; exit 1
+    fi
+    touch "$MARK" && sync
+    echo "予約しました。reboot すると公式アプリが1回だけ起動します(Web UIはnasneのIPアドレス)。"
+    echo "Debianに戻るには、公式アプリの起動後にもう一度電源を入れ直してください(電源ケーブルの抜き差し、または本体の電源操作)。"
+    ;;
+  rescue-once)
+    touch /etc/nasne-boot-rescue-once && sync
+    echo "予約しました。reboot するとSonyのminiroot環境で、ネットワークと認証なしtelnet(23番)だけ上げて待ちます(調査用)。"
+    echo "戻るには電源を入れ直してください(印は消費済みなので次はDebianに戻ります)。"
+    ;;
+  cancel) rm -f "$MARK" /etc/nasne-boot-rescue-once; sync; echo "取り消しました";;
+  status) [ -e "$MARK" ] && echo "予約あり(次の起動は公式アプリ)" || { [ -e /etc/nasne-boot-rescue-once ] && echo "予約あり(次の起動は救出telnet)" || echo "予約なし(次の起動はDebian)"; };;
+  *) sed -n 2,6p "$0"; exit 2;;
+esac

@@ -7,15 +7,17 @@
 入力は「そのHDD自身の 00550066.dlm」を使えば、マネージャ(00110022.dlm)の検査にもそのまま通る。
 
 サブコマンド:
-  build           --official IN.dlm --out OUT.dlm [--mode p3|embed] [--debian-tree-tar TAR] [--format-p3] [--telnet early|fail|off]
+  build           --official IN.dlm --out OUT.dlm [--mode p3|embed] [--debian-tree-tar TAR] [--p3-mode image|format] [--image-size 8G] [--format-p3] [--telnet early|fail|off]
   extract-drivers --official IN.dlm --dest DIR      xcode4drv.ko と rc.xcode4 を取り出す
   list            --official IN.dlm                  tar の中身(先頭)と rcS の末尾を表示
 
 --official には公式パッケージ(KRST3101_xxxx_SECURE.dlm、3セグメント)でも、HDDの 00550066.dlm でも渡せる。
 モード:
   p3     p3 に(PC側で)Debianを用意してある前提。rcS は p3 を mount して chroot し、nasne-stage1.sh を実行する。
-  embed  Debian のツリー(prepare_tree.sh の出力を tar にしたもの)をこの .dlm に同梱する。rcS が p3 を ext3 で初期化して
-         同梱のDebianを展開し、続けて段階1を実行する。**p3(録画データ領域)は消える**ので --format-p3 が必須。
+  embed  Debian のツリー(prepare_tree.sh の出力を tar にしたもの)をこの .dlm に同梱する。rcS が同梱のDebianをp3に入れ、続けて段階1を実行する。
+         --p3-mode image(既定): 公式のp3(XFS。録画データが入っている)は消さず、その中の /.nasne-debian/root.img(ext3のイメージ)にDebianを入れる。
+                  録画データは Debian の /data から見える。公式アプリを1回だけ起動して戻ることもできる(nasne-boot-switch official-once)。
+         --p3-mode format: p3 を ext3 で初期化して直接Debianを入れる。**p3(録画データ領域)は消える**ので --format-p3 が必須。
 """
 import argparse
 import gzip
@@ -79,7 +81,7 @@ def iter_members(raw_tar):
         yield tf, m
 
 
-def rcs_new(rcs_text, mode, telnet, format_p3):
+def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None):
     lines = rcs_text.split("\n")
     idx = [i for i, l in enumerate(lines) if l.strip() == START_LINE]
     if len(idx) != 1:
@@ -91,8 +93,11 @@ def rcs_new(rcs_text, mode, telnet, format_p3):
         print(f"警告: startdtvtuner の行が rcS の最後ではない(行 {idx[0] + 1}/{last_nonblank + 1})。後ろの行は残す", file=sys.stderr)
     tpl = open(os.path.join(HERE, "rcS_block_p3.sh"), encoding="utf-8").read()
     install = open(os.path.join(HERE, "rcS_install_embed.sh"), encoding="utf-8").read() if mode == "embed" else ""
+    if pre_snippet:                                  # テスト用: インストール処理の前に差し込む任意のシェル(例: p3をXFSにして疑似録画を置く)
+        install = open(pre_snippet, encoding="utf-8").read().rstrip("\n") + "\n" + install
     telnet_cmd = "    telnetd -l /bin/sh &"
     block = (tpl.replace("@INSTALL_BLOCK@", install.rstrip("\n"))
+                .replace("@OFFICIAL_PRE@", open(official_pre, encoding="utf-8").read().rstrip("\n") if official_pre else "    :")
                 .replace("@TELNET_EARLY@", telnet_cmd if telnet == "early" else "    :")
                 .replace("@TELNET_LATE@", "telnetd -l /bin/sh &" if telnet == "fail" else ":"))
     new = lines[:idx[0]] + block.split("\n") + lines[idx[0] + 1:]
@@ -113,8 +118,8 @@ def build(args):
     seg = load_dlm_segment(args.official)
     raw, hdr = dlm_to_tar_bytes(seg)
     print(f"公式rootfs: tar {len(raw)} bytes、ヘッダ date={bytes(hdr[0x14:0x34]).rstrip(b'\\0').decode()!r} +8(major)={int.from_bytes(hdr[8:10], 'big')}")
-    if args.mode == "embed" and not args.format_p3:
-        raise SystemExit("--mode embed は p3 を初期化する(録画データが消える)。同意するなら --format-p3 を付けること")
+    if args.mode == "embed" and args.p3_mode == "format" and not args.format_p3:
+        raise SystemExit("--p3-mode format は p3 を初期化する(録画データが消える)。同意するなら --format-p3 を付けること(消したくなければ --p3-mode image)")
     if args.mode == "embed" and not args.debian_tree_tar:
         raise SystemExit("--mode embed には --debian-tree-tar (prepare_tree.sh の出力ツリーを tar にしたもの)が必要")
 
@@ -133,7 +138,7 @@ def build(args):
     for i, (tf, m) in enumerate(iter_members(raw)):
         if i == last_rcs:
             old = tf.extractfile(m).read().decode("utf-8")
-            new = rcs_new(old, args.mode, args.telnet, args.format_p3).encode("utf-8")
+            new = rcs_new(old, args.mode, args.telnet, args.pre_snippet, args.official_pre_snippet).encode("utf-8")
             import copy
             ti = copy.copy(m); ti.size = len(new); ti.type = tarfile.REGTYPE
             tw.addfile(ti, io.BytesIO(new)); rcs_done = True
@@ -162,8 +167,8 @@ def build(args):
             else:
                 tw.addfile(m)
             extra += 1
-        d = b"nasne-debian: p3 initialization allowed\n"
-        tw.addfile(make_ti("debian/etc/nasne-install-format-p3", d, 0o644), io.BytesIO(d))
+        d = (b"format\n" if args.p3_mode == "format" else ("image %s\n" % args.image_size).encode())
+        tw.addfile(make_ti("debian/etc/nasne-install-mode", d, 0o644), io.BytesIO(d))
         print(f"同梱したDebianのエントリ数: {extra}")
     tw.close(); gz.close()
     body = out_tar.getvalue()
@@ -203,7 +208,7 @@ def check(path, mode, orig_raw):
     orig_names = [m.name for _, m in iter_members(orig_raw)]
     missing = [x for x in orig_names if x not in names]
     assert not missing, f"元のエントリが欠けている: {missing[:5]}"
-    assert MARK_BEGIN in rcs and not any(l.strip() == START_LINE for l in rcs.split("\n")), "rcS の差し替えが反映されていない"
+    assert MARK_BEGIN in rcs and not any(l == START_LINE for l in rcs.split("\n")), "rcS の差し替えが反映されていない"
     assert "@" not in "".join(l for l in rcs.split("\n") if "@TELNET" in l or "@INSTALL" in l), "プレースホルダが残っている"
     print(f"読み戻し検証OK: エントリ {len(names)}(元 {len(orig_names)})、rcS 差し替え済み、mode={mode}")
 
@@ -245,8 +250,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
     b.add_argument("--mode", choices=["p3", "embed"], default="p3"); b.add_argument("--debian-tree-tar")
-    b.add_argument("--format-p3", action="store_true"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
-    b.add_argument("--level", type=int, default=6)
+    b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
+    b.add_argument("--level", type=int, default=6); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)
     l = sub.add_parser("list"); l.add_argument("--official", required=True)
     a = ap.parse_args()

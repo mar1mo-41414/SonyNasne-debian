@@ -31,7 +31,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
 | △ 未検証 | tvheadend・EPGStation 本体との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
-| ❌ できない | PWR LEDの点灯(Debian起動中は点滅のまま)、`halt`/`poweroff`による電源断(純正も電源断の手段は電源ケーブルのみ) |
+| ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
+| ❌ できない | `halt`/`poweroff`による電源断(純正も電源断の手段は電源ケーブルのみ) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
 | ❌ やっていない | ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |
 

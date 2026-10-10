@@ -1,0 +1,17 @@
+#!/bin/sh
+# nasne-mcu-hb — 公式の procmng と同じく、MCUにウォッチドッグを止めさせず、起動完了の通知と心拍を送り続ける(実験: PWR LEDを点灯にできるか)。
+#   起動完了: [0x08,0x00] → [0x01,0x2f] → [0x40,0x05] → [0x10,0x32](PWR点灯) 、心拍: [0x20,0x00] を約5秒ごと
+# 前提: /usr/local/sbin に mcui2c、公式ドライバ(rc.xcode4)がロード済み。心拍が途切れると約333秒でMCUがリセットする。
+BIN=/usr/local/sbin
+LOG=/var/log/nasne-mcu-hb.log
+cd $BIN
+lsmod | grep -q '^xcode4drv' || ./rc.xcode4 >> $LOG 2>&1
+n=0; while [ $n -lt 30 ]; do $BIN/mcui2c r 20 6 >/dev/null 2>&1 && break; n=$((n+1)); sleep 1; done
+echo "$(date) heartbeat start" >> $LOG
+if [ -z "$NASNE_HB_NO_READY" ]; then
+    $BIN/mcui2c w 20 08 00 >> $LOG 2>&1
+    $BIN/mcui2c w 20 01 2f >> $LOG 2>&1
+    $BIN/mcui2c w 20 40 05 >> $LOG 2>&1
+    $BIN/mcui2c w 20 10 32 >> $LOG 2>&1      # 表示コード0x32 = PWR点灯(通常運転。procmng FUN_0040344c が状態に応じて書く値)
+fi
+while true; do $BIN/mcui2c w 20 20 00 >/dev/null 2>&1; sleep 5; done

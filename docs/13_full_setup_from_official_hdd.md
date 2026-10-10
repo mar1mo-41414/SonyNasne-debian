@@ -7,14 +7,19 @@
 > (1) HDDのp3にDebianを作り、(2) SPIフラッシュのカーネル(KNL)を自作カーネルに書き換え、(3) 再起動して**Debian(PID 1)**になる。
 > ウォッチドッグの停止、地デジの受信と配信([docs/11](11_tv_streaming.md))まで、そのまま使える。
 >
-> ⚠️ 自己責任です。**p3(録画データ領域)は初期化されて消えます**。SPIフラッシュへの書き込みを伴い、失敗すると起動しなくなる可能性があります
+> **公式のp3(XFS。録画データが入っている)は消さずに残す**のが既定(`--p3-mode image`)。p3の中に `/.nasne-debian/root.img`(ext3のイメージ)を作ってそこにDebianを入れ、
+> 録画データはDebianの `/data` から見える(`.hai` はDTCP-IPで暗号化されていて、公式アプリでしか再生できない)。p3を初期化して直接Debianにしたい場合は `--p3-mode format`(消える)。
+>
+> ⚠️ 自己責任です。SPIフラッシュへの書き込みを伴い、失敗すると起動しなくなる可能性があります
 > (自動のバックアップと書き戻しを入れていますが、**CH341A等のSPIライタで事前に全体をダンプしておくことを強く勧めます**)。
 
 ## 検証状況
 
 | 内容 | 状態 |
 |---|---|
-| `embed` モード(`.dlm` 1ファイルの差し替えだけ。p3の初期化→Debian展開→SPI書き換え→Debian PID1) | ✅ 実機1台(公式v2.60のHDD)で通し確認。約5分で完了 |
+| `embed` モード・`image`(XFSのp3の中のイメージにDebianを入れる。録画データは残る) | ✅ 実機1台で通し確認。疑似の録画ファイルのmd5が一致したまま、Debianが `/` (loop)、XFSが `/data` で起動 |
+| `embed` モード・`format`(p3をext3に初期化してDebian展開→SPI書き換え→Debian PID1) | ✅ 実機1台(公式v2.60のHDD)で通し確認。約5分で完了 |
+| 公式アプリを1回だけ起動して戻る(`nasne-boot-switch official-once`) | ⚠️ **自作したXFSのp3では、公式の procmng が固まる**(PWR/REC赤点灯、LAN点灯、約70秒後)ことを確認。公式のp3(公式がフォーマットしたもの)での動作は未確認 |
 | `p3` モード(p3にPC側でDebianを置いてある場合に、SPI書き換えだけをnasne自身で行う) | ✅ 実機1台で通し確認 |
 | 書き換え後のウォッチドッグ停止・地デジの復号済みTS取得(MPEG-2 1440×1080 + AAC) | ✅ 確認 |
 | `nasne-stage1.sh` の失敗系(書き込み失敗→自動で元に戻す、試行上限、ハッシュ不一致、ウォッチドッグ停止失敗など)の論理テスト | ✅ PC上の模擬環境で23項目(`scripts/stage1/test_stage1_sim.sh`)。実機では未発生 |
@@ -95,12 +100,15 @@ HDDのsys1(p1)をマウントして、元の `00550066.dlm` を手元にコピ�
 sudo mkdir -p /mnt/nasne_sys1 && sudo mount /dev/sdX1 /mnt/nasne_sys1      # sdXは必ずlsblkで確認
 cp /mnt/nasne_sys1/00550066.dlm backup/00550066.dlm.orig
 
-# embed: Debianも .dlm に同梱する(p3は初期化される)
+# embed(既定の image): Debianも .dlm に同梱する。公式のp3(XFS、録画データ)は残し、中にext3のイメージを作る(サイズは --image-size、既定 8G の疎ファイル)
 python3 scripts/stage1/make_stage1_dlm.py build --official backup/00550066.dlm.orig --out custom_00550066.dlm \
-        --mode embed --debian-tree-tar build_stage1/debian_tree.tar --format-p3
+        --mode embed --debian-tree-tar build_stage1/debian_tree.tar
+
+# p3 を初期化してext3にし、直接Debianを置きたい場合(p3の録画データは消える):  --p3-mode format --format-p3 を付ける
 ```
 
-p3 に PC 側でDebianを置いてある場合(p3を ext3 にして `build_stage1/tree` の中身をコピー済み)は `--mode p3`(`--debian-tree-tar` / `--format-p3` は不要)。
+p3 に PC 側でDebianを置いてある場合(p3を ext3 にして `build_stage1/tree` の中身をコピー済み)は `--mode p3`(`--debian-tree-tar` は不要)。
+`image` モードにはXFSの空きが2GB以上必要(イメージの実使用量は約0.4GB。8Gは見かけの大きさ)。
 `--telnet early|fail|off` で、作業中の認証なしtelnetの開き方を選べる(既定 `early` = 最初から。確認しやすいが、作業中の数分間はLAN内の誰でもrootシェルを使える)。
 
 `make_stage1_dlm.py` は作った `.dlm` を開き直して、(1) ヘッダのCRC、(2) 元の全エントリが残っていること、(3) `rcS` が差し替わっていること、を確認してから終わる。
@@ -160,6 +168,23 @@ cat /var/log/nasne-mcu-wd.log         # "MCU watchdog disabled"。5.5分以上�
 | SPIが壊れて起動しない | 実機で「古い設定の混入でKNLが中途半端に消えた」事故の報告がある。4段目ブートのA/Bフォールバックで助かる**とは限らない**(B側のBRFSは別版のminirootで、HDDの内容次第で起動しない)。CH341Aで事前のダンプを書き戻す |
 | 約333秒ごとに再起動する | ウォッチドッグが止まっていない。`/var/log/nasne-mcu-wd.log` を確認([docs/06](06_mcu_watchdog.md)) |
 
+### 公式アプリを1回だけ起動する / 救出用のtelnet(`nasne-boot-switch`)
+
+Debianが動いているnasneで:
+
+```bash
+nasne-boot-switch official-once   # 次の再起動で公式アプリ(procmng)を1回だけ起動。その次の起動からはDebianに戻る(印は消費される)
+nasne-boot-switch rescue-once     # 次の再起動を、Sonyのminiroot環境 + ネットワーク + 認証なしtelnetだけにする(調査・救出用)
+nasne-boot-switch cancel / status
+```
+
+仕組み: 印(`/etc/nasne-boot-official-once` など)があると自作カーネルの `/nasne_init` が Sony の `/init` へ戻り、`.dlm` の段階1(rcS)が印を消して処理を分ける。
+SPIのカーネルは書き換えない。戻るには電源を入れ直す(official-once は公式アプリが動いている間は操作手段が無い)。
+
+⚠️ **official-once は、公式がフォーマットしたp3でだけ使える実験的な機能**。公式の `procmng` は起動時にp3を検査し、検査に通らないと `/sbin/halt` を呼んで止まる
+(PWR/REC赤点灯、LAN点灯、ping・ARPとも無応答。自作のXFSで再現)。p3が空(未フォーマット)のときは止まらず、HDDの初期化待ちになる。
+電源を入れ直すと(印は消費済みなので)Debianに戻る。
+
 ### 公式ファームに戻す(手順は未検証。個々の操作は他の場面で確認済み)
 
 1. HDDをPCに繋ぎ、退避してある元の `00550066.dlm` をsys1に戻す。
@@ -176,7 +201,8 @@ cat /var/log/nasne-mcu-wd.log         # "MCU watchdog disabled"。5.5分以上�
 | `prepare_tree.sh` | PC側(sudo)。Debianツリーを作る |
 | `install_dlm.sh` | `.dlm` をHDDのsys1に入れる(検査・退避つき) |
 | `nasne-stage1.sh` | nasne上(Debianのchroot内)。SPIの書き換え本体 |
-| `rcS_block_p3.sh` / `rcS_install_embed.sh` | `rcS` に差し込む処理のひな形 |
+| `rcS_block_p3.sh` / `rcS_install_embed.sh` | `rcS` に差し込む処理のひな形(p3のマウント、official-once / rescue-once、インストール、段階1) |
+| `nasne-boot-switch` | nasne上。`official-once` / `rescue-once` の予約 |
 | `test_stage1_sim.sh` | `nasne-stage1.sh` の論理テスト(実機不要) |
 | `test_rcS_sim.sh` | 生成した `.dlm` を公式minirootのbusybox(qemu-user)で展開し、`rcS` の呼び出し順をモックで確認(要sudo・qemu-user-static) |
 | `../tools/mtdtool.c` | `/dev/mtd0` の消去/書き込み/検証/ダンプ(許可範囲は固定)。libc不使用の静的バイナリ([docs/09](09_tools.md)) |

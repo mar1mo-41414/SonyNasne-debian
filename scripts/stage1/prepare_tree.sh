@@ -9,15 +9,16 @@
 #   2. 公式ファームから xcode4drv.ko / rc.xcode4 を取り出して置く(Sonyのファイルなので再配布しないこと)
 #   3. MIPS用バイナリ(mcui2c nasne-recpt1 i2cx mtdtool)をビルドして置く(--bins にビルド済みがあればそれを使う)
 #   4. 起動時サービス(nasne-mcu-wd, nasne-recpt1-server)を update-rc.d、直起動の印、起動成功の印(rc.local)、ネットワーク設定
-#   5. 段階1スクリプト nasne-stage1.sh と自作カーネル knl_new.bin(+sha256)を置く
+#   5. 段階1スクリプト nasne-stage1.sh、公式アプリを1回だけ起動する nasne-boot-switch、自作カーネル knl_new.bin(+sha256)を置く
+#   --extra-packages "pkg ..." を付けると、そのDebianパッケージも追加でインストールする(例: テスト用に xfsprogs)
 set -euo pipefail
 export LC_ALL=C
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd)
-OUT=; KNL=; OFFICIAL=; PUBKEY=${SSH_PUBKEY:-$HOME/.ssh/id_rsa.pub}; BINS=
+OUT=; KNL=; OFFICIAL=; PUBKEY=${SSH_PUBKEY:-$HOME/.ssh/id_rsa.pub}; BINS=; EXTRA=
 while [ $# -gt 0 ]; do
   case $1 in
     --out) OUT=$2; shift 2;; --knl) KNL=$2; shift 2;; --official) OFFICIAL=$2; shift 2;;
-    --ssh-pubkey) PUBKEY=$2; shift 2;; --bins) BINS=$2; shift 2;;
+    --ssh-pubkey) PUBKEY=$2; shift 2;; --bins) BINS=$2; shift 2;; --extra-packages) EXTRA=$2; shift 2;;
     *) echo "不明な引数: $1" >&2; exit 2;;
   esac
 done
@@ -83,6 +84,12 @@ $SUDO cp "$(command -v qemu-mipsel-static)" "$OUT/usr/bin/"
 $SUDO mount -t proc proc "$OUT/proc"; $SUDO mount -t sysfs sysfs "$OUT/sys"
 cleanup_mounts() { $SUDO umount "$OUT/proc" "$OUT/sys" 2>/dev/null || $SUDO umount -l "$OUT/proc" "$OUT/sys" 2>/dev/null || true; $SUDO rm -f "$OUT/usr/bin/qemu-mipsel-static"; }
 trap 'cleanup_mounts; rm -rf "$WORK"' EXIT
+if [ -n "$EXTRA" ]; then
+  $SUDO cp /etc/resolv.conf "$OUT/etc/resolv.conf"
+  $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get update
+  $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get install -y --force-yes $EXTRA
+  $SUDO rm -rf "$OUT/var/lib/apt/lists"/* "$OUT/var/cache/apt/archives"/*.deb
+fi
 $SUDO chroot "$OUT" update-rc.d nasne-mcu-wd defaults 05
 $SUDO chroot "$OUT" update-rc.d nasne-recpt1-server defaults 20
 cleanup_mounts
@@ -90,7 +97,8 @@ if mount | grep -q " $OUT/\(proc\|sys\) "; then echo "umountに失敗: $OUT/proc
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-mcu-wd || { echo "update-rc.d が効いていない" >&2; exit 1; }
 
 # ---- 5. 段階1 ----
-$SUDO install -m 755 "$HERE/nasne-stage1.sh" "$OUT/usr/local/sbin/nasne-stage1.sh"
+$SUDO install -m 755 "$HERE/nasne-stage1.sh" "$HERE/nasne-boot-switch" "$OUT/usr/local/sbin/"
+$SUDO install -d "$OUT/data"
 $SUDO install -m 644 "$KNL" "$OUT/usr/local/share/nasne-stage1/knl_new.bin"
 ( cd "$(dirname "$KNL")" && sha256sum "$(basename "$KNL")" | sed 's/  .*/  knl_new.bin/' ) | $SUDO tee "$OUT/usr/local/share/nasne-stage1/knl_new.bin.sha256" >/dev/null
 

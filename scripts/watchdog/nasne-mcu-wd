@@ -14,12 +14,19 @@ LOG=/var/log/nasne-mcu-wd.log
 case "$1" in
   start)
     echo "== $(date) start" >> $LOG
+    if [ -e /etc/nasne-mcu-heartbeat ]; then          # 実験: ウォッチドッグを止めず、公式と同じ心拍を送る(PWR LEDの点灯を試す)
+        nohup $BIN/nasne-mcu-hb >/dev/null 2>&1 &
+        echo "heartbeat mode" >> $LOG; exit 0
+    fi
     ( cd $BIN
       lsmod | grep -q '^xcode4drv' || ./rc.xcode4 >> $LOG 2>&1
       n=0
       while [ $n -lt 30 ]; do
           if $BIN/mcui2c w 20 20 01 >> $LOG 2>&1; then
-              echo "MCU watchdog disabled" >> $LOG; break
+              echo "MCU watchdog disabled" >> $LOG
+              # PWR LED: MCUの表示コードレジスタ(0x10)へ 0x32 を書くと、点滅から点灯になる(公式procmngが通常運転中に書く値。docs/19)
+              $BIN/mcui2c w 20 10 32 >> $LOG 2>&1 && echo "PWR LED on (code 0x32)" >> $LOG
+              break
           fi
           n=$((n + 1)); sleep 1
       done
