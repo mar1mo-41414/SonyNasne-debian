@@ -4,6 +4,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 ファームウェア構造を解析し、**Debian GNU/Linux 7 "wheezy"(mipsel)を直接起動する**ためのツールと解析結果です。
 
 - SoC: ViXS XCode 4210("Viper"、MIPS 74Kc)/ 復調IC: 東芝 TC90532系 / SPIフラッシュ: S25FL128P(16MB)
+- Debian が 7 "wheezy" なのは、カーネルが 2.6.29 のため(上限は 12 "bookworm"。13 は mipsel が無い。カーネルを新しくすれば 12 まで上げる余地あり)。[docs/14](docs/14_newer_debian_kernel_and_distribution.md)
 - 純正のユーザランド(Sony製のプロセス群)を**一切通さず**、Debianの `sysvinit` を PID 1 として起動できます。
 - 公式ファーム(v1.00 / v2.60)も、SIEが公開しているGPLソースから自分でビルドしたカーネルで動きます。
 
