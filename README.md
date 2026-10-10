@@ -15,7 +15,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 ## HDDが壊れて、復旧したいだけの方へ
 
 **[docs/04_hdd_recovery_guide.md](docs/04_hdd_recovery_guide.md)** を読んでください。HDDの区画作成とファイルのコピーだけで、
-交換用HDDにnasneを復旧できる手順です(SPIの吸い出しは不要。`00110022.dlm`(紐付け)はv1.00なしで作れますが、p3の初期化にv1.00の`00550066.dlm`を使うのが確実です)。
+交換用HDDにnasneを復旧できる手順です(SPIの吸い出しは不要。**v1.00のファームも不要**で、公式v2.60だけで復旧できます)。
 
 ## できること / できないこと
 
@@ -24,7 +24,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | Sony経路を通らない **Debian直起動**(ssh、cron、apt など通常のDebianとして常時稼働) |
 | ✅ できる | 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え) |
 | ✅ できる | **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
-| ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)をオフラインで生成。HDD全損機の復旧 |
+| ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
 | ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
 | ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
 | ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
@@ -63,6 +63,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [02_boot_chain](docs/02_boot_chain.md) | SPIフラッシュの地図、ブートチェーン、純正の起動フロー |
 | [03_firmware_format](docs/03_firmware_format.md) | `.dlm` の暗号とヘッダ、HDD紐付け(`00110022.dlm`) |
 | [04_hdd_recovery_guide](docs/04_hdd_recovery_guide.md) | **HDD全損機の復旧手順** |
+| [15_p3_structure_and_hai](docs/15_p3_structure_and_hai.md) | p3の初期構造と `.hai`(v1.00なしで復旧できる理由) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |
@@ -92,7 +93,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
    ├─ build_dlm.py            … .dlm の構築(ヘッダ/CRC)
    ├─ dlm_mng.py              … 00110022.dlm(マネージャ)の解析・生成
    ├─ ofw_tool.py             … 公式ファームパッケージの分解
-   ├─ nasne_hdd_rebuild.py    … HDD復旧用ツール
+   ├─ nasne_hdd_rebuild.py    … HDD復旧用ツール(mkdisk / phase1 / read-id / final / p3init / verify)
+   ├─ nasne_hai.py            … HDD登録情報 `.hai` の復号・生成
    ├─ build_knl.py            … SPIのKNLセグメントの解析・再構築
    ├─ spi_segments.py / spi_boot_decrypt.py … SPIフラッシュのセグメント列挙・ブートチェーン復号
    ├─ build_debian_rootfs.sh  … Debian wheezy (mipsel) のrootfs作成

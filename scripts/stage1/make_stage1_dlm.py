@@ -13,6 +13,7 @@
 
 --official には公式パッケージ(KRST3101_xxxx_SECURE.dlm、3セグメント)でも、HDDの 00550066.dlm でも渡せる。
 モード:
+  debug  公式のまま動かし、rcS の先頭で telnetd だけ開く。公式アプリが止まる原因を telnet で中から調べるための版。
   p3     p3 に(PC側で)Debianを用意してある前提。rcS は p3 を mount して chroot し、nasne-stage1.sh を実行する。
   embed  Debian のツリー(prepare_tree.sh の出力を tar にしたもの)をこの .dlm に同梱する。rcS が同梱のDebianをp3に入れ、続けて段階1を実行する。
          --p3-mode image(既定): 公式のp3(XFS。録画データが入っている)は消さず、その中の /.nasne-debian/root.img(ext3のイメージ)にDebianを入れる。
@@ -91,6 +92,19 @@ def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None):
     last_nonblank = max(i for i, l in enumerate(lines) if l.strip())
     if idx[0] != last_nonblank:
         print(f"警告: startdtvtuner の行が rcS の最後ではない(行 {idx[0] + 1}/{last_nonblank + 1})。後ろの行は残す", file=sys.stderr)
+    if mode == "debug":                              # 公式のまま動かし、先にtelnetだけ開く(止まった原因を中から調べる用)
+        block = [MARK_BEGIN + " (debug: telnetのみ) ========",
+                 "ifconfig eth0 up",
+                 "udhcpc -i eth0 -t 5 -T 3 -A 3 -b -p /var/run/udhcpc.eth0.pid",
+                 "telnetd -l /bin/sh &",
+                 "# 公式アプリが halt/reboot を呼んでも機体を止めない(呼ばれた事実だけ /tmp/halt.log に残す)",
+                 "for c in halt reboot poweroff; do rm -f /sbin/$c; printf '#!/bin/sh\\necho \"'$c' called $(date) $*\" >> /tmp/halt.log\\n' > /sbin/$c; chmod 755 /sbin/$c; done",
+                 "# 公式アプリのログを出す(既定は0)",
+                 "sed -i 's/SHARED_LOGLEVEL=0/SHARED_LOGLEVEL=5/' /opt/dtvtuner/etc/startdtvtuner",
+                 "# 状態を 2 秒ごとに sys1(sda1)へ書き続ける(落ちても最後の様子がHDDに残る。PCで dbglog.txt を読む)",
+                 "mkdir -p /tmp/s1; mount -t ext3 /dev/sda1 /tmp/s1 && ( while :; do { date; cut -d' ' -f1 /proc/uptime; cat /proc/mounts; ps; echo '--- halt.log'; cat /tmp/halt.log; echo '--- recent files'; find /opt/dtvtuner/tmp /var/opt/dtvtuner /tmp /disk0 -xdev -type f -mmin -10 2>/dev/null | grep -v s1/ | head -80; echo '--- logs'; for f in $(find /opt/dtvtuner/tmp /var/opt/dtvtuner /tmp -xdev -type f \\( -name '*.err' -o -name '*.trc' -o -name '*.log' \\) -size +0 2>/dev/null | grep -v s1/ | head -20); do echo \"## $f\"; tail -n 30 $f; done; echo '--- dmesg'; dmesg; } > /tmp/s1/dbglog.tmp; mv /tmp/s1/dbglog.tmp /tmp/s1/dbglog.txt; sync; sleep 2; done ) &",
+                 "sleep 2", "    " + START_LINE, "# ======== end ========"]
+        return "\n".join(lines[:idx[0]] + block + lines[idx[0] + 1:])
     tpl = open(os.path.join(HERE, "rcS_block_p3.sh"), encoding="utf-8").read()
     install = open(os.path.join(HERE, "rcS_install_embed.sh"), encoding="utf-8").read() if mode == "embed" else ""
     if pre_snippet:                                  # テスト用: インストール処理の前に差し込む任意のシェル(例: p3をXFSにして疑似録画を置く)
@@ -249,7 +263,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
-    b.add_argument("--mode", choices=["p3", "embed"], default="p3"); b.add_argument("--debian-tree-tar")
+    b.add_argument("--mode", choices=["p3", "embed", "debug"], default="p3"); b.add_argument("--debian-tree-tar")
     b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
     b.add_argument("--level", type=int, default=6); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)

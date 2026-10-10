@@ -14,6 +14,11 @@ v1.00 は初期化できる。そこで「v1.00で1回起動してp3を初期化
   mkdisk <デバイス> --serial <シリアル> [--p3 xfs|none]
                                                 HDDを丸ごと作り直す(区画3つ + ext3×2 + 記事と同じオプションのXFS)。**全消去**。
                                                 誤爆防止のため、lsblkで確認したシリアル番号を --serial で渡す(シリアルが無いデバイスは none)
+  p3init <p3のマウント先> --chipid <16桁hex> --device /dev/sdX
+                                                v1.00 を使わずに p3(空のXFS)へ公式の初期構造を作る。HDD登録情報(.hai、nasne_hai.py)と
+                                                録画DBの雛形(00000015/10000000.dat・10000001.dat)と空ディレクトリ群。v2.60 がこれで起動する(docs/15)
+  hai <p3のマウント先> --chipid <16桁hex> --device /dev/sdX
+                                                .hai の2ファイルだけを作る(p3init の一部)
   v100 <v1.00の00550066.dlm> <sys1ディレクトリ>  記事の方式でsys1を作る(00550066.dlm、55006600/00550066.dlm、148バイトのゼロの00110022.dlm)。
                                                 nasneで2回起動(1回目はREC/LAN高速点滅で電源を抜く)すると、v1.00が起動してp3も初期化される。
                                                 そのあと final(v2.60)に置き換えれば、v1.00のまま使わず v2.60 に戻せる
@@ -119,6 +124,47 @@ def cmd_v100(a):
     print("次: nasneに挿して電源を入れ、約2分でREC/LANが高速点滅したら電源を抜き、入れ直す(v1.00が起動)")
 
 
+# 録画DBの雛形(00000015/10000000.dat と 10000001.dat、同一内容)。実データは先頭121バイトで残り(合計100KB)はゼロ。
+# 形式: マジック a17e4d13 / 長さ0x71 / 乱数様4B / 固定8B / 暗号化された本体。暗号は未解読だが、別のHDD2台
+# (機種・シリアル・容量が違う)で v1.00 が作ったものが完全に一致したので、HDDには依存しない固定の雛形として扱う
+DB_ROOT = bytes.fromhex(
+    "a17e4d1371000000bfeac5955b51bbf1583287d5f8ed56806cb930c2853f44371351450db79b7319849c3c9d2a5de5fc"
+    "309d12c6c33659643ce34eabe3b32f3a2345c014aa0674d16f90468864d9e48b9671d3719351152480d1304502816c76"
+    "a56974bffb1d2119a76c0ea2b0a19b0a479402aea610945c36")
+DB_SIZE = 102400
+
+
+def cmd_p3init(a):
+    root = a.p3
+    if not os.path.isdir(root):
+        sys.exit(f"エラー: {root} が無い")
+    if [n for n in os.listdir(root) if n != "lost+found"]:
+        sys.exit(f"エラー: {root} が空ではない。p3 が空(mkdisk 直後)のときだけ使えます(録画データを守るため)")
+    def mk(path, mode=0o755):
+        os.makedirs(os.path.join(root, path), exist_ok=True)
+        os.chmod(os.path.join(root, path), mode)
+    mk("00000015")
+    for i in range(96):
+        mk(f"00000015/{i:02d}", 0o341)
+    for n in ("10000000.dat", "10000001.dat"):
+        open(os.path.join(root, "00000015", n), "wb").write(DB_ROOT + b"\0" * (DB_SIZE - len(DB_ROOT)))
+    for d in ("00000021/00000001", "00000021/00000002", "00000021/00000003", "opt/CMA/SCE", "opt/CMA/tmp"):
+        mk(d)
+    open(os.path.join(root, "00000021", "00000005"), "wb").write(os.urandom(8))
+    for d in ("share", "setup"):
+        mk(d, 0o775)
+    for d in ("VIDEO", "MUSIC", "PHOTO"):
+        mk("share/" + d)
+    open(os.path.join(root, "setup", "index.html"), "w").write(
+        '<html>\n<meta http-equiv="refresh" content="0;url=/nasne_home/index.html">\n</html>\n')
+    cmd_hai(a)
+
+
+def cmd_hai(a):
+    import nasne_hai
+    nasne_hai.cmd_gen(argparse.Namespace(outdir=a.p3, chipid=a.chipid, device=a.device, vendor=None, model=None, serial=None))
+
+
 def _run(cmd, **kw):
     import subprocess
     r = subprocess.run(cmd, capture_output=True, text=True, **kw)
@@ -207,9 +253,11 @@ def main():
     p = sub.add_parser("final"); p.add_argument("package"); p.add_argument("sys1"); p.add_argument("--chipid", required=True)
     p = sub.add_parser("verify"); p.add_argument("sys1")
     p = sub.add_parser("v100"); p.add_argument("dlm"); p.add_argument("sys1")
+    p = sub.add_parser("p3init"); p.add_argument("p3"); p.add_argument("--chipid", required=True); p.add_argument("--device", required=True)
+    p = sub.add_parser("hai"); p.add_argument("p3"); p.add_argument("--chipid", required=True); p.add_argument("--device", required=True)
     p = sub.add_parser("mkdisk"); p.add_argument("device"); p.add_argument("--serial", required=True); p.add_argument("--p3", choices=["xfs", "none"], default="xfs")
     a = ap.parse_args()
-    {"phase1": cmd_phase1, "read-id": cmd_read_id, "final": cmd_final, "verify": cmd_verify, "v100": cmd_v100, "mkdisk": cmd_mkdisk}[a.cmd](a)
+    {"phase1": cmd_phase1, "read-id": cmd_read_id, "final": cmd_final, "verify": cmd_verify, "v100": cmd_v100, "mkdisk": cmd_mkdisk, "hai": cmd_hai, "p3init": cmd_p3init}[a.cmd](a)
 
 
 if __name__ == "__main__":

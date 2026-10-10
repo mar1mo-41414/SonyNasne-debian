@@ -41,7 +41,11 @@ python3 scripts/dlm_mng.py selftest <00110022.dlm>                              
 
 ### `nasne_hdd_rebuild.py` — HDD復旧
 
-[docs/04](04_hdd_recovery_guide.md) の手順用。`phase1` / `read-id` / `final` / `verify` の4つ。
+[docs/04](04_hdd_recovery_guide.md) の手順用。`mkdisk`(HDDを作り直す)/ `phase1` / `read-id` / `final` / `p3init`(p3の初期構造を作る)/ `verify` / `v100`(v1.00方式用)。
+
+### `nasne_hai.py` — HDD登録情報(`.hai`)
+
+[docs/15](15_p3_structure_and_hai.md)。`show <.hai>` で復号して中身と検査和を表示、`gen <出力dir> --chipid <16桁> --device /dev/sdX` で生成。
 
 ### `build_knl.py` — SPIのKNLセグメント
 
