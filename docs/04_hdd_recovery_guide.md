@@ -2,9 +2,18 @@
 
 > 対象: nasne(CECH-ZNR2J、ファーム v2.60)の内蔵HDDが壊れて、新しいHDDに交換したい人。
 > **必要な作業はHDDの区画作成とファイルのコピーだけ**です。基板のフラッシュ(SPI)の吸い出し・書き込みなど、はんだや専用機器が要る作業は一切ありません。
-> **v1.00の`00550066.dlm`も不要です**(ネットでは「再生成にはv1.00の`00550066.dlm`が要る」とよく言われますが、この方法では要りません。
-> 必要なのは、Sonyの公開サーバから誰でも落とせる最新の公式ファーム(v2.60)だけです)。
-> 仕組みの詳細は [03_firmware_format.md](03_firmware_format.md)。自己責任でお願いします。
+> 仕組みの詳細は [03_firmware_format.md](03_firmware_format.md)。自己責任でお願いします(新しいHDDの中身は全部消えます。録画データも復元できません)。
+
+## 結論(実機で確認した内容)
+
+- **`00110022.dlm`(HDDと本体の紐付け)は、v1.00 のファームがなくても、このリポジトリのツールで v2.60 向けに作れる。**
+  v2.60 の `final` が作る `00110022.dlm` は、公式のものとバイト単位で一致する。
+- **ただし v2.60 は、p3(録画領域)の「初期構造」を自分では作れない。** 空のXFSのp3だと、v2.60 の公式アプリは起動の途中で止まる
+  (PWR/REC赤点灯・LAN点灯、pingだけ生きている)。**v1.00 は空のXFSから p3 を初期化して起動できる。**
+  → **v1.00 が必要なのはマネージャのためではなく、p3 を初期化させるため。**
+- 推奨手順: **v1.00 で1回起動して p3 を初期化させ、そのあと v2.60 に置き換える**(下の手順)。v1.00 の `00550066.dlm`(21,287,161バイト、
+  md5 `1c921378f2a7846a6492982c98c82fcd`)は、v1.00 で動いている中古のnasneなどから取り出す必要がある(Sonyは配布していない)。
+  すでに公式に初期化されたp3(の中身)がある場合は、v1.00 なしでも v2.60 だけで起動できる(下の「v1.00が無い場合」)。
 
 ## 背景(読み飛ばしてよい)
 
@@ -16,104 +25,112 @@ nasneは起動時に、HDDの `00110022.dlm`(マネージャ)に書かれた「�
 
 | 内容 | 状態 |
 |---|---|
-| 公式ファーム(v1.00 / v2.60)+正しいマネージャでの起動(PWR点灯・WebUI表示) | ✅ 実機で確認(区画はnasneが作ったもの) |
-| 本手順の`final`が作る4ファイルが、実機が実際に使っていた正常なファイルとバイト完全一致 | ✅ |
-| ステップ1(ヘッダ`+8=0`でマネージャを本体に自動生成させる)でinitが個体IDを書き出す | ✅ 実機で確認(ただし区画・バンクdirが既にある状態で) |
-| **完全に空のHDD(区画だけ作った状態、SPIは元のダンプとバイト一致)でのステップ1・2** | ✅ 実機で確認: 手順0の区画作成(p3なし)→ステップ1で、nasneのinitが `00110022.dlm` を自動生成し、バンクディレクトリとsys2(rootfs展開)まで作った。`read-id` の個体IDは本体のIDと一致。`final` + `verify` も「結果: OK」 |
-| 別のHDD(512ネイティブの320GB)でも同じ結果(ステップ1・2とも) | ✅ 確認 |
-| **完全版を作ったあと、公式ファームが起動してWebUIが出るところ** | ⚠️ **開発機では未達**(HDD2台・p3を「無し/有効なXFS/ゼロ」の3通りで試した。p3が有効なXFSだと公式の procmng が検査に通らず halt(PWR/REC赤点灯)、未フォーマットだと初期化待ちでポートが開かない): 同じ開発機で、公式アプリ(procmng/dtvtuner)を動かすと本体が固まる現象が出ていて(p3が無い/有効なXFSがある場合。p3をゼロで消すと固まらない)、HDDの作り方の問題と切り分けられていない([docs/13](13_full_setup_from_official_hdd.md))。別の個体・別のHDDでの結果を募集 |
+| **v1.00 の `00550066.dlm` を使う記事の方式**(区画+`mkfs`+sys1に3ファイル、2回起動)で、v1.00 の公式FW(WebUI)が起動し、p3が初期化される | ✅ 実機で確認(HDD1台、SPIの内容は元のダンプとKNLだけ違う状態) |
+| 上で初期化されたHDDの `sys1` を `final`(v2.60)に差し替えて起動 | ✅ 実機で確認。`softwareVersion` が `0260`、HDDは登録済み・マウント済み |
+| 空のXFS(記事のオプション)のp3 + `final`(v2.60)だけ | ❌ 起動しない(公式アプリが止まる)。再現: HDD2台 |
+| 上の「空のXFS」に、公式が初期化したp3の中身を書き戻して `final`(v2.60) | ✅ 起動する(中身は `.hai` と `00000015/` など) |
+| ステップ1(ヘッダ`+8=0`の v2.60 で、マネージャを本体に自動生成させる) | ✅ 確認(個体IDが書き出される)。ただし**このあと公式アプリは起動しない**(p3が未初期化のため)。v1.00 方式のほうが確実 |
 | 別の個体、v2.60より古いファームがSPIに入っている本体、v2.60以外のファーム | ⚠️ 未検証 |
-| p3(録画領域)の作り方(下記A/B) | ⚠️ 未検証 |
-
-うまくいかなかったら、[03_firmware_format.md](03_firmware_format.md)の仕組みを見ながら調べてください。結果をissue等で共有してもらえると助かります。
+| 空のp3に対して、v2.60の公式アプリが初期化できる条件(WebUIや外部アプリ(nasne ACCESS等)からの初期化要求) | ⚠️ 未確認。p3が未フォーマット(ゼロ)の状態では、WebUIのポートが開かなかった |
 
 ## 準備するもの
 
-- **Linux** が動くPC(Ubuntu等。インストールしなくてもUSBのライブ起動でよい)。Windows/Macではext3・XFSの読み書きが難しいため、Linuxを使ってください。
+- **Linux** が動くPC(Ubuntu等。USBのライブ起動でよい)。Windows/Macではext3・XFSの読み書きが難しいため、Linuxを使ってください。
 - 交換用の2.5インチSATA HDD(500GB / 1TB。**中身は消えます**)と、USB-SATA変換アダプタ
-- Python 3.8以上と `sfdisk` `mkfs.ext3` `mkfs.xfs`(`sudo apt install python3 fdisk e2fsprogs xfsprogs`)
+- Python 3.8以上と `sfdisk` `partprobe` `wipefs` `mkfs.ext3` `mkfs.xfs`(`sudo apt install python3 fdisk parted e2fsprogs xfsprogs`)
 - このリポジトリの `scripts/` フォルダ(`git clone`で取得)
-- **公式ファーム**(Sonyの公開サーバから誰でも入手可能。再配布はしないでください):
+- **公式ファーム v2.60**(Sonyの公開サーバから誰でも入手可能。再配布はしないでください):
   ```bash
   wget http://ps-peripheral.dl.playstation.net/ps-peripheral/nasne/0260/KRST3101_0260_SECURE.dlm
   ```
+- **v1.00 の `00550066.dlm`**(上記。Sony由来のファイルなので、このリポジトリには含まれません)
 
-## 手順
+## 手順(v1.00で p3 を初期化する方式、推奨)
 
-以下、新しいHDDが `/dev/sdX` として見えているとします。**`sdX`は必ず `lsblk` で型番・容量を見て確認してください。間違えるとPCのディスクが消えます。**
+以下、新しいHDDが `/dev/sdX` として見えているとします。**`sdX`は必ず `lsblk` で型番・容量・シリアルを見て確認してください。間違えるとPCのディスクが消えます。**
 
-### 0. HDDに区画を作る
+### 1. HDDを作り直す(全消去)
 
 ```bash
-lsblk -o NAME,SIZE,MODEL,SERIAL        # 新しいHDDの名前を確認(以後 /dev/sdX と書く)
-
-# 区画表を書き込む(sdXの中身は全消去されます)
-printf 'label: dos\nunit: sectors\nstart=2048, size=524288, type=83, bootable\nstart=526336, size=2097152, type=83\nstart=2623488, type=83\n' | sudo sfdisk /dev/sdX
-
-# sys1(256MB) と sys2(1GB): ext3。nasneの古いカーネル(2.6.29)が読めるよう、古い形式で作る
-sudo mkfs.ext3 -L sys1 -b 1024 -I 128 /dev/sdX1
-sudo mkfs.ext3 -L sys2 -b 4096 -I 128 /dev/sdX2
+lsblk -o NAME,SIZE,MODEL,SERIAL                              # 新しいHDDの名前とシリアルを確認
+sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <lsblkで確認したシリアル>
 ```
 
-(「128-byte inodes ... deprecated」「V4 filesystems are deprecated」という警告が出ますが、古いnasneのカーネルに合わせた意図的な形式なので無視してください。
-xfsprogsが将来V4形式の作成を廃止した場合は、p3は下のA(空のまま)にしてください。手順の構文は、スパースファイルで確認済みです。)
+`mkdisk` は、シリアルが合わないとき・マウント中の区画があるとき・システムのディスクのときは何もしない。やること:
+区画(sys1=256MB・ブート、sys2=1GB、p3=残り)を作り、sys1・sys2を `mkfs.ext3 -F -L sys1/sys2`、p3を **記事と同じオプションのXFS**
+(`mkfs.xfs -f -m crc=0 -d agcount=4 -i size=256,attr=2,projid32bit=0 -L user -n ftype=0 -s size=512`。`agcount` は1TBまで4、2TBまで8、それ以上は16)にする。
 
-3つ目の区画(p3、残り全部)は録画用の「user」領域です。次のどちらかにしてください(どちらも未検証):
-- **A. 作らずに空のままにする**(推奨)。nasneのアプリからHDDの初期化(フォーマット)を行う。
-- B. 自分で作る(古いカーネルで読めるよう、新しいXFSの機能を切る):
-  `sudo mkfs.xfs -f -L user -m crc=0 -n ftype=0 -i sparse=0 /dev/sdX3`
+> 古いnasneのカーネル(2.6.29)に合わせたオプションです。デフォルトのまま作ったXFSは、nasneが正しく認識しないという報告が複数あります。
 
-### 1. ステップ1: 本体に個体IDを書かせる
+### 2. sys1にv1.00のファイルを置く
 
 ```bash
-sudo mkdir -p /mnt/nasne_sys1
-sudo mount /dev/sdX1 /mnt/nasne_sys1
-python3 scripts/nasne_hdd_rebuild.py phase1 KRST3101_0260_SECURE.dlm /mnt/nasne_sys1
+sudo mkdir -p /mnt/nasne_sys1 && sudo mount /dev/sdX1 /mnt/nasne_sys1
+sudo python3 scripts/nasne_hdd_rebuild.py v100 <v1.00の00550066.dlm> /mnt/nasne_sys1
 sync && sudo umount /mnt/nasne_sys1
 ```
 
-`phase1`は、公式ファームのヘッダの1か所(`+8`、メジャーバージョン)を0にした版を `00550066.dlm` として置き、`00110022.dlm`を作りません
-(こうすると、nasneのinitが「マネージャが無いので、この本体のIDで新規作成する」処理をします)。
+置くのは `00550066.dlm`、`55006600/00550066.dlm`(ファーム更新の受け渡しディレクトリ。nasneのinitが処理して消す)、148バイトのゼロの `00110022.dlm`(initが個体IDを書く)の3つだけ。
 
-HDDをnasneに挿して電源を入れます。**その後の挙動は気にしなくて構いません**: このあと固まる(PWR/REC赤点灯など)ことがありますが想定内です。
-**2〜3分待ってから、ACアダプタを抜いて電源を切り**、HDDをPCに戻します。
+### 3. nasneで2回起動する
 
-### 2. 個体IDを読み出す
+1. HDDをnasneに挿して電源を入れる。**約2分後**、PWRがゆっくり点滅し、**REC・LANが高速点滅**、HDDランプが消灯になる(初期化完了の印。このあと進まないのは正常)。
+2. **電源を抜いて、入れ直す。** 約40秒で v1.00 が起動する(PWR点灯、WebUI `http://<nasneのIP>:64210/nasne_home/index.html` に `nasne HOME ver 1.00` が出る)。p3には公式アプリが `00000000.hai` などを作る。
 
-```bash
-sudo mount -o ro /dev/sdX1 /mnt/nasne_sys1
-python3 scripts/nasne_hdd_rebuild.py read-id /mnt/nasne_sys1
-```
+### 4. v2.60 に上げる(どちらか)
 
-`個体ID: xxxxxxxxxxxxxxxx`(16桁の16進数)と表示されれば成功です。この値を控えてください。
-- `00110022.dlm が無い` と出たら、nasneのinitがそこまで進んでいません(ステップ1をやり直す。LEDが点滅したまま・ネットワークに出ない場合は、別の原因なので下の「困ったとき」を参照)。
+**(a) WebUIから**: 「nasne システムソフトウェアアップデート」で v2.60 へ。(この方法自体は本リポジトリでは未検証。記事では行われている)
 
-### 3. ステップ2: 完全なHDDを作る
+**(b) PCで置き換える(オフライン。本リポジトリで確認)**: 電源を切ってHDDをPCに戻し、個体IDを読んで `final` で sys1 を v2.60 にする。
 
 ```bash
-sudo umount /mnt/nasne_sys1
 sudo mount /dev/sdX1 /mnt/nasne_sys1
-python3 scripts/nasne_hdd_rebuild.py final KRST3101_0260_SECURE.dlm /mnt/nasne_sys1 --chipid 控えた16桁
-python3 scripts/nasne_hdd_rebuild.py verify /mnt/nasne_sys1     # 「結果: OK」を確認
+python3 scripts/nasne_hdd_rebuild.py read-id /mnt/nasne_sys1        # 個体ID(16桁)を控える
+python3 scripts/nasne_hdd_rebuild.py final KRST3101_0260_SECURE.dlm /mnt/nasne_sys1 --chipid <控えた16桁>
+python3 scripts/nasne_hdd_rebuild.py verify /mnt/nasne_sys1         # 「結果: OK」を確認
 sync && sudo umount /mnt/nasne_sys1
 ```
 
-`final`は、`00550066.dlm`(公式のまま)、`00110022.dlm`(本体のIDを入れた完全版)、バンクdir `11002200`・`33004400`(KNL・RFS・rootfs・マネージャの4ファイル)を作ります。
-**ステップ1の自動生成された`00110022.dlm`は不完全(日付が空)で、そのまま使うと起動後に固まるため、必ず`final`で置き換えてください。**
+`final` は、`00550066.dlm`(公式のまま)、`00110022.dlm`(本体のIDを入れた完全版)、バンクdir `11002200`・`33004400`(KNL・RFS・rootfs・マネージャ)を作る。
+p3 には触れない(v1.00 が初期化したものがそのまま使われる)。HDDをnasneに挿して電源を入れると、約45秒で v2.60 が起動する。
 
-### 4. 起動
+## v1.00 が無い場合
 
-HDDをnasneに挿して電源を入れます。PWRランプが点灯し、nasneのアプリ(WebUI)から見えれば成功です。
-初回は、アプリからHDDの初期化(フォーマット)を求められることがあります(p3を作らなかった場合など)。
+v2.60 は空のXFSのp3だと止まるので、p3の初期構造が要る。`.hai` などは本体のIDに結びついている可能性があり(暗号化とみられる)、他の本体のものを流用できるかは未確認。
+**同じ本体で一度でも公式に初期化されたp3(の中身)が手元にある**なら、新しいXFSに書き戻して、`final`(v2.60)だけで起動できることを確認している:
+
+```bash
+# 旧p3(読み取り専用でマウントできるなら)から中身を保存
+sudo mount -o ro,norecovery /dev/sdOLD3 /mnt/old && sudo tar -C /mnt/old -czpf p3_skeleton.tgz . && sudo umount /mnt/old
+# 新しいHDDを mkdisk で作ったあと、p3に書き戻す
+sudo mount /dev/sdX3 /mnt/p3 && sudo tar -C /mnt/p3 -xpf p3_skeleton.tgz && sudo umount /mnt/p3
+```
+
+その後は、手順4(b)の `read-id` の代わりに、旧HDDの `00110022.dlm` から個体IDを読む(`read-id <旧sys1>`)か、ステップ1(下)で本体にIDを書かせる。
+
+## (参考)ステップ1 / ステップ2 だけで作る方式(v1.00なし)
+
+```bash
+sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <シリアル> --p3 none     # p3は作らない
+sudo mount /dev/sdX1 /mnt/nasne_sys1
+python3 scripts/nasne_hdd_rebuild.py phase1 KRST3101_0260_SECURE.dlm /mnt/nasne_sys1       # ヘッダ+8=0の版を置く
+sudo umount /mnt/nasne_sys1                                                                 # nasneに挿して2〜3分待ち、電源を抜いてPCに戻す
+sudo mount /dev/sdX1 /mnt/nasne_sys1
+python3 scripts/nasne_hdd_rebuild.py read-id /mnt/nasne_sys1                                # 個体IDが出れば、initが動いた
+```
+
+ここまでは**空のHDDから実機で確認**(initがマネージャとバンクdir、sys2のrootfsを作り、個体IDは本体のものと一致した)。ただし、そのあと `final` で完全版にしても、
+p3が無い/空のXFSでは公式アプリが起動しない。p3の初期構造を別の方法(上)で用意すること。
 
 ## 困ったとき
 
 | 症状 | 考えられる原因 |
 |---|---|
-| 電源ランプが緑点滅のまま止まる(ネットワークにも出ない) | initの検査に失敗している。`verify`で確認: CRC・個体ID・日付の不整合(`ChipID ERROR`/`DLM date ERROR`/`CRC ERROR`)。ファイルを作り直す |
-| PWR/REC赤点灯・HDD消灯でネットワーク無応答 | マネージャが不完全(ステップ1のまま)。ステップ2の`final`をやり直す |
-| ステップ1の後に`00110022.dlm`が作られない | initがマネージャ作成まで進んでいない。区画のラベル(`sys1`/`sys2`)・ext3か、`00550066.dlm`が置けているか確認 |
-| PWRが点灯しない/アプリに出ない | p3(録画領域)が未フォーマットの可能性。アプリからHDDを初期化 |
+| 1回目の起動で、2〜3分たってもREC/LANが高速点滅にならない | initの検査に失敗している(`ChipID ERROR`/`DLM date ERROR`/`CRC ERROR`)。`verify` で確認。区画ラベル(`sys1`/`sys2`)・ext3か、v1.00のmd5が `1c921378…` か確認 |
+| 2回目の起動後、PWR/REC赤点灯・LANオレンジ・pingだけ生きている | 公式アプリが検査に通らず止まった(`/sbin/halt`)。p3が空のXFS/未初期化のとき。上の「v1.00が無い場合」 |
+| 2回目の起動後、PWR点滅のままネットワークに出ない | p3の区画が無い、または公式アプリが先へ進めない。p3を作る(mkdisk の既定) |
+| PWRが点灯しない/アプリに出ない | p3(録画領域)が未初期化。v1.00方式にする |
+| `00110022.dlm` が作られない | initがそこまで進んでいない。区画のラベルとext3、`00550066.dlm` の配置を確認 |
 
 ## 他のファームバージョンを使う場合
 

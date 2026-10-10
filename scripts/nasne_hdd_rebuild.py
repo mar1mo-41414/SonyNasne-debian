@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """nasne の HDD(sys1)を公式ファーム(KRST3101_xxxx_SECURE.dlm)からファイル操作だけで作る補助ツール。
-SPIの吸い出し等は不要。手順は docs/04_hdd_recovery_guide.md。Python 3.8+ のみ必要(外部ライブラリ不要)。
+SPIの吸い出し等は不要。手順は docs/18_hdd_rebuild_guide.md。Python 3.8+ のみ必要(外部ライブラリ不要)。
 
   phase1 <公式.dlm> <sys1ディレクトリ>        ステップ1用。00550066.dlmを「ヘッダ+8=0」版にして置き、00110022.dlmを消す。
                                                 nasneを1回起動すると、本体のinitがこの本体の個体IDで00110022.dlmを自動生成する
@@ -8,6 +8,15 @@ SPIの吸い出し等は不要。手順は docs/04_hdd_recovery_guide.md。Pytho
   final <公式.dlm> <sys1ディレクトリ> --chipid <16桁hex>
                                                 ステップ2用。完全なsys1(00550066.dlm / 00110022.dlm / 11002200 / 33004400)を作る
   verify <sys1ディレクトリ>                     sys1の内容をinitと同じ規則で検査する(CRC・日付の整合など)
+
+p3(録画領域)の初期構造について(docs/04): v2.60 は、空のXFSのp3を自分で初期化できず停止する(PWR/REC赤点灯)。
+v1.00 は初期化できる。そこで「v1.00で1回起動してp3を初期化させる」方式を推奨する(下の mkdisk / v100):
+  mkdisk <デバイス> --serial <シリアル> [--p3 xfs|none]
+                                                HDDを丸ごと作り直す(区画3つ + ext3×2 + 記事と同じオプションのXFS)。**全消去**。
+                                                誤爆防止のため、lsblkで確認したシリアル番号を --serial で渡す(シリアルが無いデバイスは none)
+  v100 <v1.00の00550066.dlm> <sys1ディレクトリ>  記事の方式でsys1を作る(00550066.dlm、55006600/00550066.dlm、148バイトのゼロの00110022.dlm)。
+                                                nasneで2回起動(1回目はREC/LAN高速点滅で電源を抜く)すると、v1.00が起動してp3も初期化される。
+                                                そのあと final(v2.60)に置き換えれば、v1.00のまま使わず v2.60 に戻せる
 """
 import argparse
 import os
@@ -90,6 +99,73 @@ def cmd_final(a):
     print("次: HDDをアンマウントしてnasneに挿し、電源を入れる")
 
 
+V100_MD5 = "1c921378f2a7846a6492982c98c82fcd"       # 公式 v1.00 の 00550066.dlm(21,287,161バイト)。記事の値と一致
+
+
+def cmd_v100(a):
+    import hashlib
+    data = open(a.dlm, "rb").read()
+    md5 = hashlib.md5(data).hexdigest()
+    h = ofw_tool.header_of(data)
+    if bytes(h[:3]) != b"DLM" or ofw_tool.crc_of(h, data[64:]) != int.from_bytes(h[0x3C:0x40], "big"):
+        sys.exit("エラー: v1.00の00550066.dlmとして不正(マジック/CRC)")
+    if md5 != V100_MD5:
+        print(f"注意: md5が既知のv1.00と違う({md5})。v1.00の00550066.dlm({len(data)}バイト、md5 {V100_MD5})ですか?")
+    os.makedirs(os.path.join(a.sys1, "55006600"), exist_ok=True)
+    for dst in (os.path.join(a.sys1, "00550066.dlm"), os.path.join(a.sys1, "55006600", "00550066.dlm")):
+        open(dst, "wb").write(data)
+    open(os.path.join(a.sys1, "00110022.dlm"), "wb").write(b"\0" * 148)
+    print(f"{a.sys1}: 00550066.dlm、55006600/00550066.dlm、00110022.dlm(148バイトのゼロ)を置きました")
+    print("次: nasneに挿して電源を入れ、約2分でREC/LANが高速点滅したら電源を抜き、入れ直す(v1.00が起動)")
+
+
+def _run(cmd, **kw):
+    import subprocess
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if r.returncode != 0:
+        sys.exit(f"エラー: {' '.join(cmd)}\n{r.stderr or r.stdout}")
+    return r.stdout
+
+
+def cmd_mkdisk(a):
+    import subprocess
+    dev = a.device
+    if not os.path.exists(dev):
+        sys.exit(f"エラー: {dev} が無い")
+    info = subprocess.run(["lsblk", "-dno", "TYPE,SIZE,MODEL,SERIAL", dev], capture_output=True, text=True).stdout.split()
+    if not info or info[0] not in ("disk", "loop"):
+        sys.exit(f"エラー: {dev} はディスク全体ではない(区画ではなく /dev/sdX を指定)")
+    serial = _run(["lsblk", "-dno", "SERIAL", dev]).strip() or "none"
+    if serial != a.serial:
+        sys.exit(f"エラー: シリアルが違う。{dev} は『{' '.join(info[1:])}』、シリアル『{serial}』。`--serial {serial}` で確認済みと示してください")
+    mounted = [l for l in _run(["lsblk", "-no", "MOUNTPOINT", dev]).split() if l]
+    if mounted:
+        sys.exit(f"エラー: マウント中の区画がある: {mounted}")
+    root_src = _run(["findmnt", "-no", "SOURCE", "/"]).strip()
+    if root_src.startswith(dev):
+        sys.exit("エラー: システムのディスクです")
+    size = int(_run(["lsblk", "-bdno", "SIZE", dev]).strip())
+    print(f"{dev}: {' '.join(info[1:])} シリアル {serial} ({size / 1e9:.0f}GB) を全消去して nasne 用に作り直します")
+    _run(["wipefs", "-a", dev])
+    open(dev, "r+b").write(b"\0" * (8 << 20))                       # 先頭8MB(区画表・旧署名)を消す
+    layout = "label: dos\nunit: sectors\nstart=2048, size=524288, type=83, bootable\nstart=526336, size=2097152, type=83\n"
+    if a.p3 == "xfs":
+        layout += "start=2623488, type=83\n"
+    subprocess.run(["sfdisk", "--force", dev], input=layout, text=True, capture_output=True, check=True)
+    _run(["partprobe", dev])
+    import time
+    time.sleep(1)
+    p = lambda n: dev + ("p" if dev[-1].isdigit() else "") + str(n)
+    _run(["mkfs.ext3", "-q", "-F", "-L", "sys1", p(1)])
+    _run(["mkfs.ext3", "-q", "-F", "-L", "sys2", p(2)])
+    if a.p3 == "xfs":
+        # 記事のオプション。agcount は容量で変える(1TBまで4、2TBまで8、それ以上は16)。物理セクタに関係なく -s size=512
+        agc = 4 if size <= 1.2e12 else (8 if size <= 2.5e12 else 16)
+        _run(["mkfs.xfs", "-q", "-f", "-m", "crc=0", "-d", f"agcount={agc}", "-i", "size=256,attr=2,projid32bit=0",
+              "-L", "user", "-n", "ftype=0", "-s", "size=512", p(3)])
+    print("完了: sys1(ext3)・sys2(ext3)" + ("・user(XFS)" if a.p3 == "xfs" else "") + "。次: sys1をマウントして v100 または phase1/final")
+
+
 def hdr(path):
     return ofw_tool.header_of(open(path, "rb").read(64))
 
@@ -130,8 +206,10 @@ def main():
     p = sub.add_parser("read-id"); p.add_argument("path")
     p = sub.add_parser("final"); p.add_argument("package"); p.add_argument("sys1"); p.add_argument("--chipid", required=True)
     p = sub.add_parser("verify"); p.add_argument("sys1")
+    p = sub.add_parser("v100"); p.add_argument("dlm"); p.add_argument("sys1")
+    p = sub.add_parser("mkdisk"); p.add_argument("device"); p.add_argument("--serial", required=True); p.add_argument("--p3", choices=["xfs", "none"], default="xfs")
     a = ap.parse_args()
-    {"phase1": cmd_phase1, "read-id": cmd_read_id, "final": cmd_final, "verify": cmd_verify}[a.cmd](a)
+    {"phase1": cmd_phase1, "read-id": cmd_read_id, "final": cmd_final, "verify": cmd_verify, "v100": cmd_v100, "mkdisk": cmd_mkdisk}[a.cmd](a)
 
 
 if __name__ == "__main__":
