@@ -19,7 +19,7 @@
 |---|---|
 | `embed` モード・`image`(XFSのp3の中のイメージにDebianを入れる。録画データは残る) | ✅ 実機1台で通し確認。疑似の録画ファイルのmd5が一致したまま、Debianが `/` (loop)、XFSが `/data` で起動 |
 | `embed` モード・`format`(p3をext3に初期化してDebian展開→SPI書き換え→Debian PID1) | ✅ 実機1台(公式v2.60のHDD)で通し確認。約5分で完了 |
-| 公式アプリを1回だけ起動して戻る(`nasne-boot-switch official-once`) | ⚠️ **自作したXFSのp3では、公式の procmng が固まる**(PWR/REC赤点灯、LAN点灯、約70秒後)ことを確認。公式のp3(公式がフォーマットしたもの)での動作は未確認 |
+| 公式アプリを1回だけ起動して戻る(`nasne-boot-switch official-once`) | ⚠️ **開発機では、有効なXFSのp3があると公式アプリが固まる**(自作のXFSでも、公式の `mkfs.xfs` で作った空のXFSでも。PWR/REC赤点灯、LAN点灯、ping/ARP無応答)ことを確認。p3が空(ゼロ)なら固まらない。公式のp3(録画データ入り)での動作は未確認 |
 | `p3` モード(p3にPC側でDebianを置いてある場合に、SPI書き換えだけをnasne自身で行う) | ✅ 実機1台で通し確認 |
 | 書き換え後のウォッチドッグ停止・地デジの復号済みTS取得(MPEG-2 1440×1080 + AAC) | ✅ 確認 |
 | `nasne-stage1.sh` の失敗系(書き込み失敗→自動で元に戻す、試行上限、ハッシュ不一致、ウォッチドッグ停止失敗など)の論理テスト | ✅ PC上の模擬環境で23項目(`scripts/stage1/test_stage1_sim.sh`)。実機では未発生 |
@@ -181,9 +181,10 @@ nasne-boot-switch cancel / status
 仕組み: 印(`/etc/nasne-boot-official-once` など)があると自作カーネルの `/nasne_init` が Sony の `/init` へ戻り、`.dlm` の段階1(rcS)が印を消して処理を分ける。
 SPIのカーネルは書き換えない。戻るには電源を入れ直す(official-once は公式アプリが動いている間は操作手段が無い)。
 
-⚠️ **official-once は、公式がフォーマットしたp3でだけ使える実験的な機能**。公式の `procmng` は起動時にp3を検査し、検査に通らないと `/sbin/halt` を呼んで止まる
-(PWR/REC赤点灯、LAN点灯、ping・ARPとも無応答。自作のXFSで再現)。p3が空(未フォーマット)のときは止まらず、HDDの初期化待ちになる。
-電源を入れ直すと(印は消費済みなので)Debianに戻る。
+⚠️ **official-once は実験的で、開発機では公式アプリが固まった**。有効なXFSのp3があると、公式アプリ(procmng 系)の起動直後に本体が固まる
+(PWR/REC赤点灯、LAN点灯、ping・ARPとも無応答。自作のXFS・公式 `mkfs.xfs` の空XFSの両方で再現)。p3が空(ゼロ)のときは固まらず、HDDの初期化待ちになる。
+原因は未特定(公式アプリを動かす環境の違いかもしれない)。固まっても、電源を入れ直せば(印は消費済みなので)Debianに戻る。
+`rescue-once`(ネットワーク+telnetだけ)は問題なく使える。
 
 ### 公式ファームに戻す(手順は未検証。個々の操作は他の場面で確認済み)
 
