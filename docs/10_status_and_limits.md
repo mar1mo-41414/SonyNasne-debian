@@ -49,7 +49,7 @@
 | 復調IC / RFチューナーICの型番、どちらがISDB-T/Sか | 未確定 |
 | バス0 `0x2a` のデバイス | 未確定(何を読んでも `00`) |
 
-| ブートローダ内の `0x0` ブロックの表、ECC領域、SPI `0x90000` / `0xA0000` の blob | 未解読(鍵素材の可能性) |
+| SPI先頭1MBの残り | **ECC領域は解読済み**(U-Boot等のHamming(72,64)パリティ、[docs/02](02_boot_chain.md))。`0x0`ブロックは、ヘッダ(`55 aa` の目印)と、SoC ROM向けのNANDフラッシュ素子の一覧表(Hynix・Samsung・Micron・Spansion・Numonyx・Toshiba の型番。SDK共通で、SPI起動のnasneでは使われないとみられる)。`0x4000`〜`0x7bff` の乱数様15KBと、`0x90000`/`0xA0000` の各3328バイトのblob(互いに無関係、既知のBlowfish・XORパッドでは復号できない)は**未解読** |
 
 ## 作者側では検証不可(別の本体が必要なもの)
 
