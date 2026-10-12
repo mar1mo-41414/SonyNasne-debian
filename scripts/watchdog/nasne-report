@@ -1,0 +1,57 @@
+#!/bin/sh
+# 検証協力用のレポートを出す(nasne上のDebianで実行)。貼り付けやすいMarkdownで標準出力へ。docs/20 を参照。
+#   使い方: nasne-report [--scan]      --scan: 地デジをスキャンして、見つかったチャンネル数・サービス数だけ載せる(局名は載せない。約80秒、チューナーを使う)
+# 個体を特定できる情報(MAC・IPアドレス・HDDのシリアル・本体の個体ID・局名・B-CASの番号)は出さない作りです。それでも、貼る前に目で確認してください。
+export LC_ALL=C PATH=/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin
+sec() { printf '\n### %s\n\n```\n' "$1"; }
+end() { printf '```\n'; }
+echo "## nasne 検証レポート"
+echo
+echo "生成: $(date -u '+%Y-%m-%d %H:%M UTC')"
+sec "このツールのバージョン"
+cat /usr/local/share/nasne-stage1/version 2>/dev/null || echo "(version ファイルなし)"
+end
+sec "カーネル・CPU・メモリ"
+uname -srvm
+grep -E '^(system type|cpu model|BogoMIPS)' /proc/cpuinfo | head -3
+grep -E '^(MemTotal|MemFree)' /proc/meminfo
+echo "uptime: $(cut -d' ' -f1 /proc/uptime)s"
+end
+sec "SPI(MTD)"
+cat /proc/mtd
+if [ -x /usr/local/sbin/mtdtool ]; then
+    for s in "KNL 0x100000" "BKNL 0x380000"; do
+        set -- $s
+        /usr/local/sbin/mtdtool dump /dev/mtd0 $2 0x280000 /tmp/.nr_$1 >/dev/null 2>&1 && echo "$1 スロットの md5: $(md5sum < /tmp/.nr_$1 | cut -c1-32)(先頭 0x280000 バイト)"
+        rm -f /tmp/.nr_$1
+    done
+fi
+end
+sec "HDD"
+for d in /dev/sda; do
+    smartctl -i $d 2>/dev/null | grep -E '^(Device Model|Model Family|User Capacity|Rotation Rate|SMART support is)'
+    smartctl -H -A $d 2>/dev/null | grep -E 'overall-health|Reallocated_Sector|Power_On_Hours|Current_Pending|Temperature_Celsius'
+done
+echo "--- 区画"
+fdisk -l /dev/sda 2>/dev/null | grep -E '^(Disk /dev/sda|/dev/sda)' | sed 's/Disklabel.*//'
+echo "--- マウント"
+grep -E ' (/|/data) ' /proc/mounts
+df -h / /data 2>/dev/null
+end
+sec "サービス"
+ps -eo pid,args | grep -E 'nasne-|sshd|smartd' | grep -v grep | cut -c1-90
+end
+sec "状態ページ(nasne-statusd --once。ホスト名・SMARTの要約・MCU・チューナー)"
+nasne-statusd --once 2>/dev/null || echo "(取得できず)"
+end
+if [ "$1" = "--scan" ]; then
+    sec "地デジのスキャン(局名は載せない)"
+    out=$(nasne-recpt1 --scan 2>&1)
+    echo "UHFチャンネル数(サービスを検出): $(echo "$out" | grep -c '^ch=')"
+    echo "サービス数(テレビ): $(echo "$out" | grep -o 'sid=0x[0-9a-f]*(tv)' | wc -l)"
+    echo "サービス数(ワンセグ・データ): $(echo "$out" | grep -o 'sid=0x[0-9a-f]*(\(1seg\|data\))' | wc -l)"
+    end
+fi
+echo
+echo "---"
+echo "このレポートに、MAC・IPアドレス・HDDのシリアル・個体ID・局名は含めていません(念のため貼る前に確認してください)。"

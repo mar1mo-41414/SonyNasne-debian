@@ -46,6 +46,11 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 > **DTCP-IPで保護された既存の録画データの取り出し・復号は、やりません。** このプロジェクトの対象外で、今後も扱いません(解析も、そのためのツールの提供もしません)。
 > 純正で録画したものは、純正の仕組みで見てください。このリポジトリが扱うのは、nasne を Debian のサーバーとして使うための解析とツールだけです。
 
+## 試した結果を教えてください
+
+作者の nasne は **CECH-ZNR2J の1台だけ**です。別のモデル・HDD・環境での結果(動いた場合も)を、Issue の「検証レポート」で教えてもらえると助かります。
+何が確認できているかは [docs/20](docs/20_compatibility_and_reports.md)。個体情報を出さずに報告できる `nasne-report` もあります。
+
 ## セキュリティ(ネットワークに出るもの)
 
 nasne(Debian直起動)がLANに出すものと、その認証です。**どれもLAN内で使う前提で、インターネットには出さないでください**(ルーターのポート開放をしない)。
@@ -88,6 +93,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
 | [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
 | [19_new_kernel_survey](docs/19_new_kernel_survey.md) | 新しいカーネル(6.x)を作るために必要な情報の調査(ベンダーソースの実測、移植の対象、`xcode4drv`、デバッグの進め方) |
+| [20_compatibility_and_reports](docs/20_compatibility_and_reports.md) | **対応状況のマトリクス**(モデル・ファーム・HDD・機能)と、検証結果の報告のしかた(個体情報を出さない `nasne-report`) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |

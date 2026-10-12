@@ -1,0 +1,66 @@
+name: 検証レポート(動いた・動かなかった)
+description: 自分の nasne・HDD・環境で試した結果を報告する(うまくいった場合も歓迎)
+title: "[検証] "
+labels: ["verification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ありがとうございます。**MAC・IPアドレス・HDDのシリアル・本体の個体ID・局名・B-CASの番号は書かないでください。**
+        詳しくは [docs/20](https://github.com/mar1mo-41414/SonyNasne-debian/blob/main/docs/20_compatibility_and_reports.md) を見てください。
+  - type: input
+    id: model
+    attributes:
+      label: 本体のモデル
+      placeholder: "例: CECH-ZNR2J"
+    validations: {required: true}
+  - type: input
+    id: firmware
+    attributes:
+      label: 公式ファームの版
+      placeholder: "例: v2.60(分からなければ空欄でよい)"
+  - type: input
+    id: hdd
+    attributes:
+      label: HDD(メーカー・型番・容量。シリアルは書かない)
+      placeholder: "例: Hitachi HTS543232A7A384 / 320GB"
+    validations: {required: true}
+  - type: dropdown
+    id: what
+    attributes:
+      label: 何を試しましたか
+      multiple: true
+      options:
+        - SPIバックアップ(--mode backup)
+        - SPI復元(--mode restore)
+        - HDDの復旧(mkdisk → final → p3init)
+        - Debian直起動(nasne_setup.py / embed)
+        - 地デジの受信・配信
+        - Mirakurun / EPGStation
+        - 状態ページ / 電源
+        - ビルド(nasne_setup.py build)
+        - その他
+    validations: {required: true}
+  - type: dropdown
+    id: result
+    attributes:
+      label: 結果
+      options:
+        - 動いた
+        - 一部だけ動いた
+        - 動かなかった
+    validations: {required: true}
+  - type: input
+    id: buildpc
+    attributes:
+      label: ビルドしたPCの環境(OS・版)
+      placeholder: "例: Debian 13 / Ubuntu 24.04"
+  - type: textarea
+    id: details
+    attributes:
+      label: 詳しい状況(LEDの状態、どこで止まったか、実行したコマンド)
+  - type: textarea
+    id: report
+    attributes:
+      label: nasne-report の出力(個体情報が入っていないか確認してから貼る)
+      render: markdown
