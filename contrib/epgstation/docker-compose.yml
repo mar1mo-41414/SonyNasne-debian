@@ -1,0 +1,29 @@
+# nasne をチューナーにした Mirakurun + EPGStation(別のPCで動かす。nasne上では動かさない)。docs/11 を参照。
+#   使い方:
+#     mkdir -p mirakurun-conf mirakurun-data epgstation/{config,data,recorded,thumbnail,logs}
+#     python3 scripts/nasne_mirakurun_conf.py <nasneのIP> --scan -o mirakurun-conf     # tuners.yml / channels.yml を作る
+#     epgstation/config に EPGStation の設定を置く(README.md の手順)
+#     docker compose up -d      → EPGStation: http://<このPC>:8888/
+services:
+  mirakurun:
+    build: ./mirakurun-curl
+    image: mirakurun-curl:local
+    cap_add: [SYS_ADMIN, SYS_NICE]
+    ports: ["40772:40772"]
+    volumes:
+      - ./mirakurun-conf:/app-config
+      - ./mirakurun-data:/app-data
+    environment: {TZ: Asia/Tokyo}
+    restart: unless-stopped
+  epgstation:
+    image: l3tnun/epgstation:master-debian
+    ports: ["8888:8888"]
+    volumes:
+      - ./epgstation/config:/app/config
+      - ./epgstation/data:/app/data
+      - ./epgstation/recorded:/app/recorded
+      - ./epgstation/thumbnail:/app/thumbnail
+      - ./epgstation/logs:/app/logs
+    environment: {TZ: Asia/Tokyo}
+    depends_on: [mirakurun]
+    restart: unless-stopped

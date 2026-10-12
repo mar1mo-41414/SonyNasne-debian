@@ -80,7 +80,7 @@ curl -s http://<nasne>:8301/scan
 #### Mirakurun(動作確認済み)
 
 Mirakurun 4.1(Node.js 22以上推奨)で、nasne のHTTP配信を「コマンド型チューナー」として使い、**チャンネルスキャン・サービス名の取得・ストリーム取得・番組表(EIT)の取得**まで動いた。
-Mirakurun は別のPCで動かす(nasne上ではなく)。EPGStation など Mirakurun 経由の録画ソフトはそのまま使えるはず(EPGStation自体は未検証)。
+Mirakurun は別のPCで動かす(nasne上ではなく)。**EPGStation も動作確認済み**(下の「EPGStation」)。
 
 `tuners.yml`:
 
@@ -114,6 +114,20 @@ Mirakurun は別のPCで動かす(nasne上ではなく)。EPGStation など Mira
 Mirakurunのチャンネルスキャン(自動)は、チャンネル全体のTSを前提にするため、**サービスごとのチャンネル設定を手書きするのが確実**。
 
 Mirakurunのデコーダー(`decoder`)設定は不要(nasne が復号済みのTSを出す)。複数サービスの同時視聴は、チューナーが1系統なので不可(同じチャンネルの別サービスも不可)。
+
+`tuners.yml` / `channels.yml` は `python3 scripts/nasne_mirakurun_conf.py <nasneのIP> --scan -o <設定ディレクトリ>` で nasne のサービス一覧から自動で作れます(手で書く必要はありません)。
+**公式の Mirakurun の Docker イメージには curl が入っていません**。`curl` を足したイメージが要ります([contrib/epgstation](../contrib/epgstation/README.md))。
+
+#### EPGStation(動作確認済み)
+
+Mirakurun 4.1 + EPGStation 3.0(beta)を Docker で動かし、nasne をチューナーにして次を確認しました([contrib/epgstation](../contrib/epgstation/README.md) に compose と手順)。
+
+- サービスの検出(20サービス、約3分)→ 全局の番組表の取得(約10分、数千件)→ EPGStation のチャンネル一覧・番組表に反映。
+- 放送中の番組の予約 → 録画開始。約15Mbpsの元画質(MPEG-2 1440×1080 + AAC + 字幕)で約160秒を録画し、4797フレーム(29.97fps×160秒と一致)、先頭の数行以外にデコードエラーなし。
+- これから始まる番組の予約 → 予約時刻の約15秒前にチューナーを開き、時刻どおりにファイルが作られて録画された。
+- 録画中は番組表の取得(EPG収集)が止まり、録画が優先される。チューナーは1系統なので、裏番組の同時録画はできない。
+
+未確認: 長時間の連続運用(数日)、録画後のエンコード、tvheadend。
 
 #### VLC(プレイリスト再生)
 

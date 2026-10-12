@@ -33,7 +33,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
 | ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
-| △ 未検証 | tvheadend・EPGStation 本体との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
+| ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。[contrib/epgstation](contrib/epgstation/README.md)) |
+| △ 未検証 | tvheadend との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統)、数日の連続運用 |
 | ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
 | ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。純正も長押しで電源オフできる。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
