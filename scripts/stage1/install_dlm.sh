@@ -26,6 +26,19 @@ PY
 mkdir -p "$BK"
 if [ ! -e "$BK/00550066.dlm.orig" ]; then cp -p "$SYS1/00550066.dlm" "$BK/00550066.dlm.orig"; echo "退避: $BK/00550066.dlm.orig"; else echo "(すでに $BK/00550066.dlm.orig がある。上書きしない)"; fi
 # 全体の sync ではなく対象ファイル/ファイルシステムだけを同期する(他に重い書き込みがあると全体syncは何分も待たされる)
+# sys1(256MB)は小さい。新旧2つ分の空きが無いときは、元のファイルを(退避済みであることを確かめてから)消して直接書く
+need_kb=$(( $(stat -c %s "$NEW") / 1024 + 4096 ))
+rm -f "$SYS1/00550066.dlm.tmp"
+free_kb=$(df -Pk "$SYS1" | awk 'NR==2 {print $4}')
+if [ "$free_kb" -lt "$need_kb" ]; then
+    echo "sys1 の空きが足りない(${free_kb}KB < ${need_kb}KB)。元の 00550066.dlm を消して直接書く"
+    if ! cmp -s "$SYS1/00550066.dlm" "$BK/00550066.dlm.orig"; then
+        cp -p "$SYS1/00550066.dlm" "$BK/00550066.dlm.prev.$(date +%Y%m%d%H%M%S)" && echo "(現在のファイルを $BK/00550066.dlm.prev.* にも退避)"
+    fi
+    rm -f "$SYS1/00550066.dlm"; { sync -f "$SYS1" 2>/dev/null || sync; }
+    cp "$NEW" "$SYS1/00550066.dlm" && { sync -f "$SYS1" 2>/dev/null || sync; }
+else
 cp "$NEW" "$SYS1/00550066.dlm.tmp" && { sync "$SYS1/00550066.dlm.tmp" 2>/dev/null || sync; } && mv "$SYS1/00550066.dlm.tmp" "$SYS1/00550066.dlm" && { sync -f "$SYS1" 2>/dev/null || sync; }
+fi
 cmp -s "$NEW" "$SYS1/00550066.dlm" && echo "書き込み完了: $SYS1/00550066.dlm" || { echo "書き込み後の比較が一致しない" >&2; exit 1; }
 df -h "$SYS1" | tail -1

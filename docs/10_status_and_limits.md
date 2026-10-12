@@ -19,7 +19,7 @@
 | **SPIフラッシュの読み出しバックアップ** | 書き込まず、HDDの `00550066.dlm` 差し替えだけで、nasne自身がSPIを読んでHDDに置く(原本ダンプとKNLスロット以外一致) | [docs/16](16_spi_backup_dlm.md) |
 | **ビルドの通し(クリーンな環境)** | `nasne_setup.py` で、公式ファームの取得 → カーネル → KNL → Debianツリー → `.dlm` まで、最小構成の Debian 13 の仮想マシンで最後まで通った(追加パッケージは docs/13 の表のとおり)。そのVMで作った `.dlm`(embed)を実機に入れて、Debianが起動することも確認(SPIのKNLはVMで作ったものと一致、ホストのcross gccでビルドしたMIPSツールも実機で動作、地デジのスキャンも成功) | [docs/13](13_full_setup_from_official_hdd.md) |
 | **SPIをバックアップへ戻す(`--mode restore`)** | バックアップから KNL / BKNL スロットだけを、違うときだけ書き戻す(消去→書き込み→読み戻し検証→再起動)。実機で、自作カーネル入りのバックアップから書き戻し・検証OK・再起動後に「一致」を確認 | [docs/16](16_spi_backup_dlm.md) |
-| **状態ページ**(HDD温度・SMART・メモリ・ディスク・MCU・チューナー) | 実機で `/` `/status.json` `/metrics` と、SMARTの値が `smartctl` と一致することを確認。Home Assistant(コンテナ)で13個のエンティティが値を持つことも確認 | [docs/18](18_status_page.md) |
+| **状態ページ**(HDD温度・SMART・メモリ・ディスク・MCU・チューナー) | 実機で `/` `/status.json` `/metrics` と、SMARTの値が `smartctl` と一致することを確認。Home Assistant(コンテナ)で13個のエンティティが値を持つことも確認。VMで作った `.dlm`(状態ページ入り)を実機に新規インストールして、再起動後に状態ページ・`smartctl` が既定で動くことも確認 | [docs/18](18_status_page.md) |
 | **電源オフ・予約起動(タイマ起床)** | Debianの `poweroff` で実際に電源が切れる(MCUへ `[0x02,0x01]`、待機約1W)。`WAKE_SECONDS` で、切ってから指定秒数後に自動起動(起床タイマ `[0x02,0x02,u32]`、約10.5ms/カウント)。電源ケーブルの抜き差しでも起動 | [docs/06](06_mcu_watchdog.md) |
 | **電源ボタン長押しでの電源オフ** | MCUのステータス2バイト目のbit4(`0x10`)がラッチされる(押下で `0x80`→`0x90`)ので、`nasne-powerbtn` が検出して `poweroff` する。実機で「長押し→数秒で電源オフ」を確認 | [docs/06](06_mcu_watchdog.md) |
 | B-CASの検出・活性化 | ドライバ経由で、カードの挿入検出と活性化(復号にはカードIDの取得は不要) | [docs/07](07_driver_ioctl_bcas.md) |
