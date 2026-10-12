@@ -13,6 +13,9 @@
 
 --official には公式パッケージ(KRST3101_xxxx_SECURE.dlm、3セグメント)でも、HDDの 00550066.dlm でも渡せる。
 モード:
+  backup SPIフラッシュ(/dev/mtd0 と /dev/mtd1)を dd で読み出すだけの版。書き込み・消去はしない。結果を sys1(既定)かp3の
+         /spi_backup/ に置き、そのあと公式アプリを普通に起動する。Debianの用意もSPIの書き換えもしない。--dest sys1|p3|both
+  trace  公式の動作を変えず、telnet・sys1のマウント・--official-pre-snippet だけを足す(観測用。halt/reboot も本物のまま)。
   debug  公式のまま動かし、rcS の先頭で telnetd だけ開く。公式アプリが止まる原因を telnet で中から調べるための版。
   p3     p3 に(PC側で)Debianを用意してある前提。rcS は p3 を mount して chroot し、nasne-stage1.sh を実行する。
   embed  Debian のツリー(prepare_tree.sh の出力を tar にしたもの)をこの .dlm に同梱する。rcS が同梱のDebianをp3に入れ、続けて段階1を実行する。
@@ -82,7 +85,7 @@ def iter_members(raw_tar):
         yield tf, m
 
 
-def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None):
+def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None, dest="sys1"):
     lines = rcs_text.split("\n")
     idx = [i for i, l in enumerate(lines) if l.strip() == START_LINE]
     if len(idx) != 1:
@@ -92,6 +95,17 @@ def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None):
     last_nonblank = max(i for i, l in enumerate(lines) if l.strip())
     if idx[0] != last_nonblank:
         print(f"警告: startdtvtuner の行が rcS の最後ではない(行 {idx[0] + 1}/{last_nonblank + 1})。後ろの行は残す", file=sys.stderr)
+    if mode == "backup":                             # SPIフラッシュを読み出すだけ(書き込まない)。終わったら公式アプリを普通に起動する
+        blk = open(os.path.join(HERE, "rcS_block_backup.sh"), encoding="utf-8").read().replace("@DEST@", dest).rstrip("\n")
+        return "\n".join(lines[:idx[0]] + blk.split("\n") + lines[idx[0] + 1:])
+    if mode == "trace":                              # 公式の動作を一切変えずに観測だけする(telnet+sys1のマウント+任意のスニペット)
+        block = [MARK_BEGIN + " (trace: 観測のみ) ========",
+                 "ifconfig eth0 up", "udhcpc -i eth0 -t 5 -T 3 -A 3 -b -p /var/run/udhcpc.eth0.pid", "telnetd -l /bin/sh &",
+                 "mkdir -p /tmp/s1; mount -t ext3 /dev/sda1 /tmp/s1"]
+        if official_pre:
+            block.append(open(official_pre, encoding="utf-8").read().rstrip("\n"))
+        block += ["sleep 2", "    " + START_LINE, "# ======== end ========"]
+        return "\n".join(lines[:idx[0]] + block + lines[idx[0] + 1:])
     if mode == "debug":                              # 公式のまま動かし、先にtelnetだけ開く(止まった原因を中から調べる用)
         block = [MARK_BEGIN + " (debug: telnetのみ) ========",
                  "ifconfig eth0 up",
@@ -103,6 +117,7 @@ def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None):
                  "sed -i 's/SHARED_LOGLEVEL=0/SHARED_LOGLEVEL=5/' /opt/dtvtuner/etc/startdtvtuner",
                  "# 状態を 2 秒ごとに sys1(sda1)へ書き続ける(落ちても最後の様子がHDDに残る。PCで dbglog.txt を読む)",
                  "mkdir -p /tmp/s1; mount -t ext3 /dev/sda1 /tmp/s1 && ( while :; do { date; cut -d' ' -f1 /proc/uptime; cat /proc/mounts; ps; echo '--- halt.log'; cat /tmp/halt.log; echo '--- recent files'; find /opt/dtvtuner/tmp /var/opt/dtvtuner /tmp /disk0 -xdev -type f -mmin -10 2>/dev/null | grep -v s1/ | head -80; echo '--- logs'; for f in $(find /opt/dtvtuner/tmp /var/opt/dtvtuner /tmp -xdev -type f \\( -name '*.err' -o -name '*.trc' -o -name '*.log' \\) -size +0 2>/dev/null | grep -v s1/ | head -20); do echo \"## $f\"; tail -n 30 $f; done; echo '--- dmesg'; dmesg; } > /tmp/s1/dbglog.tmp; mv /tmp/s1/dbglog.tmp /tmp/s1/dbglog.txt; sync; sleep 2; done ) &",
+                 ] + ([open(official_pre, encoding="utf-8").read().rstrip("\n")] if official_pre else []) + [
                  "sleep 2", "    " + START_LINE, "# ======== end ========"]
         return "\n".join(lines[:idx[0]] + block + lines[idx[0] + 1:])
     tpl = open(os.path.join(HERE, "rcS_block_p3.sh"), encoding="utf-8").read()
@@ -152,7 +167,7 @@ def build(args):
     for i, (tf, m) in enumerate(iter_members(raw)):
         if i == last_rcs:
             old = tf.extractfile(m).read().decode("utf-8")
-            new = rcs_new(old, args.mode, args.telnet, args.pre_snippet, args.official_pre_snippet).encode("utf-8")
+            new = rcs_new(old, args.mode, args.telnet, args.pre_snippet, args.official_pre_snippet, args.dest).encode("utf-8")
             import copy
             ti = copy.copy(m); ti.size = len(new); ti.type = tarfile.REGTYPE
             tw.addfile(ti, io.BytesIO(new)); rcs_done = True
@@ -163,6 +178,14 @@ def build(args):
         n += 1
     if not rcs_done:
         raise SystemExit(f"tar に {RCS_PATH} が無い")
+    for spec in (args.extra_file or []):
+        tp, _, lp = spec.partition("=")
+        mode = 0o755
+        if ":" in lp.rsplit("/", 1)[-1]:
+            lp, _, ms = lp.rpartition(":"); mode = int(ms, 8)
+        data = open(lp, "rb").read()
+        tw.addfile(make_ti(tp, data, mode), io.BytesIO(data))
+        print(f"追加: {tp} <- {lp} ({len(data)}バイト、mode {mode:o})")
     extra = 0
     if args.mode == "embed":
         deb = tarfile.open(args.debian_tree_tar, "r:*")
@@ -263,7 +286,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
-    b.add_argument("--mode", choices=["p3", "embed", "debug"], default="p3"); b.add_argument("--debian-tree-tar")
+    b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--debian-tree-tar")
     b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
     b.add_argument("--level", type=int, default=6); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)

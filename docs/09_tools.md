@@ -132,7 +132,7 @@ mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/ph
 | `tools/boxioctl` | `boxioctl <cmd_hex> <size_hex> [off=val]... [-d words]`: ドライバのioctlを汎用に試す。例 `boxioctl 103 b0 -d 0x2c`(ファーム状態)。[docs/07](07_driver_ioctl_bcas.md) |
 | `tools/bcas` | `bcas status\|activate\|id\|deactivate ...` / `bcas m<hex>`: B-CASカードの実験([docs/07](07_driver_ioctl_bcas.md)) |
 | `tools/mtdtool` | `mtdtool erase\|write\|verify\|flash <dev> <off> <len\|file>` / `dump <dev> <off> <len> <out>`: `/dev/mtd0` の許可範囲(KNL / BKNL / 未使用領域)だけを消去・書き込み・比較。`flash` は消去→書き込み→読み戻し比較を一括([docs/05](05_kernel_and_direct_boot.md)、[docs/13](13_full_setup_from_official_hdd.md)) |
-| `stage1/*` | 公式HDDの `00550066.dlm` 差し替えだけでSPI書き換え→Debian直起動へ移行するツール一式([docs/13](13_full_setup_from_official_hdd.md)) |
+| `stage1/*` | 公式HDDの `00550066.dlm` 差し替えだけでSPI書き換え→Debian直起動へ移行するツール一式([docs/13](13_full_setup_from_official_hdd.md))。`make_stage1_dlm.py --mode backup` は **SPIを読むだけのバックアップ版**([docs/16](16_spi_backup_dlm.md)) |
 | `tools/physrd` | `physrd w <phys_hex> <nwords>` / `physrd r <phys_hex> <nbytes>`: `/dev/mem` 経由の読み出し専用(SoCレジスタ・RAM) |
 | `tools/physio` | `physio r <phys> <nwords>` / `physio w <phys> <value>`: `/dev/mem` 経由の読み書き。**書き込みは危険** |
 
