@@ -97,6 +97,7 @@ $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-status" "$OUT/etc/init.d/nasn
 $SUDO chroot "$OUT" update-rc.d nasne-status defaults 25
 # 検証協力用のレポート(docs/20)と、このリポジトリのバージョン
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-report" "$OUT/usr/local/sbin/nasne-report"
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-nvreset" "$OUT/usr/local/sbin/nasne-nvreset"
 $SUDO install -d "$OUT/usr/local/share/nasne-stage1"
 { echo "SonyNasne-debian $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown) ($(git -C "$ROOT" log -1 --format=%cd --date=short 2>/dev/null))"; echo "tree built: $(date -u +%F)"; } | $SUDO tee "$OUT/usr/local/share/nasne-stage1/version" >/dev/null
 # 電源: a-nasne-poweroff は poweroff で実際に電源を切る(rc0.d)、nasne-powerbtn は電源ボタン長押しで poweroff する(docs/06)

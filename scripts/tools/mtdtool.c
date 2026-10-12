@@ -1,6 +1,7 @@
 /* 実機の /dev/mtd0 (SPIフラッシュ先頭13MB) を消去/書き込み/検証する最小ツール。libc不使用の静的バイナリ
  * (公式rootfs・Debianのどちらの環境でも同じバイナリがそのまま動く)。誤爆防止のため許可範囲を固定:
  *   scratch 0x0b0000-0x0cffff (未使用の消去済み領域) / KNL 0x100000-0x37ffff / BKNL 0x380000-0x5fffff
+ *   /dev/mtd1(SPIの0xd00000〜、jffs2のNV領域 0x0-0x2f0000)だけは、そのデバイス内の全域(NVの復元・リセット用)
  * BOOT(0x0-0x4ffff)・BFWF・FMAP・INFO/INF2・ECC・RFS 等は触れない。
  *   mtdtool erase  <dev> <off_hex> <len_hex>        64KB単位で消去(範囲は64KB境界)
  *   mtdtool write  <dev> <off_hex> <file>           消去済みの領域へファイルを書き込む
@@ -35,9 +36,11 @@ static void ws(const char *s){syscall(S_write,1,(long)s,slen(s));}
 static void hx(unsigned long v){char b[9];int i;for(i=0;i<8;i++){int n=(v>>((7-i)*4))&0xf;b[i]=n<10?'0'+n:'a'+n-10;}b[8]=0;ws(b);}
 static unsigned long ph(const char *s){unsigned long v=0;if(s[0]=='0'&&(s[1]|32)=='x')s+=2;for(;*s;s++){int n=*s>='0'&&*s<='9'?*s-'0':(*s|32)-'a'+10;v=v*16+n;}return v;}
 
+static int g_nv;   /* デバイスが /dev/mtd1 系(SPIの user2 = jffs2のNV領域 0x0-0x2f0000)のとき1 */
 static int allowed(unsigned long off,unsigned long len){
     unsigned long end=off+len;
     if(len==0) return 0;
+    if(g_nv) return end<=0x2f0000;
     if(off>=0x0b0000&&end<=0x0d0000) return 1;
     if(off>=0x100000&&end<=0x380000) return 1;
     if(off>=0x380000&&end<=0x600000) return 1;
@@ -116,6 +119,7 @@ static int do_dump(const char *dev,unsigned long off,unsigned long len,const cha
 }
 
 static int run(int ac,char **av){
+    { const char *d=av[2]; unsigned long n=0; while(d&&d[n])n++; g_nv=(n>=4&&d[n-4]=='m'&&d[n-3]=='t'&&d[n-2]=='d'&&(d[n-1]=='1'))||(n>=6&&d[n-6]=='m'&&d[n-5]=='t'&&d[n-4]=='d'&&d[n-3]=='1'&&d[n-2]=='r'&&d[n-1]=='o'); }
     if(ac<5){ws("usage: mtdtool erase|write|verify|flash <dev> <off_hex> <len_hex|file>\n       mtdtool dump <dev> <off_hex> <len_hex> <out>\n");return 1;}
     unsigned long off=ph(av[3]);
     char c=av[1][0];

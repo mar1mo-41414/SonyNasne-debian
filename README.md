@@ -27,6 +27,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
 | ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
 | ✅ できる | **SPIフラッシュを「読むだけ」でバックアップ**(書き込まず、公式HDDの `00550066.dlm` を差し替えるだけで、nasne自身が読んでHDDに置く。[docs/16](docs/16_spi_backup_dlm.md)) |
+| ✅ できる | **本体のNV(SPIの設定領域)を空にして、HDD入れ替え後の「公式が固まる」を復旧**(`--mode nvreset`、`nasne-nvreset`。[docs/16](docs/16_spi_backup_dlm.md)) |
 | ✅ できる | **SPIのカーネル領域をバックアップへ戻す**(`--mode restore`。公式カーネルへ戻す、試したカーネルを元に戻す。[docs/16](docs/16_spi_backup_dlm.md)) |
 | ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
 | ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |

@@ -36,7 +36,8 @@
 | SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
 | Debian直起動(`embed`・`image`) | ✅ | [docs/13](13_full_setup_from_official_hdd.md) |
 | Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
-| 公式アプリを1回だけ起動(`official-once`) | ⚠️ 有効なXFSのp3があると固まる例あり | [docs/13](13_full_setup_from_official_hdd.md) |
+| 公式アプリを1回だけ起動(`official-once`) | ✅ NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
+| 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
 | 起動失敗時の自動フォールバック | ❓ 実機では失敗が起きなかった | [docs/05](05_kernel_and_direct_boot.md) |
 | 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |

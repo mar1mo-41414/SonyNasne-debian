@@ -17,6 +17,8 @@
          /spi_backup/ に置き、そのあと公式アプリを普通に起動する。Debianの用意もSPIの書き換えもしない。--dest sys1|p3|both
   restore バックアップ専用 .dlm が置いた /spi_backup/spi_mtd0.bin から、SPIのKNL/BKNL スロットだけを書き戻す版(--mtdtool が必要)。
          違うスロットだけを mtdtool flash(消去→書き込み→読み戻し検証)で書き、成功したら再起動する。再起動後は一致しているので何もしない。
+  nvreset 本体のNV(SPIのjffs2。/dev/mtd1)を空にして、公式アプリに作り直させる版(--mtdtool が必要)。HDDを入れ替えたあと、古いNVと新しいHDDが食い違って
+         公式アプリが固まるときの復旧用。先にいまのNVを sys1 の /spi_backup/nv_before_reset_N.bin へ保存し、1回だけ実行して再起動する(nv_reset.done で2回目以降は何もしない)。
   trace  公式の動作を変えず、telnet・sys1のマウント・--official-pre-snippet だけを足す(観測用。halt/reboot も本物のまま)。
   debug  公式のまま動かし、rcS の先頭で telnetd だけ開く。公式アプリが止まる原因を telnet で中から調べるための版。
   p3     p3 に(PC側で)Debianを用意してある前提。rcS は p3 を mount して chroot し、nasne-stage1.sh を実行する。
@@ -108,6 +110,9 @@ def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None, dest="s
     if mode == "restore":                            # SPIのKNL/BKNLをバックアップへ戻す(mtdtool が rootfs に入っていること)
         blk = open(os.path.join(HERE, "rcS_block_restore.sh"), encoding="utf-8").read().rstrip("\n")
         return "\n".join(lines[:idx[0]] + blk.split("\n") + lines[idx[0] + 1:])
+    if mode == "nvreset":                            # 本体のNV(mtd1)を空にする(1回だけ。mtdtool が rootfs に入っていること)
+        blk = open(os.path.join(HERE, "rcS_block_nvreset.sh"), encoding="utf-8").read().rstrip("\n")
+        return "\n".join(lines[:idx[0]] + blk.split("\n") + lines[idx[0] + 1:])
     if mode == "trace":                              # 公式の動作を一切変えずに観測だけする(telnet+sys1のマウント+任意のスニペット)
         block = [MARK_BEGIN + " (trace: 観測のみ) ========",
                  "ifconfig eth0 up", "udhcpc -i eth0 -t 5 -T 3 -A 3 -b -p /var/run/udhcpc.eth0.pid", "telnetd -l /bin/sh &",
@@ -191,9 +196,9 @@ def build(args):
     if not rcs_done:
         raise SystemExit(f"tar に {RCS_PATH} が無い")
     extra_specs = list(args.extra_file or [])
-    if args.mode == "restore":
+    if args.mode in ("restore", "nvreset"):
         if not args.mtdtool:
-            raise SystemExit("--mode restore には --mtdtool <MIPS用mtdtoolのバイナリ> が必要(scripts/tools/mtdtool.c をビルドしたもの)")
+            raise SystemExit(f"--mode {args.mode} には --mtdtool <MIPS用mtdtoolのバイナリ> が必要(scripts/tools/mtdtool.c をビルドしたもの)")
         extra_specs.append(f"usr/bin/mtdtool={args.mtdtool}:755")
     for spec in extra_specs:
         tp, _, lp = spec.partition("=")
@@ -303,7 +308,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
-    b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup", "restore"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--mtdtool", help="restoreモードで rootfs に入れる mtdtool(MIPS静的バイナリ)"); b.add_argument("--debian-tree-tar")
+    b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup", "restore", "nvreset"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--mtdtool", help="restoreモードで rootfs に入れる mtdtool(MIPS静的バイナリ)"); b.add_argument("--debian-tree-tar")
     b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="off", help="デバッグ用の認証なしtelnet。off=開かない(既定) / early=最初から / fail=インストールに失敗したときだけ。開くとLAN内の誰でもrootシェルを使える")
     b.add_argument("--level", type=int, default=6); b.add_argument("--pre-udev-snippet", help="観測用: rcS の start_udev の直前に実行するシェルのファイル(LD_PRELOADをudev配下の子にも効かせる用)"); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)

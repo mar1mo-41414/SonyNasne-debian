@@ -1,0 +1,40 @@
+#!/bin/sh
+# 本体のNV(SPIのjffs2。/dev/mtd1)を、空にする/保存する/戻す(nasne上のDebianで root で実行)。docs/04 を参照。
+#   nasne-nvreset save              いまのNVを /var/lib/nasne-nvreset/nv_<日時>.bin に保存する(読むだけ)
+#   nasne-nvreset reset [--yes]     NVを保存してから、空(全部 0xff)にする。設定(本体名など)は初期値に戻り、公式アプリが次の起動で作り直す
+#   nasne-nvreset restore <ファイル>  保存したNVを書き戻す
+# 使いどころ: HDDを入れ替えたあと、古いHDD向けのNVと新しいHDDが食い違って、公式アプリが起動の約40秒後に固まるとき(`nasne-boot-switch official-once` で試すとき)。
+# Debian だけで使う分には、NVは使われないので、触っても影響はない。
+NVSZ=3080192
+DIR=/var/lib/nasne-nvreset
+TOOL=/usr/local/sbin/mtdtool
+[ "$(id -u)" = 0 ] || { echo "root で実行してください" >&2; exit 1; }
+[ -x $TOOL ] || { echo "$TOOL が無い" >&2; exit 1; }
+grep -q mtdblock1 /proc/mounts && { echo "NV(mtdblock1)がマウント中です。公式アプリが動いている状態では実行できません" >&2; exit 1; }
+[ -c /dev/mtd1 ] || mknod /dev/mtd1 c 90 2
+save() {
+    mkdir -p $DIR
+    f=$DIR/nv_$(date +%Y%m%d_%H%M%S).bin
+    $TOOL dump /dev/mtd1 0x0 0x2f0000 $f >/dev/null && [ "$(wc -c < $f)" = $NVSZ ] || { echo "NVの保存に失敗" >&2; rm -f $f; return 1; }
+    echo "$f"
+}
+case "$1" in
+  save) save || exit 1 ;;
+  reset)
+    if [ "$2" != "--yes" ]; then
+        echo "NVを空にします(設定は初期値に戻る。先に保存します)。続けるなら --yes を付けてください: nasne-nvreset reset --yes"; exit 2
+    fi
+    f=$(save) || exit 1
+    echo "保存した: $f"
+    awk 'BEGIN { while (n++ < 47 * 65536) printf "%c", 255 }' > /tmp/.nv_ff.bin 2>/dev/null || { dd if=/dev/zero bs=65536 count=47 2>/dev/null | tr '\000' '\377' > /tmp/.nv_ff.bin; }
+    [ "$(wc -c < /tmp/.nv_ff.bin)" = $NVSZ ] || { echo "空のNVの作成に失敗" >&2; exit 1; }
+    $TOOL flash /dev/mtd1 0x0 /tmp/.nv_ff.bin || { echo "書き込みに失敗。元は $f にある(nasne-nvreset restore $f)" >&2; exit 1; }
+    rm -f /tmp/.nv_ff.bin
+    echo "NVを空にしました。次に公式アプリを起動すると、作り直されます(元に戻すには nasne-nvreset restore $f)"
+    ;;
+  restore)
+    [ -f "$2" ] && [ "$(wc -c < "$2")" = $NVSZ ] || { echo "使い方: nasne-nvreset restore <保存したNVのファイル(3080192バイト)>" >&2; exit 2; }
+    $TOOL flash /dev/mtd1 0x0 "$2" && echo "書き戻しました: $2"
+    ;;
+  *) sed -n 2,7p "$0"; exit 2 ;;
+esac
