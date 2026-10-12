@@ -15,6 +15,8 @@
 モード:
   backup SPIフラッシュ(/dev/mtd0 と /dev/mtd1)を dd で読み出すだけの版。書き込み・消去はしない。結果を sys1(既定)かp3の
          /spi_backup/ に置き、そのあと公式アプリを普通に起動する。Debianの用意もSPIの書き換えもしない。--dest sys1|p3|both
+  restore バックアップ専用 .dlm が置いた /spi_backup/spi_mtd0.bin から、SPIのKNL/BKNL スロットだけを書き戻す版(--mtdtool が必要)。
+         違うスロットだけを mtdtool flash(消去→書き込み→読み戻し検証)で書き、成功したら再起動する。再起動後は一致しているので何もしない。
   trace  公式の動作を変えず、telnet・sys1のマウント・--official-pre-snippet だけを足す(観測用。halt/reboot も本物のまま)。
   debug  公式のまま動かし、rcS の先頭で telnetd だけ開く。公式アプリが止まる原因を telnet で中から調べるための版。
   p3     p3 に(PC側で)Debianを用意してある前提。rcS は p3 を mount して chroot し、nasne-stage1.sh を実行する。
@@ -85,8 +87,13 @@ def iter_members(raw_tar):
         yield tf, m
 
 
-def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None, dest="sys1"):
+def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None, dest="sys1", pre_udev=None):
     lines = rcs_text.split("\n")
+    if pre_udev:                                     # 観測用: start_udev の前に差し込む(udevが起動する子プロセスにも環境変数を渡したいとき)
+        ui = [i for i, l in enumerate(lines) if l.strip() == "start_udev"]
+        if len(ui) != 1:
+            raise SystemExit(f"rcS に start_udev の行が{len(ui)}個ある(1個のはず)")
+        lines[ui[0]:ui[0]] = open(pre_udev, encoding="utf-8").read().rstrip("\n").split("\n")
     idx = [i for i, l in enumerate(lines) if l.strip() == START_LINE]
     if len(idx) != 1:
         raise SystemExit(f"rcS に {START_LINE} の行が{len(idx)}個ある(1個のはず)。このファームのバージョンは想定外。中身を確認すること")
@@ -97,6 +104,9 @@ def rcs_new(rcs_text, mode, telnet, pre_snippet=None, official_pre=None, dest="s
         print(f"警告: startdtvtuner の行が rcS の最後ではない(行 {idx[0] + 1}/{last_nonblank + 1})。後ろの行は残す", file=sys.stderr)
     if mode == "backup":                             # SPIフラッシュを読み出すだけ(書き込まない)。終わったら公式アプリを普通に起動する
         blk = open(os.path.join(HERE, "rcS_block_backup.sh"), encoding="utf-8").read().replace("@DEST@", dest).rstrip("\n")
+        return "\n".join(lines[:idx[0]] + blk.split("\n") + lines[idx[0] + 1:])
+    if mode == "restore":                            # SPIのKNL/BKNLをバックアップへ戻す(mtdtool が rootfs に入っていること)
+        blk = open(os.path.join(HERE, "rcS_block_restore.sh"), encoding="utf-8").read().rstrip("\n")
         return "\n".join(lines[:idx[0]] + blk.split("\n") + lines[idx[0] + 1:])
     if mode == "trace":                              # 公式の動作を一切変えずに観測だけする(telnet+sys1のマウント+任意のスニペット)
         block = [MARK_BEGIN + " (trace: 観測のみ) ========",
@@ -167,7 +177,7 @@ def build(args):
     for i, (tf, m) in enumerate(iter_members(raw)):
         if i == last_rcs:
             old = tf.extractfile(m).read().decode("utf-8")
-            new = rcs_new(old, args.mode, args.telnet, args.pre_snippet, args.official_pre_snippet, args.dest).encode("utf-8")
+            new = rcs_new(old, args.mode, args.telnet, args.pre_snippet, args.official_pre_snippet, args.dest, args.pre_udev_snippet).encode("utf-8")
             import copy
             ti = copy.copy(m); ti.size = len(new); ti.type = tarfile.REGTYPE
             tw.addfile(ti, io.BytesIO(new)); rcs_done = True
@@ -178,7 +188,12 @@ def build(args):
         n += 1
     if not rcs_done:
         raise SystemExit(f"tar に {RCS_PATH} が無い")
-    for spec in (args.extra_file or []):
+    extra_specs = list(args.extra_file or [])
+    if args.mode == "restore":
+        if not args.mtdtool:
+            raise SystemExit("--mode restore には --mtdtool <MIPS用mtdtoolのバイナリ> が必要(scripts/tools/mtdtool.c をビルドしたもの)")
+        extra_specs.append(f"usr/bin/mtdtool={args.mtdtool}:755")
+    for spec in extra_specs:
         tp, _, lp = spec.partition("=")
         mode = 0o755
         if ":" in lp.rsplit("/", 1)[-1]:
@@ -286,9 +301,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
-    b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--debian-tree-tar")
+    b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup", "restore"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--mtdtool", help="restoreモードで rootfs に入れる mtdtool(MIPS静的バイナリ)"); b.add_argument("--debian-tree-tar")
     b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
-    b.add_argument("--level", type=int, default=6); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
+    b.add_argument("--level", type=int, default=6); b.add_argument("--pre-udev-snippet", help="観測用: rcS の start_udev の直前に実行するシェルのファイル(LD_PRELOADをudev配下の子にも効かせる用)"); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)
     l = sub.add_parser("list"); l.add_argument("--official", required=True)
     a = ap.parse_args()

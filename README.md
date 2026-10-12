@@ -27,6 +27,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
 | ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
 | ✅ できる | **SPIフラッシュを「読むだけ」でバックアップ**(書き込まず、公式HDDの `00550066.dlm` を差し替えるだけで、nasne自身が読んでHDDに置く。[docs/16](docs/16_spi_backup_dlm.md)) |
+| ✅ できる | **SPIのカーネル領域をバックアップへ戻す**(`--mode restore`。公式カーネルへ戻す、試したカーネルを元に戻す。[docs/16](docs/16_spi_backup_dlm.md)) |
 | ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
 | ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
 | ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
@@ -65,7 +66,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [03_firmware_format](docs/03_firmware_format.md) | `.dlm` の暗号とヘッダ、HDD紐付け(`00110022.dlm`) |
 | [04_hdd_recovery_guide](docs/04_hdd_recovery_guide.md) | **HDD全損機の復旧手順** |
 | [15_p3_structure_and_hai](docs/15_p3_structure_and_hai.md) | p3の初期構造と `.hai`(v1.00なしで復旧できる理由) |
-| [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm` |
+| [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm`、バックアップへ戻す `.dlm` |
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |

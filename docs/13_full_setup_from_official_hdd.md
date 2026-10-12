@@ -191,7 +191,7 @@ SPIのカーネルは書き換えない。戻るには電源を入れ直す(offi
 1. HDDをPCに繋ぎ、退避してある元の `00550066.dlm` をsys1に戻す。
 2. p3 の `/etc/nasne-direct-boot` を削除する(自作カーネルの `/nasne_init` は、この印が無いと公式のminirootへフォールバックする)。
    p3のDebianごと捨てて公式のp3(XFS)に戻す場合は、公式ファームのセットアップでp3が初期化される(**録画データは embed の時点で消えている**)。
-3. SPIのKNLも公式に戻す場合は、`scripts/tools/mtdtool` で `ofw_out/KNL.bin` を書く(Debianが動いている間に):
+3. SPIのKNLも公式に戻す場合は、事前に取ったバックアップ([docs/16](16_spi_backup_dlm.md))から戻す復元版 `.dlm`(`--mode restore`、実機で確認済み)が簡単です。手で書くなら、`scripts/tools/mtdtool` で `ofw_out/KNL.bin` を書く(Debianが動いている間に):
    `mtdtool flash /dev/mtd0 0x100000 KNL.bin`。事前にCH341Aで取ったダンプがあれば、そちらを書き戻すのが確実。
 
 ## 使ったツール(`scripts/stage1/`)
