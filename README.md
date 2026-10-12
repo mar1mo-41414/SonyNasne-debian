@@ -98,6 +98,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
    ├─ ofw_tool.py             … 公式ファームパッケージの分解
    ├─ nasne_hdd_rebuild.py    … HDD復旧用ツール(mkdisk / phase1 / read-id / final / p3init / verify)
    ├─ nasne_hai.py            … HDD登録情報 `.hai` の復号・生成
+   ├─ nasne_db.py             … 録画DB(`00000015/*.dat`)の復号・暗号化
    ├─ nasne_api.py            … 公式Web API(64210)のクライアント(認証トークン対応)
    ├─ spi_ecc.py              … SPIのECC領域の確認・再構築
    ├─ build_knl.py            … SPIのKNLセグメントの解析・再構築

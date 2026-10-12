@@ -47,6 +47,10 @@ python3 scripts/dlm_mng.py selftest <00110022.dlm>                              
 
 [docs/15](15_p3_structure_and_hai.md)。`show <.hai>` で復号して中身と検査和を表示、`gen <出力dir> --chipid <16桁> --device /dev/sdX` で生成。
 
+### `nasne_db.py` — 録画DB(`00000015/*.dat`)
+
+[docs/15 §3](15_p3_structure_and_hai.md)。`show <.dat>` でXMLを表示(CRC検算つき)、`decode`/`encode`、`verify <.dat>...` は復号→再暗号化がバイト単位で一致するかを確かめます。
+
 ### `build_knl.py` — SPIのKNLセグメント
 
 ```bash
