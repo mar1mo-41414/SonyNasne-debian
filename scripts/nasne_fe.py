@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """nasne のチューナー(復調IC + RFチューナーIC)を、PCからssh経由でI2C操作して選局・状態確認する実験ツール。
 
-nasne側に `i2cx`(scripts/userspace_tools/i2cx.c, -b バッチモード)が /usr/local/sbin にあり、公式ドライバ(rc.xcode4)が
-ロード済みでファームが動いていることが前提。手順は dtvtuner の逆コンパイルから起こしたもの(docs/23_tuner_i2c.md)。
+nasne側に `i2cx`(scripts/tools/i2cx.c, -b バッチモード)が /usr/local/sbin にあり、公式ドライバ(rc.xcode4)が
+ロード済みでファームが動いていることが前提。手順は dtvtuner の逆コンパイルから起こしたもの(docs/08_tuner_i2c.md)。
 
 ISDB-S 側(バス1、復調IC 8bit 0x22、RFチューナー 8bit 0xC6 をパススルー 0xFE 経由で操作):
   s-init                 初期化(復調ICの設定表、チューナーの初期レジスタ)。電源投入後に1回

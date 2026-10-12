@@ -24,7 +24,7 @@ case "$1" in
       while [ $n -lt 30 ]; do
           if $BIN/mcui2c w 20 20 01 >> $LOG 2>&1; then
               echo "MCU watchdog disabled" >> $LOG
-              # PWR LED: MCUの表示コードレジスタ(0x10)へ 0x32 を書くと、点滅から点灯になる(公式procmngが通常運転中に書く値。docs/19)
+              # PWR LED: MCUの表示コードレジスタ(0x10)へ 0x32 を書くと、点滅から点灯になる(公式procmngが通常運転中に書く値。docs/06)
               $BIN/mcui2c w 20 10 32 >> $LOG 2>&1 && echo "PWR LED on (code 0x32)" >> $LOG
               break
           fi

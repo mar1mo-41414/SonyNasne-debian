@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """nasne の HDD(sys1)を公式ファーム(KRST3101_xxxx_SECURE.dlm)からファイル操作だけで作る補助ツール。
-SPIの吸い出し等は不要。手順は docs/18_hdd_rebuild_guide.md。Python 3.8+ のみ必要(外部ライブラリ不要)。
+SPIの吸い出し等は不要。手順は docs/04_hdd_recovery_guide.md。Python 3.8+ のみ必要(外部ライブラリ不要)。
 
   phase1 <公式.dlm> <sys1ディレクトリ>        ステップ1用。00550066.dlmを「ヘッダ+8=0」版にして置き、00110022.dlmを消す。
                                                 nasneを1回起動すると、本体のinitがこの本体の個体IDで00110022.dlmを自動生成する
