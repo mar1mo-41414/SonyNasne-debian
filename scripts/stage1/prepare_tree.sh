@@ -47,7 +47,7 @@ if [ -z "$BINS" ]; then
   BINS=$WORK/bin; mkdir -p "$BINS"
   command -v docker >/dev/null || { echo "dockerが無い: --bins でビルド済みバイナリのディレクトリを指定してください" >&2; exit 1; }
   docker image inspect nasne-kcc:gcc432 >/dev/null 2>&1 || { echo "nasne-kcc:gcc432 が無い(docs/05 ①)" >&2; exit 1; }
-  for p in "watchdog/mcui2c.c:mcui2c" "userspace_tools/nasne_recpt1.c:nasne-recpt1" "userspace_tools/i2cx.c:i2cx" "userspace_tools/mtdtool.c:mtdtool"; do
+  for p in "watchdog/mcui2c.c:mcui2c" "tools/nasne_recpt1.c:nasne-recpt1" "tools/i2cx.c:i2cx" "tools/mtdtool.c:mtdtool"; do
     src=${p%%:*}; bin=${p##*:}
     docker run --rm -v "$ROOT":/w -v "$BINS":/o -w "/w/scripts/$(dirname "$src")" nasne-kcc:gcc432 \
       mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o "/o/$bin" "$(basename "$src")"
