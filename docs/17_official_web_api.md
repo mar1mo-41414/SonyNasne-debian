@@ -12,8 +12,8 @@
 | **POST**(`/config/...Set`、`/config/initialize`、`/config/internalHDDInitialize` など) | ヘッダ **`X-DTVToken`** が必要 |
 
 - トークン = `base64( SHA1( PIN + パス + 本文の先頭256文字 ) )`。`Content-Type: application/x-www-form-urlencoded`。
-- **PIN は、本体の MAC アドレスの下位3バイト**です。`/status/networkIfInfoGet` の `macAddr`(例 `00:25:dc:58:da:f0`)からコロンを除いて7文字目以降を取ります
-  (APIが返す表記のまま、小文字。例では `58daf0`)。WebUIは、リモート(別ポート)アクセスのときにこの値を PIN にします。
+- **PIN は、本体の MAC アドレスの下位3バイト**です。`/status/networkIfInfoGet` の `macAddr`(例 `aa:bb:cc:11:22:33`)からコロンを除いて7文字目以降を取ります
+  (APIが返す表記のまま、小文字。例では `112233`)。WebUIは、リモート(別ポート)アクセスのときにこの値を PIN にします。
 - トークンが違う、または無いと **HTTP 400**。存在しない API は 404。
 
 ```bash

@@ -6,7 +6,7 @@
   - POST(`/config/...Set` や初期化など)は、ヘッダ `X-DTVToken` が必要。
         トークン = base64( SHA1( PIN + パス + 本文の先頭256文字 ) )
     PIN は **本体のMACアドレスの下位3バイト**(`/status/networkIfInfoGet` の macAddr からコロンを除いた文字列の7文字目以降。
-    APIが返す表記のまま、小文字)。例: macAddr "00:25:dc:58:da:f0" → PIN "58daf0"。
+    APIが返す表記のまま、小文字)。例: macAddr "aa:bb:cc:11:22:33" → PIN "112233"。
     Content-Type は application/x-www-form-urlencoded。トークンが違う・無いと HTTP 400。未知のAPIは 404。
   - LED(`/config/LEDControl?powerGreen=a&powerRed=b&record=c&network=d`): 各値は 0=変更なし、1=点灯、2=消灯。
     WebUIの「nasneを探す」は powerGreen=2, powerRed=1, record=1, network=1(緑を消し、赤・REC・LANを点灯。数秒で元に戻る)。
