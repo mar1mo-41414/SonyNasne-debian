@@ -38,6 +38,7 @@ mkdir -p scripts/kernel_build/dl
 wget -O scripts/kernel_build/dl/binutils-2.19.1.tar.bz2 https://ftp.gnu.org/gnu/binutils/binutils-2.19.1.tar.bz2
 wget -O scripts/kernel_build/dl/gcc-core-4.3.2.tar.bz2  https://ftp.gnu.org/gnu/gcc/gcc-4.3.2/gcc-core-4.3.2.tar.bz2
 
+sh scripts/kernel_build/fetch_toolchain_sources.sh        # gcc 4.3.2 / binutils 2.19.1 を取得(sha256確認)
 docker build -t nasne-kcc:gcc432 scripts/kernel_build
 
 mkdir -p gpl_src/build && tar xjf gpl_src/mips-linux-2.6.29.tar.bz2 -C gpl_src/build   # gpl_src/build/mips-linux-2.6.29 ができる

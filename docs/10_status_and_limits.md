@@ -17,6 +17,7 @@
 | **地デジの受信・復号・配信** | **B-CASカードで復号した元画質(MPEG-2 HD)のTS**を、`recpt1`互換コマンドとHTTPで取り出す。SI(番組表の元データ)も混ぜる。連続2分(約230MB)で同期エラー・スクランブル残りなし | [docs/11](11_tv_streaming.md)、[docs/12](12_ts_and_bcas_decrypt.md) |
 | **v1.00なしでのHDD復旧** | 空のHDDから公式 v2.60 だけで起動。HDD登録情報 `.hai` の生成と、p3の初期構造(`p3init`)で、v1.00 を使わずに済む | [docs/04](04_hdd_recovery_guide.md)、[docs/15](15_p3_structure_and_hai.md) |
 | **SPIフラッシュの読み出しバックアップ** | 書き込まず、HDDの `00550066.dlm` 差し替えだけで、nasne自身がSPIを読んでHDDに置く(原本ダンプとKNLスロット以外一致) | [docs/16](16_spi_backup_dlm.md) |
+| **ビルドの通し(クリーンな環境)** | `nasne_setup.py` で、公式ファームの取得 → カーネル → KNL → Debianツリー → `.dlm` まで、最小構成の Debian 13 の仮想マシンで最後まで通った(追加パッケージは docs/13 の表のとおり)。実機への投入はしていない | [docs/13](13_full_setup_from_official_hdd.md) |
 | **SPIをバックアップへ戻す(`--mode restore`)** | バックアップから KNL / BKNL スロットだけを、違うときだけ書き戻す(消去→書き込み→読み戻し検証→再起動)。実機で、自作カーネル入りのバックアップから書き戻し・検証OK・再起動後に「一致」を確認 | [docs/16](16_spi_backup_dlm.md) |
 | **電源オフ・予約起動(タイマ起床)** | Debianの `poweroff` で実際に電源が切れる(MCUへ `[0x02,0x01]`、待機約1W)。`WAKE_SECONDS` で、切ってから指定秒数後に自動起動(起床タイマ `[0x02,0x02,u32]`、約10.5ms/カウント)。電源ケーブルの抜き差しでも起動 | [docs/06](06_mcu_watchdog.md) |
 | **電源ボタン長押しでの電源オフ** | MCUのステータス2バイト目のbit4(`0x10`)がラッチされる(押下で `0x80`→`0x90`)ので、`nasne-powerbtn` が検出して `poweroff` する。実機で「長押し→数秒で電源オフ」を確認 | [docs/06](06_mcu_watchdog.md) |

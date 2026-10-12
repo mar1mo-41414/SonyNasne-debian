@@ -47,6 +47,11 @@ python3 scripts/dlm_mng.py selftest <00110022.dlm>                              
 
 [docs/15](15_p3_structure_and_hai.md)。`show <.hai>` で復号して中身と検査和を表示、`gen <出力dir> --chipid <16桁> --device /dev/sdX` で生成。
 
+### `nasne_setup.py` — ビルドを1コマンドで
+
+[docs/13](13_full_setup_from_official_hdd.md)。`check` で足りないパッケージを調べ、`build` でカーネル→KNL→Debianツリー→`.dlm` まで作ります(済んだステップは飛ばす)。
+内部で `scripts/fetch_gpl_sources.sh` / `scripts/kernel_build/fetch_toolchain_sources.sh`(gcc・binutilsの取得とsha256確認)/ `scripts/build_tools.sh`(MIPS用の小さなツールのビルド)/ `prepare_tree.sh` / `make_stage1_dlm.py` を呼びます。
+
 ### `nasne_db.py` — 録画DB(`00000015/*.dat`)
 
 [docs/15 §3](15_p3_structure_and_hai.md)。`show <.dat>` でXMLを表示(CRC検算つき)、`decode`/`encode`、`verify <.dat>...` は復号→再暗号化がバイト単位で一致するかを確かめます。

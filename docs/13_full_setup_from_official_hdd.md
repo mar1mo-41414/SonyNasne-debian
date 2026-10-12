@@ -51,15 +51,40 @@
 `/sbin/init` を差し替える方法は使えない(`/sbin/init` は `busybox` へのシンボリックリンクで、tar内でこれを通常ファイルに変えると
 実機のminirootのtarが途中で止まる。[docs/03](03_firmware_format.md))。`rcS` の差し替えが実績のある方法。
 
-## 必要なもの
+## かんたん手順: `nasne_setup.py` で1コマンド
 
-- Linux PC(Python 3.8+、Docker、`debootstrap`、`qemu-user-static`、`sudo`)
-- このリポジトリ、**公式ファーム**(Sonyの公開サーバから取得。再配布しないこと):
-  ```bash
-  wget http://ps-peripheral.dl.playstation.net/ps-peripheral/nasne/0260/KRST3101_0260_SECURE.dlm
-  ```
-- 対象nasneのHDD(USB-SATA変換で接続)。**そのHDD自身の `00550066.dlm` を入力に使う**こと(ヘッダの日付がマネージャ `00110022.dlm` と一致している必要があるため)
-- (強く推奨)CH341A等のSPIライタとSOICクリップ。事前に元のSPI全体(16MB)をダンプしておく
+下の「手順」1〜3(カーネル → Debianのツリー → `.dlm`)を、1つのコマンドにまとめたものです。HDDにはまだ触りません(HDDへ入れる4・5は手動)。
+
+```bash
+python3 scripts/nasne_setup.py check            # 足りないパッケージを表示(Debian/Ubuntu 向けに apt のコマンドも出る)
+python3 scripts/nasne_setup.py build --download-official --hdd-dlm <HDDのsys1の00550066.dlm> --ssh-pubkey ~/.ssh/id_rsa.pub --work build_nasne
+```
+
+- 作業ディレクトリ(`--work`)に結果を残し、2回目以降は済んだステップを飛ばします。止まったら同じコマンドをもう一度実行すれば、続きから始まります。
+- `--hdd-dlm` を付けないと、最後の `.dlm` 作成の前で止まります(ビルド環境の確認だけしたいとき)。
+- 公式ファームパッケージ(Sony配布。再配布しないこと)は、`--download-official` で Sony のサーバから取得するか、`--official-pkg` で手元のものを指定します。
+- 所要時間の目安(4コア): カーネル用ツールチェーンのDockerビルド 約3分、カーネル 約2分、Debianのdebootstrap 約8分、`.dlm` 1分。計15〜20分。ディスクは約6GB(Dockerイメージ約1GB、GPLソース約1GB、ツリー・`.dlm`など)。
+
+### 必要なもの(ビルドするPC)
+
+クリーンな Debian 13 の最小構成で、次の追加だけで最後まで通ることを確認しました(`python3` `curl` `bzip2` `tar` `file` `git` `sudo` は最初から入っていました)。
+
+| パッケージ(apt) | 用途 |
+|---|---|
+| `docker.io` | カーネルのビルド(古い gcc 4.3.2 のコンテナ) |
+| `debootstrap` | Debian wheezy (mipsel) の作成 |
+| `qemu-user-static` と `binfmt-support` | mipsel の Debian を PC 上で実行(debootstrap の第2段階) |
+| `gcc-mipsel-linux-gnu`(任意) | MIPS 用の小さなツール(`mcui2c` など)のビルド。無ければ Docker の gcc で代用 |
+
+root または `sudo` が必要です(debootstrap・ツリーの作成)。Docker を一般ユーザーで使うなら `docker` グループに入れてください。
+Python は標準ライブラリだけで動きます(pip のパッケージは不要)。ネットワークは、GNU(gcc・binutils)、Sony(GPLソース・公式ファーム)、`archive.debian.org`(wheezy)に出られること。
+`nasne_setup.py check` は、これらの有無と、qemu の binfmt 登録、Docker の権限を調べます。
+
+## 個別の必要条件と手順(手で進める場合)
+
+- 対象nasneのHDD(USB-SATA変換で接続)。**そのHDD自身の `00550066.dlm` を入力に使う**こと(ヘッダの日付がマネージャ `00110022.dlm` と一致している必要がある。`install_dlm.sh` が検査する)。
+- 公式ファーム(Sonyの公開サーバから取得。再配布しないこと): `wget http://ps-peripheral.dl.playstation.net/ps-peripheral/nasne/0260/KRST3101_0260_SECURE.dlm`
+- (強く推奨)SPIのバックアップ。CH341A等のSPIライタでの全体ダンプ、または書き込まない[バックアップ用 `.dlm`](16_spi_backup_dlm.md)。復元版 `.dlm`(`--mode restore`)で戻せます。
 
 ## 手順
 
@@ -67,6 +92,7 @@
 
 ```bash
 sh scripts/fetch_gpl_sources.sh
+sh scripts/kernel_build/fetch_toolchain_sources.sh        # gcc 4.3.2 / binutils 2.19.1 を取得(sha256確認)
 docker build -t nasne-kcc:gcc432 scripts/kernel_build
 mkdir -p gpl_src/build && tar xjf gpl_src/mips-linux-2.6.29.tar.bz2 -C gpl_src/build
 NASNE_CUSTOM=1 sh scripts/kernel_build/build.sh                  # → gpl_src/build/out/vmlinux_new.bin
