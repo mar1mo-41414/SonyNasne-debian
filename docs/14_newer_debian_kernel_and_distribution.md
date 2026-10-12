@@ -30,6 +30,8 @@ muslは必要なカーネルの要求が緩い。`nasne-recpt1` 自体は libc �
 
 結論: **技術的には可能だが、大きな移植作業**になる。
 
+> **実際にビルドするために必要な情報(ソースの実測、移植の対象と行数、`xcode4drv` の直す点、LTS の選び方、デバッグの進め方)は [docs/19](19_new_kernel_survey.md) にまとめました。** 以下は概要です。
+
 - 今のカーネルは SIE が GPL で公開したベンダーの 2.6.29 で、SoC(ViXS XCode 4210 "Viper"、MIPS 74Kc)固有のコードは**メインラインに無い**:
   割り込み・タイマー等のプラットフォーム、SATA(`xcode-ahci`)、USB(`sduh-ehci`)、SPI(`xcode_spi`)、RTC(`vixs-rtc`)、Ethernet(SynopGMAC。メインラインには近い `stmmac` がある)。
   新しいカーネルでは Device Tree 化して、これらを移植または書き直す必要がある。

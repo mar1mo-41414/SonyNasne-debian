@@ -87,6 +87,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm`、バックアップへ戻す `.dlm` |
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
 | [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
+| [19_new_kernel_survey](docs/19_new_kernel_survey.md) | 新しいカーネル(6.x)を作るために必要な情報の調査(ベンダーソースの実測、移植の対象、`xcode4drv`、デバッグの進め方) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |
