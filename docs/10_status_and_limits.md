@@ -35,7 +35,7 @@
 | RTC(ハードウェア時計) | カーネルの `vixs-rtc` は評価ボードのDS1339(I2C `0xD0`)用で、この基板には無く読めない(`unable to read the hardware clock`)。時計は1970年から始まるので、`fake-hwclock`(最後に保存した時刻から再開)+ `ntpdate`(ネットワーク起動時に補正)で対処(`prepare_tree.sh` が標準で入れる) |
 | パッケージ追加(apt) | wheezy は EOL。`archive.debian.org` に向け(`[trusted=yes]` と `Check-Valid-Until false`)で使える(`prepare_tree.sh` が設定) |
 | UART / JTAG | 基板に信号が配線されていない |
-| 公式の録画データの利用・DLNA配信・DTCP-IP(**やらない**。DTCP-IPで保護された録画の取り出し・復号は対象外) | 純正アプリは動かさない。録画は別の録画ソフト側で行う前提。HDD登録情報 `.hai` と録画DB(`00000015/` の `.dat`)の暗号は解読済みだが、録画の表(`cont_inf_tbl`)の中身と録画ファイル本体の形式は未確認(録画サンプルが無い)で、既存録画の移行は未対応([docs/15](15_p3_structure_and_hai.md)) |
+| 公式の録画データの利用・DLNA配信・DTCP-IP(**やらない**。DTCP-IPで保護された録画の取り出し・復号は対象外) | 純正アプリは動かさない。録画は別の録画ソフト側で行う前提。HDD登録情報 `.hai` と録画DB(`00000015/` の `.dat`)の暗号は解読済みだが、録画の表(`cont_inf_tbl`)の構造は確認済み([docs/15](15_p3_structure_and_hai.md))。録画ファイル本体の取り出し・復号は対象外(やらない)([docs/15](15_p3_structure_and_hai.md)) |
 | ブートローダの差し替え | U-Boot / 4段目の差し替えは未実施(SPIの先頭1MBは難読化されており、書き込み時は難読化の適用が必要)。カーネル引数(`console=` など)は変えられない |
 | Sony miniroot を使わない完全Debian化 | SPIのRFS(Sony miniroot)はまだ読み込まれる(`switch_root` で捨てられるだけ)。自前RFSは未作成 |
 
