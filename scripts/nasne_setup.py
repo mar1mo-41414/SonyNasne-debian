@@ -101,8 +101,6 @@ def build(a):
     if not open(pub).read().startswith("ssh-rsa"):
         sys.exit(f"エラー: {pub} は RSA 鍵ではない(wheezy の sshd は ed25519 に非対応)。--ssh-pubkey で RSA の公開鍵を指定してください")
     hdd_dlm = os.path.abspath(a.hdd_dlm) if a.hdd_dlm else None
-    if hdd_dlm and not os.path.isfile(hdd_dlm):
-        sys.exit(f"エラー: {hdd_dlm} が無い")
 
     # 1. 公式ファームパッケージ
     step(1, "公式ファームパッケージ")
@@ -167,6 +165,8 @@ def build(a):
 
     # 7. .dlm
     step(7, "00550066.dlm の作成")
+    if hdd_dlm and not os.path.isfile(hdd_dlm):
+        sys.exit(f"エラー: {hdd_dlm} が無い")
     if not hdd_dlm:
         print("  --hdd-dlm が無いので、ここで止めます。ビルドは完了しています。HDDの00550066.dlmを用意して、もう一度 build を実行してください(以前のステップは飛ばされます)。")
         return
