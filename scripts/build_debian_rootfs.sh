@@ -45,7 +45,7 @@ echo "=== proc/sysをマウントしopensssh-server等をインストール ==="
 mount -t proc proc "$OUT/proc"
 mount -t sysfs sysfs "$OUT/sys"
 cp /etc/resolv.conf "$OUT/etc/resolv.conf"
-trap 'umount "$OUT/proc" "$OUT/sys" 2>/dev/null || true' EXIT
+trap 'for m in proc sys; do while mountpoint -q "$OUT/$m"; do umount "$OUT/$m" || break; done; done' EXIT
 
 chroot "$OUT" /bin/bash -c "
 export DEBIAN_FRONTEND=noninteractive
@@ -61,7 +61,8 @@ chmod 600 "$OUT/root/.ssh/authorized_keys"
 sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' "$OUT/etc/ssh/sshd_config"
 echo debian-mipsel > "$OUT/etc/hostname"
 
-umount "$OUT/proc" "$OUT/sys"
+# 新しい debootstrap は second-stage で /proc を自分でマウントしたまま残すことがある(重ねてマウントされる)ので、外れるまで繰り返す
+for m in proc sys; do while mountpoint -q "$OUT/$m"; do umount "$OUT/$m" || break; done; done
 trap - EXIT
 
 echo "=== サイズ削減: apt cache/lists、doc、man、非英語ロケール、qemuバイナリを除去 ==="
@@ -106,5 +107,5 @@ for root, dirs, files in os.walk(base):
                 seen[key] = path
 PYEOF
 
-du -sh "$OUT"
+du -shx "$OUT"
 echo "完了: $OUT"
