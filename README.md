@@ -33,6 +33,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
 | ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
+| ✅ できる | **状態ページ**(既定で動く。HDDの温度・SMART、メモリ・ディスク、MCU、チューナー。`http://<nasne>:8302/`、JSON、Prometheus。[docs/18](docs/18_status_page.md))。Home Assistant 連携はオプション([contrib/homeassistant](contrib/homeassistant/README.md)) |
 | ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。[contrib/epgstation](contrib/epgstation/README.md)) |
 | △ 未検証 | tvheadend との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統)、数日の連続運用 |
 | ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
@@ -69,6 +70,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [15_p3_structure_and_hai](docs/15_p3_structure_and_hai.md) | p3の初期構造と `.hai`(v1.00なしで復旧できる理由) |
 | [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm`、バックアップへ戻す `.dlm` |
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
+| [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |

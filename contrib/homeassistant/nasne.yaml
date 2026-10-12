@@ -1,0 +1,77 @@
+# nasne の状態を Home Assistant に出す設定(パッケージ形式)。nasne 側の「状態ページ」(HTTP 8302、既定で有効)を読むだけです。
+#   1. このファイルを <HAの設定ディレクトリ>/packages/nasne.yaml に置く
+#   2. configuration.yaml に次を足す(すでにあれば不要):
+#        homeassistant:
+#          packages: !include_dir_named packages
+#   3. 下の NASNE_HOST を nasne の IP アドレス(またはホスト名)に置換して、HA を再起動する
+# 追加するもの: HDD温度・SMART・通電時間・保留セクタ・メモリ・データ領域の使用率・稼働時間・負荷・チューナー使用中・注意あり・警告・HDD待機中・online。
+# エンティティ名は英語(entity_id がきれいになる)。表示名は HA の画面で変えられます。
+# nasne の電源が切れている間は、センサーは「利用不可」になり、nasne online が off になります。
+rest:
+  - resource: http://NASNE_HOST:8302/status.json
+    scan_interval: 30
+    timeout: 10
+    sensor:
+      - name: "nasne hdd temperature"
+        unique_id: nasne_hdd_temperature
+        value_template: "{{ value_json.hdd.temperature_c }}"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+      - name: "nasne hdd smart"
+        unique_id: nasne_hdd_smart
+        value_template: "{{ value_json.hdd.health }}"
+      - name: "nasne hdd power on hours"
+        unique_id: nasne_hdd_power_on_hours
+        value_template: "{{ value_json.hdd.power_on_hours }}"
+        unit_of_measurement: "h"
+        state_class: total_increasing
+      - name: "nasne hdd pending sectors"
+        unique_id: nasne_hdd_pending_sectors
+        value_template: "{{ value_json.hdd.pending_sectors }}"
+        state_class: measurement
+      - name: "nasne memory available"
+        unique_id: nasne_memory_available
+        value_template: "{{ (value_json.memory.available_kb / 1024) | round(0) }}"
+        unit_of_measurement: "MB"
+        state_class: measurement
+      - name: "nasne load"
+        unique_id: nasne_load1
+        value_template: "{{ value_json.load[0] }}"
+        state_class: measurement
+      - name: "nasne uptime"
+        unique_id: nasne_uptime
+        value_template: "{{ (value_json.uptime_s / 3600) | round(1) }}"
+        unit_of_measurement: "h"
+        state_class: measurement
+      - name: "nasne data used"
+        unique_id: nasne_data_used
+        value_template: "{{ (value_json.disks | selectattr('mount', 'eq', '/data') | map(attribute='used_percent') | first | default(none)) }}"
+        unit_of_measurement: "%"
+        state_class: measurement
+      - name: "nasne warnings"
+        unique_id: nasne_warnings
+        value_template: "{{ value_json.warnings | length }}"
+        json_attributes_path: "$"
+        json_attributes:
+          - warnings
+    binary_sensor:
+      - name: "nasne tuner busy"
+        unique_id: nasne_tuner_busy
+        value_template: "{{ value_json.tuner.busy }}"
+        device_class: running
+      - name: "nasne problem"
+        unique_id: nasne_problem
+        value_template: "{{ not value_json.ok }}"
+        device_class: problem
+      - name: "nasne hdd standby"
+        unique_id: nasne_hdd_standby
+        value_template: "{{ value_json.hdd.standby }}"
+
+# 本体が応答しているか(状態ページに届くか)。電源オフ・起動中の判定に使う
+template:
+  - binary_sensor:
+      - name: "nasne online"
+        unique_id: nasne_online
+        device_class: connectivity
+        state: "{{ states('sensor.nasne_hdd_smart') not in ['unavailable', 'unknown'] }}"

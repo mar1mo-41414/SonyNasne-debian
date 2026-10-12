@@ -1,0 +1,31 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nasne-status
+# Required-Start:    $local_fs $network nasne-mcu-wd
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: nasne の状態ページ(温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP 8302)
+### END INIT INFO
+# http://<nasne>:8302/ (HTML) /status.json /metrics。読み取り専用。設定は /etc/default/nasne-status:
+#   NASNE_STATUS_PORT=8302  NASNE_STATUS_BIND=0.0.0.0(LANだけに見せたくなければ 127.0.0.1)  NASNE_STATUS_DEVICE=/dev/sda  NASNE_STATUS_TEMP_WARN=55
+BIN=/usr/local/sbin/nasne-statusd
+PIDFILE=/var/run/nasne-status.pid
+[ -f /etc/default/nasne-status ] && . /etc/default/nasne-status
+export NASNE_STATUS_PORT NASNE_STATUS_BIND NASNE_STATUS_DEVICE NASNE_STATUS_TEMP_WARN
+case "$1" in
+  start)
+    [ -x $BIN ] || exit 0
+    [ "${NASNE_STATUS_ENABLE:-1}" = 0 ] && exit 0
+    nohup $BIN >> /var/log/nasne-status.log 2>&1 &
+    echo $! > $PIDFILE
+    ;;
+  stop)
+    [ -f $PIDFILE ] && kill $(cat $PIDFILE) 2>/dev/null
+    rm -f $PIDFILE
+    ;;
+  restart|force-reload) $0 stop; sleep 1; $0 start ;;
+  status) [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null && echo running || echo stopped ;;
+  *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac
+exit 0

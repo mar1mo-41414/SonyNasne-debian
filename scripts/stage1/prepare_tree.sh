@@ -86,9 +86,15 @@ echo 'Acquire::Check-Valid-Until "false";' | $SUDO tee "$OUT/etc/apt/apt.conf.d/
 $SUDO cp /etc/resolv.conf "$OUT/etc/resolv.conf"
 $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get update
 $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get install -y --force-yes ntpdate fake-hwclock hdparm $EXTRA
+# 状態ページ(docs/18)用: smartmontools(HDDの温度・SMART)。推奨パッケージ(メール送信など)は入れない
+$SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get install -y --force-yes --no-install-recommends smartmontools
 $SUDO rm -rf "$OUT/var/lib/apt/lists"/* "$OUT/var/cache/apt/archives"/*.deb
 $SUDO chroot "$OUT" update-rc.d nasne-mcu-wd defaults 05
 $SUDO chroot "$OUT" update-rc.d nasne-recpt1-server defaults 20
+# 状態ページ(HTTP 8302。読み取り専用。無効にするなら /etc/default/nasne-status に NASNE_STATUS_ENABLE=0)
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-statusd" "$OUT/usr/local/sbin/nasne-statusd"
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-status" "$OUT/etc/init.d/nasne-status"
+$SUDO chroot "$OUT" update-rc.d nasne-status defaults 25
 # 電源: a-nasne-poweroff は poweroff で実際に電源を切る(rc0.d)、nasne-powerbtn は電源ボタン長押しで poweroff する(docs/06)
 $SUDO install -m 755 "$HERE/../watchdog/a-nasne-poweroff" "$OUT/etc/init.d/a-nasne-poweroff"
 $SUDO install -m 755 "$HERE/../watchdog/nasne-powerbtn" "$OUT/etc/init.d/nasne-powerbtn"
@@ -96,6 +102,7 @@ $SUDO chroot "$OUT" update-rc.d a-nasne-poweroff defaults
 $SUDO chroot "$OUT" update-rc.d nasne-powerbtn defaults
 cleanup_mounts
 if mount | grep -q " $OUT/\(proc\|sys\) "; then echo "umountに失敗: $OUT/proc|sys が残っている" >&2; exit 1; fi
+ls "$OUT"/etc/rc2.d/ | grep -q nasne-status || { echo "nasne-status の update-rc.d が効いていない" >&2; exit 1; }
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-mcu-wd || { echo "update-rc.d が効いていない" >&2; exit 1; }
 
 # ---- 5. 段階1 ----

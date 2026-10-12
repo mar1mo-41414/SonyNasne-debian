@@ -1,0 +1,224 @@
+#!/usr/bin/perl
+# nasne の状態ページ(HTTP)。Perl のコアモジュールだけで動く(wheezy の perl-base)。読み取り専用で、何も変更しない。
+#   http://<nasne>:8302/            状態ページ(HTML。10秒ごとに自動更新)
+#   http://<nasne>:8302/status.json 状態(JSON)。Home Assistant などの REST センサー用
+#   http://<nasne>:8302/metrics     Prometheus 形式
+#   http://<nasne>:8302/healthz     "ok"
+# 見るもの: 稼働時間・負荷・メモリ・ディスク使用量・HDDのSMART(温度、健康状態、通電時間、代替・保留セクタ)・MCUの状態・チューナーの使用状況。
+# HDD が待機中(スピンダウン中)なら、起こさずに前回の値を返す(standby:true)。SMARTの取得は最短60秒おき。
+# 設定: /etc/default/nasne-status  (NASNE_STATUS_PORT=8302  NASNE_STATUS_BIND=0.0.0.0  NASNE_STATUS_DEVICE=/dev/sda  NASNE_STATUS_TEMP_WARN=55)
+use strict;
+use warnings;
+use IO::Socket::INET;
+use POSIX qw(strftime :sys_wait_h);
+
+$ENV{PATH} = '/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin';
+$ENV{LC_ALL} = 'C';
+my $PORT = $ENV{NASNE_STATUS_PORT} || 8302;
+my $BIND = $ENV{NASNE_STATUS_BIND} || '0.0.0.0';
+my $DEV  = $ENV{NASNE_STATUS_DEVICE} || '/dev/sda';
+my $TEMP_WARN = $ENV{NASNE_STATUS_TEMP_WARN} || 55;
+my $RECPT1 = $ENV{NASNE_RECPT1_PORT} || 8301;
+
+sub slurp { my ($f) = @_; open(my $h, '<', $f) or return ''; local $/; my $s = <$h>; close $h; return defined $s ? $s : ''; }
+sub run_cmd {   # 標準出力+標準エラーを返す。timeout 秒で打ち切る
+    my ($timeout, @cmd) = @_;
+    my $pid = open(my $h, '-|') // return '';
+    if (!$pid) { open(STDERR, '>&', \*STDOUT); exec(@cmd) or exit 127; }
+    my $out = '';
+    my $ok = eval { local $SIG{ALRM} = sub { die "timeout\n" }; alarm $timeout; local $/; $out = <$h>; alarm 0; 1 };
+    if (!$ok) { kill 'KILL', $pid; }
+    close $h;
+    return defined $out ? $out : '';
+}
+
+# ---- 簡易 JSON ----
+sub jstr { my $s = shift; $s =~ s/(["\\])/\\$1/g; $s =~ s/\n/\\n/g; $s =~ s/\r//g; $s =~ s/\t/\\t/g; $s =~ s/([\x00-\x1f])/sprintf('\\u%04x', ord $1)/ge; return "\"$s\""; }
+sub jenc {
+    my ($v) = @_;
+    return 'null' unless defined $v;
+    if (ref $v eq 'HASH')  { return '{' . join(',', map { jstr($_) . ':' . jenc($v->{$_}) } sort keys %$v) . '}'; }
+    if (ref $v eq 'ARRAY') { return '[' . join(',', map { jenc($_) } @$v) . ']'; }
+    if (ref $v eq 'SCALAR') { return $$v ? 'true' : 'false'; }
+    return $v if $v =~ /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+    return jstr($v);
+}
+sub bool { my $b = shift; return \(my $x = $b ? 1 : 0); }
+
+# ---- 各情報 ----
+my %smart_cache = (t => 0);
+sub hdd_info {
+    my $now = time;
+    my $state = run_cmd(5, 'hdparm', '-C', $DEV);
+    my $standby = ($state =~ /standby|sleeping/) ? 1 : 0;
+    if (!$standby && $now - $smart_cache{t} >= 60) {
+        my $out = run_cmd(15, 'smartctl', '-i', '-H', '-A', $DEV);
+        my %h;
+        $h{model}  = $1 if $out =~ /^(?:Device Model|Model Family|Product):\s+(.+)$/m;
+        $h{health} = $1 if $out =~ /overall-health self-assessment test result:\s*(\S+)/;
+        $h{capacity_bytes} = do { my $c = $1; $c =~ s/,//g; $c + 0 } if $out =~ /User Capacity:\s+([\d,]+) bytes/;
+        for my $line (split /\n/, $out) {
+            next unless $line =~ /^\s*(\d+)\s+(\S+)\s+0x[0-9a-f]+\s+(\d+)\s+(\d+)\s+(\d+)\s+\S+\s+\S+\s+\S+\s+(\d+)/i;
+            my ($id, $name, $raw) = ($1, $2, $6);
+            $h{temperature_c}        = $raw if $id == 194 || $id == 190;
+            $h{power_on_hours}       = $raw if $id == 9;
+            $h{power_cycles}         = $raw if $id == 12;
+            $h{reallocated_sectors}  = $raw if $id == 5;
+            $h{reallocated_events}   = $raw if $id == 196;
+            $h{pending_sectors}      = $raw if $id == 197;
+            $h{uncorrectable}        = $raw if $id == 198;
+        }
+        $h{ok} = defined $h{health} ? 1 : 0;
+        %smart_cache = (t => $now, h => \%h);
+    }
+    my %r = %{ $smart_cache{h} || {} };
+    $r{device} = $DEV; $r{standby} = bool($standby);
+    $r{smart_age_s} = $smart_cache{t} ? $now - $smart_cache{t} : undef;
+    delete $r{ok};
+    return \%r;
+}
+
+sub mcu_info {
+    my $out = run_cmd(3, 'mcui2c', 'r', '20', '6');
+    return { available => bool(0) } unless $out =~ /data=((?:[0-9a-f]{2}\s?){6})/i;
+    my @b = map { hex } split ' ', $1;
+    return {
+        available => bool(1), raw => join(' ', map { sprintf '%02x', $_ } @b),
+        watchdog_disabled => bool($b[1] & 0x80), power_button_latch => bool($b[1] & 0x10), timer_wake_boot => bool($b[1] & 0x02),
+    };
+}
+
+sub tuner_info {
+    my $s = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $RECPT1, Timeout => 2) or return { available => bool(0) };
+    print $s "GET /status HTTP/1.0\r\nHost: localhost\r\n\r\n";
+    my $resp = ''; { local $SIG{ALRM} = sub { die }; eval { alarm 2; local $/; $resp = <$s>; alarm 0; 1 }; }
+    close $s;
+    my ($body) = $resp =~ /\r\n\r\n(.*)$/s;
+    $body = '' unless defined $body; $body =~ s/\s+$//;
+    return { available => bool(1), status => $body, busy => bool($body ne '' && $body ne 'idle') };
+}
+
+sub disks_info {
+    my @r;
+    for my $l (split /\n/, run_cmd(5, 'df', '-kP')) {
+        next unless $l =~ m{^(/dev/\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(\S+)};
+        next if $1 =~ m{^/dev/(?:root|ram|loop\d+p)} && 0;
+        push @r, { device => $1, total_kb => $2 + 0, used_kb => $3 + 0, avail_kb => $4 + 0, used_percent => $5 + 0, mount => $6 };
+    }
+    return \@r;
+}
+
+sub gather {
+    my %st;
+    my ($up) = slurp('/proc/uptime') =~ /^([\d.]+)/;
+    $st{time} = time; $st{time_iso} = strftime('%Y-%m-%dT%H:%M:%SZ', gmtime);
+    chomp(my $host = slurp('/etc/hostname')); $st{hostname} = $host;
+    chomp(my $kern = slurp('/proc/sys/kernel/osrelease')); $st{kernel} = $kern;
+    $st{uptime_s} = defined $up ? $up + 0 : undef;
+    my @la = split ' ', slurp('/proc/loadavg'); $st{load} = [ map { $_ + 0 } @la[0..2] ] if @la >= 3;
+    my %mi = slurp('/proc/meminfo') =~ /^(\w+):\s+(\d+)/mg;
+    $st{memory} = { total_kb => $mi{MemTotal} + 0, free_kb => $mi{MemFree} + 0, buffers_kb => ($mi{Buffers} || 0) + 0, cached_kb => ($mi{Cached} || 0) + 0,
+                    available_kb => $mi{MemFree} + ($mi{Buffers} || 0) + ($mi{Cached} || 0) } if $mi{MemTotal};
+    $st{disks} = disks_info();
+    $st{hdd} = hdd_info();
+    $st{mcu} = mcu_info();
+    $st{tuner} = tuner_info();
+    my @w;
+    my $h = $st{hdd};
+    push @w, "HDD の温度が高い (" . $h->{temperature_c} . "℃)" if defined $h->{temperature_c} && $h->{temperature_c} >= $TEMP_WARN;
+    push @w, "HDD の SMART 健康状態が PASSED ではない (" . $h->{health} . ")" if defined $h->{health} && $h->{health} ne 'PASSED';
+    push @w, "HDD の保留セクタがある (" . $h->{pending_sectors} . ")" if $h->{pending_sectors};
+    push @w, "HDD の代替セクタがある (" . $h->{reallocated_sectors} . ")" if $h->{reallocated_sectors};
+    push @w, "HDD の訂正不能セクタがある (" . $h->{uncorrectable} . ")" if $h->{uncorrectable};
+    for my $d (@{ $st{disks} }) { push @w, "ディスク $d->{mount} の使用率が高い ($d->{used_percent}%)" if $d->{used_percent} >= 95 && $d->{mount} ne '/boot'; }
+    push @w, "メモリの空きが少ない" if $st{memory} && $st{memory}{available_kb} < 15000;
+    $st{warnings} = \@w;
+    $st{ok} = bool(!@w);
+    return \%st;
+}
+
+sub metrics {
+    my $s = shift; my @o;
+    my $m = sub { my ($n, $help, $v, $lbl) = @_; return unless defined $v; push @o, "# HELP $n $help", "# TYPE $n gauge", "$n" . ($lbl ? "{$lbl}" : '') . " $v"; };
+    $m->('nasne_up', 'status page is up', 1);
+    $m->('nasne_uptime_seconds', 'uptime', $s->{uptime_s});
+    $m->('nasne_load1', 'load average (1m)', $s->{load}[0]);
+    if ($s->{memory}) { $m->('nasne_memory_total_kilobytes', 'total memory', $s->{memory}{total_kb}); $m->('nasne_memory_available_kilobytes', 'free+buffers+cached', $s->{memory}{available_kb}); }
+    my $h = $s->{hdd};
+    $m->('nasne_hdd_temperature_celsius', 'HDD temperature (SMART)', $h->{temperature_c});
+    $m->('nasne_hdd_power_on_hours', 'HDD power-on hours', $h->{power_on_hours});
+    $m->('nasne_hdd_reallocated_sectors', 'HDD reallocated sectors', $h->{reallocated_sectors});
+    $m->('nasne_hdd_pending_sectors', 'HDD current pending sectors', $h->{pending_sectors});
+    $m->('nasne_hdd_smart_passed', 'SMART overall health (1=PASSED)', defined $h->{health} ? ($h->{health} eq 'PASSED' ? 1 : 0) : undef);
+    $m->('nasne_hdd_standby', 'HDD in standby (1=yes)', ${ $h->{standby} });
+    $m->('nasne_tuner_busy', 'tuner in use (1=yes)', $s->{tuner}{busy} ? ${ $s->{tuner}{busy} } : undef);
+    for my $d (@{ $s->{disks} }) { $m->('nasne_filesystem_used_percent', 'filesystem usage', $d->{used_percent}, 'mount="' . $d->{mount} . '"'); }
+    $m->('nasne_ok', '1 if no warnings', ${ $s->{ok} });
+    return join("\n", @o) . "\n";
+}
+
+my $HTML = <<'HTML';
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>nasne 状態</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1d2733;--card:#fff;--mut:#667788;--ok:#1a7f37;--ng:#c0392b;--line:#e2e6ea}
+@media(prefers-color-scheme:dark){:root{--bg:#14181d;--fg:#e6eaee;--card:#1d242c;--mut:#8b99a8;--ok:#4ac26b;--ng:#ff6b5b;--line:#2b343d}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}.badge{display:inline-block;padding:2px 10px;border-radius:12px;color:#fff;font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}.card h2{font-size:14px;margin:0 0 6px;color:var(--mut)}
+table{width:100%;border-collapse:collapse}td{padding:3px 0;border-bottom:1px solid var(--line)}td:first-child{color:var(--mut);width:46%}tr:last-child td{border:0}
+a{color:var(--mut)}.warn{color:var(--ng)}.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok)}
+</style></head><body><main><h1>nasne <span id="b" class="badge" style="background:var(--mut)">…</span></h1><div id="w"></div><div id="c"></div>
+<p style="color:var(--mut);font-size:12px">10秒ごとに更新 · <a href="status.json">status.json</a> · <a href="metrics">metrics</a></p></main>
+<script>
+function f(n){return n==null?'—':n}function gb(kb){return (kb/1048576).toFixed(1)+' GB'}function mb(kb){return Math.round(kb/1024)+' MB'}
+function dur(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'日 ':'')+h+'時間 '+m+'分'}
+function row(a,b){return '<tr><td>'+a+'</td><td>'+b+'</td></tr>'}
+function card(t,rows){return '<div class="card"><h2>'+t+'</h2><table>'+rows.join('')+'</table></div>'}
+function load(){fetch('status.json').then(r=>r.json()).then(s=>{
+ var b=document.getElementById('b');b.textContent=s.ok?'正常':'注意';b.style.background=s.ok?'var(--ok)':'var(--ng)';
+ document.getElementById('w').innerHTML=s.warnings.map(x=>'<div class="card warn">⚠ '+x+'</div>').join('');
+ var h=s.hdd,m=s.memory,c=[];
+ c.push(card('システム',[row('稼働時間',dur(s.uptime_s)),row('負荷 (1/5/15分)',(s.load||[]).join(' / ')),row('メモリ',m?mb(m.available_kb)+' 空き / '+mb(m.total_kb):'—'),row('カーネル',s.kernel)]));
+ c.push(card('HDD',[row('機種',f(h.model)),row('温度',h.temperature_c!=null?h.temperature_c+' ℃':'—'),row('SMART',f(h.health)+(h.standby?'(待機中・前回値)':'')),row('通電時間',h.power_on_hours!=null?h.power_on_hours+' 時間':'—'),row('代替 / 保留セクタ',f(h.reallocated_sectors)+' / '+f(h.pending_sectors))]));
+ c.push(card('ディスク使用量',s.disks.map(d=>row(d.mount,'<div class="bar"><i style="width:'+d.used_percent+'%"></i></div>'+gb(d.used_kb)+' / '+gb(d.total_kb)+'('+d.used_percent+'%)'))));
+ c.push(card('チューナー・MCU',[row('チューナー',s.tuner.available?(s.tuner.busy?'使用中':'空き'):'応答なし'),row('ウォッチドッグ',s.mcu.available?(s.mcu.watchdog_disabled?'停止中(正常)':'動作中'):'—'),row('タイマー起動',s.mcu.available?(s.mcu.timer_wake_boot?'はい':'いいえ'):'—')]));
+ document.getElementById('c').innerHTML=c.join('')}).catch(e=>{document.getElementById('b').textContent='取得失敗'})}
+load();setInterval(load,10000);
+</script></body></html>
+HTML
+
+sub respond {
+    my ($c, $code, $type, $body, $head) = @_;
+    my %t = (200 => 'OK', 404 => 'Not Found', 405 => 'Method Not Allowed');
+    utf8::encode($body) if utf8::is_utf8($body);
+    print $c "HTTP/1.0 $code $t{$code}\r\nContent-Type: $type\r\nContent-Length: " . length($body) . "\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
+    print $c $body unless $head;
+}
+
+sub handle {
+    my ($c) = @_;
+    $c->autoflush(1);
+    my $req = '';
+    eval { local $SIG{ALRM} = sub { die "t\n" }; alarm 5; while (defined(my $l = <$c>)) { $req = $l unless length $req; last if $l =~ /^\r?\n$/; } alarm 0; 1 } or return;
+    my ($method, $path) = $req =~ m{^(\w+)\s+(\S+)};
+    return respond($c, 405, 'text/plain; charset=utf-8', "method not allowed\n") unless $method && $method =~ /^(GET|HEAD)$/;
+    my $head = $method eq 'HEAD';
+    $path =~ s/\?.*//;
+    if    ($path eq '/' || $path eq '/index.html') { respond($c, 200, 'text/html; charset=utf-8', $HTML, $head); }
+    elsif ($path eq '/status.json') { respond($c, 200, 'application/json; charset=utf-8', jenc(gather()) . "\n", $head); }
+    elsif ($path eq '/metrics')     { respond($c, 200, 'text/plain; version=0.0.4; charset=utf-8', metrics(gather()), $head); }
+    elsif ($path eq '/healthz')     { respond($c, 200, 'text/plain; charset=utf-8', "ok\n", $head); }
+    else                            { respond($c, 404, 'text/plain; charset=utf-8', "not found\n", $head); }
+}
+
+# ---- 起動 ----
+if (@ARGV && $ARGV[0] eq '--once') { print jenc(gather()), "\n"; exit 0; }
+$SIG{PIPE} = 'IGNORE';
+my $srv = IO::Socket::INET->new(Listen => 8, LocalAddr => $BIND, LocalPort => $PORT, ReuseAddr => 1, Proto => 'tcp') or die "listen $BIND:$PORT: $!\n";
+print STDERR strftime('%F %T', localtime) . " nasne-statusd listening on $BIND:$PORT\n";
+# 1プロセスで順に処理する(SMARTの結果を使い回すため。読み取りが遅いクライアントは5秒で切る)
+while (1) {
+    my $c = $srv->accept or next;
+    eval { handle($c); 1 };
+    close $c;
+}
