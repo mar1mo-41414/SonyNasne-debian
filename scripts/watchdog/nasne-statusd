@@ -88,6 +88,24 @@ sub mcu_info {
     };
 }
 
+# nasne-recpt1 のプロセスが D 状態(カーネルのドライバの中で戻らない)のまま固まっていないか。
+# D 状態を見つけたら、1秒おきに3回確かめて、3回とも D のものを「固まっている」とする(正常な受信中は D が一瞬しか続かない)。電源の入れ直しでしか戻らない。
+sub recpt1_dstate {
+    my %d;
+    for my $f (glob '/proc/[0-9]*/stat') {
+        open(my $h, '<', $f) or next; my $l = <$h>; close $h;
+        $d{$1} = 1 if defined $l && $l =~ /^(\d+) \(nasne-recpt1\) D/;
+    }
+    return %d;
+}
+sub stuck_recpt1 {
+    my %a = recpt1_dstate();
+    return () unless %a;
+    select(undef, undef, undef, 1.0); my %b = recpt1_dstate();
+    select(undef, undef, undef, 1.0); my %c = recpt1_dstate();
+    return grep { $b{$_} && $c{$_} } keys %a;
+}
+
 sub tuner_info {
     my $s = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $RECPT1, Timeout => 2) or return { available => bool(0) };
     print $s "GET /status HTTP/1.0\r\nHost: localhost\r\n\r\n";
@@ -95,7 +113,8 @@ sub tuner_info {
     close $s;
     my ($body) = $resp =~ /\r\n\r\n(.*)$/s;
     $body = '' unless defined $body; $body =~ s/\s+$//;
-    return { available => bool(1), status => $body, busy => bool($body ne '' && $body ne 'idle') };
+    my @stuck = stuck_recpt1();
+    return { available => bool(1), status => $body, busy => bool($body ne '' && $body ne 'idle'), stuck => bool(scalar @stuck) };
 }
 
 sub disks_info {
@@ -131,6 +150,7 @@ sub gather {
     push @w, "HDD の代替セクタがある (" . $h->{reallocated_sectors} . ")" if $h->{reallocated_sectors};
     push @w, "HDD の訂正不能セクタがある (" . $h->{uncorrectable} . ")" if $h->{uncorrectable};
     for my $d (@{ $st{disks} }) { push @w, "ディスク $d->{mount} の使用率が高い ($d->{used_percent}%)" if $d->{used_percent} >= 95 && $d->{mount} ne '/boot'; }
+    push @w, "チューナーのプロセスが固まっている(D状態)。電源の入れ直しが必要" if $st{tuner} && $st{tuner}{stuck} && ${ $st{tuner}{stuck} };
     push @w, "メモリの空きが少ない" if $st{memory} && $st{memory}{available_kb} < 15000;
     $st{warnings} = \@w;
     $st{ok} = bool(!@w);

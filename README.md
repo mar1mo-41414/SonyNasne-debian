@@ -35,7 +35,9 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
 | ✅ できる | **状態ページ**(既定で動く。HDDの温度・SMART、メモリ・ディスク、MCU、チューナー。`http://<nasne>:8302/`、JSON、Prometheus。[docs/18](docs/18_status_page.md))。Home Assistant 連携はオプション([contrib/homeassistant](contrib/homeassistant/README.md)) |
 | ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。[contrib/epgstation](contrib/epgstation/README.md)) |
-| △ 未検証 | tvheadend との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統)、数日の連続運用 |
+| ✅ できる | **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
+| ✅ できる | **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
+| △ 未検証 | BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統)、数日の連続運用 |
 | ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
 | ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。純正も長押しで電源オフできる。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |

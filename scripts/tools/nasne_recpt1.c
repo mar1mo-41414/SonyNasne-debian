@@ -366,10 +366,11 @@ static unsigned long parse_mhz(const char *v) {
 }
 
 static int starts(const char *s, const char *pre) { while (*pre) { if (*s++ != *pre++) return 0; } return 1; }
+#define BUSY_WAIT_MS 10000
 static long lockfd = -1;
 static int acquire_tuner(void) {
     lockfd = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
-    if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) return 3;                         /* LOCK_EX|LOCK_NB: 使用中 */
+    if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中(開いたfdは閉じる。再試行で増やさない) */
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
     if (!fw_alive()) reload_driver();
@@ -400,6 +401,9 @@ static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_m
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
     lgx("session start hz", hz);
     rc = acquire_tuner();
+    /* HTTPでは、直前のセッションの終了処理中(ロックがまだ残っている)にすぐ次の要求が来ることがある(tvheadend・VLCのプレイリストの次送り等)。
+     * すぐ503を返さず、最大 BUSY_WAIT_MS だけ待って再試行する(本当に使用中なら、そのあと503) */
+    if (rc == 3 && http) { unsigned long w; for (w = 0; w < BUSY_WAIT_MS && rc == 3; w += 100) { msleep(100); rc = acquire_tuner(); } }
     if (rc == 3) { err("チューナー使用中\n"); if (http) http_status(ofd, "HTTP/1.0 503 Service Unavailable", "tuner busy\n"); return 3; }
     if (rc) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "driver/firmware error\n"); release_tuner(); return 1; }
     lgx("tuner acquired", 0);
