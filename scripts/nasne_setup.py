@@ -8,7 +8,7 @@ Sony のファイルは配布しません。公式ファームパッケージ(KR
 使い方:
   nasne_setup.py check                              必要なコマンド・パッケージがそろっているかを調べる(足りないものと apt のコマンドを表示)
   nasne_setup.py build --hdd-dlm <HDDのsys1の00550066.dlm> [--download-official | --official-pkg <KRST3101_0260_SECURE.dlm>]
-                       [--ssh-pubkey ~/.ssh/id_rsa.pub] [--work build_nasne] [--image-size 8G]
+                       [--ssh-pubkey ~/.ssh/id_rsa.pub] [--work build_nasne] [--image-size 8G] [--telnet off|fail|early]
 
   各ステップは作業ディレクトリ(--work)に結果を残し、2回目以降は済んだステップを飛ばします(やり直すにはその成果物を消す)。
   最初は時間がかかります(カーネル用ツールチェーンのDockerビルドが30分〜1時間、debootstrapが数分)。
@@ -172,7 +172,7 @@ def build(a):
         return
     out = os.path.join(work, "custom_00550066.dlm")
     cmd = [sys.executable, os.path.join(ROOT, "scripts", "stage1", "make_stage1_dlm.py"), "build", "--official", hdd_dlm,
-           "--out", out, "--mode", a.mode, "--image-size", a.image_size]
+           "--out", out, "--mode", a.mode, "--image-size", a.image_size, "--telnet", a.telnet]
     if a.mode == "embed":
         cmd += ["--debian-tree-tar", tar]
     run(cmd)
@@ -199,6 +199,7 @@ def main():
     b.add_argument("--work", default="build_nasne")
     b.add_argument("--mode", choices=["embed"], default="embed", help="Debianを .dlm に同梱する(p3 に手で置く方式は docs/13)")
     b.add_argument("--image-size", default="8G")
+    b.add_argument("--telnet", choices=["off", "fail", "early"], default="off", help="デバッグ用の認証なしtelnetを開く .dlm にする(既定 off)。early=最初から、fail=インストール失敗時だけ。開くとLAN内の誰でもrootシェルを使える")
     a = ap.parse_args()
     if a.cmd == "check":
         sys.exit(0 if check() else 1)

@@ -34,7 +34,7 @@
 [1回目の起動: 公式カーネル]
   公式のminiroot → 自作 .dlm を展開(sys2) → rcS
     └ (公式アプリ procmng / startdtvtuner は起動しない)
-       ├ DHCPでネットワークを上げる(+ 認証なしtelnet。作業中の確認用)
+       ├ DHCPでネットワークを上げる(`--telnet early|fail` を付けたときだけ、デバッグ用の認証なしtelnetも開く。既定は開かない)
        ├ [embedのみ] p3 にnasne用Debianが無ければ、MCUウォッチドッグを止めてから p3 を ext3 で初期化し、同梱のDebianを展開
        └ p3 のDebianをchrootして nasne-stage1.sh を実行:
             事前検査 → ウォッチドッグ停止 → SPI(mtd0)全域をバックアップ → KNL消去/書込/読み戻し検証
@@ -135,7 +135,7 @@ python3 scripts/stage1/make_stage1_dlm.py build --official backup/00550066.dlm.o
 
 p3 に PC 側でDebianを置いてある場合(p3を ext3 にして `build_stage1/tree` の中身をコピー済み)は `--mode p3`(`--debian-tree-tar` は不要)。
 `image` モードにはXFSの空きが2GB以上必要(イメージの実使用量は約0.4GB。8Gは見かけの大きさ)。
-`--telnet early|fail|off` で、作業中の認証なしtelnetの開き方を選べる(既定 `early` = 最初から。確認しやすいが、作業中の数分間はLAN内の誰でもrootシェルを使える)。
+**認証なしtelnetは、既定では開きません(`--telnet off`)。** 進行が見えなくて困ったとき・失敗の原因を調べたいときだけ、デバッグ用に `--telnet early`(最初から)か `--telnet fail`(インストールに失敗したときだけ)を付けて `.dlm` を作り直してください(`nasne_setup.py build` にも同じオプションがある)。開いている間は、**LAN内の誰でもrootシェルを使えます**。終わったら外した `.dlm` に戻してください。
 
 `make_stage1_dlm.py` は作った `.dlm` を開き直して、(1) ヘッダのCRC、(2) 元の全エントリが残っていること、(3) `rcS` が差し替わっていること、を確認してから終わる。
 
@@ -155,10 +155,10 @@ sudo umount /mnt/nasne_sys1
 
 | 時間の目安 | 見えるもの |
 |---|---|
-| 〜1分 | 公式カーネルが起動し、DHCPのアドレスでpingが通る。telnet(23番)が開く(認証なし) |
-| 〜3分 | `telnet <nasne>` でログインして `cat /tmp/nasne_stage1_rcs.log` で進行を見られる(p3の初期化、コピー) |
+| 〜1分 | 公式カーネルが起動し、DHCPのアドレスでpingが通る(`--telnet early` のときだけ、telnet(23番、認証なし)も開く) |
+| 〜3分 | p3の初期化・コピー(`--telnet early` なら、`telnet <nasne>` でログインして `cat /tmp/nasne_stage1_rcs.log` で進行を見られる) |
 | 〜4分 | SPIのバックアップ(13MBで約40秒)→ KNL書き込み(約30秒)→ 自動で再起動 |
-| 〜5分 | 自作カーネルでDebianが起動。telnetは閉じ、sshが開く |
+| 〜5分 | 自作カーネルでDebianが起動。sshが開く(telnetは閉じる) |
 
 ```bash
 ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa root@<nasneのIP>
@@ -187,8 +187,8 @@ cat /var/log/nasne-mcu-wd.log         # "MCU watchdog disabled"。5.5分以上�
 
 | 症状 | 対処 |
 |---|---|
-| pingもtelnetも出ない(10分待っても) | 公式のminirootが `.dlm` を受け付けていない可能性(展開失敗は点滅ループになり、HDD側から原因を切り分けられない: [docs/03](03_firmware_format.md))。HDDをPCに戻して元の `00550066.dlm` に戻すと公式ファームで起動する |
-| telnetは出るが sshが出ない/ネットワークがおかしい | `cat /tmp/nasne_stage1_rcs.log`(外側のrcSのログ)と、`/mnt/p3/var/log/nasne-stage1.log`(chroot内の段階1のログ)を見る |
+| pingが出ない(10分待っても) | 公式のminirootが `.dlm` を受け付けていない可能性(展開失敗は点滅ループになり、HDD側から原因を切り分けられない: [docs/03](03_firmware_format.md))。HDDをPCに戻して元の `00550066.dlm` に戻すと公式ファームで起動する |
+| pingは通るが sshが出ない/ネットワークがおかしい | `--telnet early` で `.dlm` を作り直し、`cat /tmp/nasne_stage1_rcs.log`(外側のrcSのログ)と、`/mnt/p3/var/log/nasne-stage1.log`(chroot内の段階1のログ)を見る |
 | `ABORT` が出て止まる | ログの理由に従う。`/var/lib/nasne-stage1/` に状態とバックアップがある |
 | 再起動後に pingが通るがsshが出ない | sshdが上がっていない。公式ファームのまま(`uname` の `#1 ... 2013`)なら、自作カーネルが起動していない(SPIが書き換わっていない、またはBKNLに落ちた) |
 | SPIが壊れて起動しない | 実機で「古い設定の混入でKNLが中途半端に消えた」事故の報告がある。4段目ブートのA/Bフォールバックで助かる**とは限らない**(B側のBRFSは別版のminirootで、HDDの内容次第で起動しない)。CH341Aで事前のダンプを書き戻す |

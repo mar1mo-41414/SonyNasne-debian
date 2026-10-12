@@ -7,7 +7,7 @@
 入力は「そのHDD自身の 00550066.dlm」を使えば、マネージャ(00110022.dlm)の検査にもそのまま通る。
 
 サブコマンド:
-  build           --official IN.dlm --out OUT.dlm [--mode p3|embed] [--debian-tree-tar TAR] [--p3-mode image|format] [--image-size 8G] [--format-p3] [--telnet early|fail|off]
+  build           --official IN.dlm --out OUT.dlm [--mode p3|embed] [--debian-tree-tar TAR] [--p3-mode image|format] [--image-size 8G] [--format-p3] [--telnet off|fail|early]
   extract-drivers --official IN.dlm --dest DIR      xcode4drv.ko と rc.xcode4 を取り出す
   list            --official IN.dlm                  tar の中身(先頭)と rcS の末尾を表示
 
@@ -156,6 +156,8 @@ def make_ti(name, data=None, mode=0o755, typ=tarfile.REGTYPE):
 def build(args):
     seg = load_dlm_segment(args.official)
     raw, hdr = dlm_to_tar_bytes(seg)
+    if args.telnet != "off":
+        print(f"⚠️ --telnet {args.telnet}: 認証なしtelnetを開く .dlm を作ります(デバッグ用)。作業中、LAN内の誰でもrootシェルを使えます。終わったら外してください", file=sys.stderr)
     print(f"公式rootfs: tar {len(raw)} bytes、ヘッダ date={bytes(hdr[0x14:0x34]).rstrip(b'\\0').decode()!r} +8(major)={int.from_bytes(hdr[8:10], 'big')}")
     if args.mode == "embed" and args.p3_mode == "format" and not args.format_p3:
         raise SystemExit("--p3-mode format は p3 を初期化する(録画データが消える)。同意するなら --format-p3 を付けること(消したくなければ --p3-mode image)")
@@ -302,7 +304,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build"); b.add_argument("--official", required=True); b.add_argument("--out", required=True)
     b.add_argument("--mode", choices=["p3", "embed", "debug", "trace", "backup", "restore"], default="p3"); b.add_argument("--extra-file", action="append", metavar="TARPATH=LOCAL[:MODE]", help="rootfsのtarへ追加/置換するファイル(何度でも指定可。同名は後のものが有効)"); b.add_argument("--dest", choices=["sys1", "p3", "both"], default="sys1", help="backupモードの保存先(既定 sys1)"); b.add_argument("--mtdtool", help="restoreモードで rootfs に入れる mtdtool(MIPS静的バイナリ)"); b.add_argument("--debian-tree-tar")
-    b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="early")
+    b.add_argument("--format-p3", action="store_true"); b.add_argument("--p3-mode", choices=["image", "format"], default="image"); b.add_argument("--image-size", default="8G"); b.add_argument("--telnet", choices=["early", "fail", "off"], default="off", help="デバッグ用の認証なしtelnet。off=開かない(既定) / early=最初から / fail=インストールに失敗したときだけ。開くとLAN内の誰でもrootシェルを使える")
     b.add_argument("--level", type=int, default=6); b.add_argument("--pre-udev-snippet", help="観測用: rcS の start_udev の直前に実行するシェルのファイル(LD_PRELOADをudev配下の子にも効かせる用)"); b.add_argument("--official-pre-snippet", help="テスト用: 公式アプリ(official-once)を起動する直前に実行するシェルのファイル"); b.add_argument("--pre-snippet", help="テスト用: インストール処理の前に rcS へ差し込むシェルのファイル")
     e = sub.add_parser("extract-drivers"); e.add_argument("--official", required=True); e.add_argument("--dest", required=True)
     l = sub.add_parser("list"); l.add_argument("--official", required=True)
