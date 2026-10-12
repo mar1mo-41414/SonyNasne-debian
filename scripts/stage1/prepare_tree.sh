@@ -10,7 +10,8 @@
 #   3. MIPS用バイナリ(mcui2c nasne-recpt1 i2cx mtdtool)をビルドして置く(--bins にビルド済みがあればそれを使う)
 #   4. 起動時サービス(nasne-mcu-wd, nasne-recpt1-server)を update-rc.d、直起動の印、起動成功の印(rc.local)、ネットワーク設定
 #   5. 段階1スクリプト nasne-stage1.sh、公式アプリを1回だけ起動する nasne-boot-switch、自作カーネル knl_new.bin(+sha256)を置く
-#   --extra-packages "pkg ..." を付けると、そのDebianパッケージも追加でインストールする(例: テスト用に xfsprogs)
+#   --extra-packages "pkg ..." を付けると、そのDebianパッケージも追加でインストールする(例: テスト用に xfsprogs)。
+#   標準で ntpdate / fake-hwclock / hdparm を入れ、aptは archive.debian.org(wheezy)に向ける(nasneはRTCが読めず、時計が1970年から始まるため)
 set -euo pipefail
 export LC_ALL=C
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd)
@@ -46,7 +47,7 @@ if [ -z "$BINS" ]; then
   BINS=$WORK/bin; mkdir -p "$BINS"
   command -v docker >/dev/null || { echo "dockerが無い: --bins でビルド済みバイナリのディレクトリを指定してください" >&2; exit 1; }
   docker image inspect nasne-kcc:gcc432 >/dev/null 2>&1 || { echo "nasne-kcc:gcc432 が無い(docs/05 ①)" >&2; exit 1; }
-  for p in "watchdog/mcui2c.c:mcui2c" "tools/nasne_recpt1.c:nasne-recpt1" "tools/i2cx.c:i2cx" "tools/mtdtool.c:mtdtool"; do
+  for p in "watchdog/mcui2c.c:mcui2c" "userspace_tools/nasne_recpt1.c:nasne-recpt1" "userspace_tools/i2cx.c:i2cx" "userspace_tools/mtdtool.c:mtdtool"; do
     src=${p%%:*}; bin=${p##*:}
     docker run --rm -v "$ROOT":/w -v "$BINS":/o -w "/w/scripts/$(dirname "$src")" nasne-kcc:gcc432 \
       mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o "/o/$bin" "$(basename "$src")"
@@ -84,14 +85,21 @@ $SUDO cp "$(command -v qemu-mipsel-static)" "$OUT/usr/bin/"
 $SUDO mount -t proc proc "$OUT/proc"; $SUDO mount -t sysfs sysfs "$OUT/sys"
 cleanup_mounts() { $SUDO umount "$OUT/proc" "$OUT/sys" 2>/dev/null || $SUDO umount -l "$OUT/proc" "$OUT/sys" 2>/dev/null || true; $SUDO rm -f "$OUT/usr/bin/qemu-mipsel-static"; }
 trap 'cleanup_mounts; rm -rf "$WORK"' EXIT
-if [ -n "$EXTRA" ]; then
-  $SUDO cp /etc/resolv.conf "$OUT/etc/resolv.conf"
-  $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get update
-  $SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get install -y --force-yes $EXTRA
-  $SUDO rm -rf "$OUT/var/lib/apt/lists"/* "$OUT/var/cache/apt/archives"/*.deb
-fi
+# wheezy は EOL のため archive.debian.org を使う(鍵の期限切れのため trusted=yes、Release の有効期限検査も切る)。
+# 標準で入れるもの: ntpdate(起動時の時刻合わせ)、fake-hwclock(時計が読めない=RTCなしなので、最後に保存した時刻から再開する)、hdparm
+echo "deb [trusted=yes] http://archive.debian.org/debian wheezy main" | $SUDO tee "$OUT/etc/apt/sources.list" >/dev/null
+echo 'Acquire::Check-Valid-Until "false";' | $SUDO tee "$OUT/etc/apt/apt.conf.d/99archive" >/dev/null
+$SUDO cp /etc/resolv.conf "$OUT/etc/resolv.conf"
+$SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get update
+$SUDO chroot "$OUT" env DEBIAN_FRONTEND=noninteractive apt-get install -y --force-yes ntpdate fake-hwclock hdparm $EXTRA
+$SUDO rm -rf "$OUT/var/lib/apt/lists"/* "$OUT/var/cache/apt/archives"/*.deb
 $SUDO chroot "$OUT" update-rc.d nasne-mcu-wd defaults 05
 $SUDO chroot "$OUT" update-rc.d nasne-recpt1-server defaults 20
+# 電源: a-nasne-poweroff は poweroff で実際に電源を切る(rc0.d)、nasne-powerbtn は電源ボタン長押しで poweroff する(docs/06)
+$SUDO install -m 755 "$HERE/../watchdog/a-nasne-poweroff" "$OUT/etc/init.d/a-nasne-poweroff"
+$SUDO install -m 755 "$HERE/../watchdog/nasne-powerbtn" "$OUT/etc/init.d/nasne-powerbtn"
+$SUDO chroot "$OUT" update-rc.d a-nasne-poweroff defaults
+$SUDO chroot "$OUT" update-rc.d nasne-powerbtn defaults
 cleanup_mounts
 if mount | grep -q " $OUT/\(proc\|sys\) "; then echo "umountに失敗: $OUT/proc|sys が残っている" >&2; exit 1; fi
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-mcu-wd || { echo "update-rc.d が効いていない" >&2; exit 1; }

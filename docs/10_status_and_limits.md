@@ -17,6 +17,7 @@
 | **地デジの受信・復号・配信** | **B-CASカードで復号した元画質(MPEG-2 HD)のTS**を、`recpt1`互換コマンドとHTTPで取り出す。SI(番組表の元データ)も混ぜる。連続2分(約230MB)で同期エラー・スクランブル残りなし | [docs/11](11_tv_streaming.md)、[docs/12](12_ts_and_bcas_decrypt.md) |
 | **v1.00なしでのHDD復旧** | 空のHDDから公式 v2.60 だけで起動。HDD登録情報 `.hai` の生成と、p3の初期構造(`p3init`)で、v1.00 を使わずに済む | [docs/04](04_hdd_recovery_guide.md)、[docs/15](15_p3_structure_and_hai.md) |
 | **SPIフラッシュの読み出しバックアップ** | 書き込まず、HDDの `00550066.dlm` 差し替えだけで、nasne自身がSPIを読んでHDDに置く(原本ダンプとKNLスロット以外一致) | [docs/16](16_spi_backup_dlm.md) |
+| **電源オフ・予約起動(タイマ起床)** | Debianの `poweroff` で実際に電源が切れる(MCUへ `[0x02,0x01]`、待機約1W)。`WAKE_SECONDS` で、切ってから指定秒数後に自動起動(起床タイマ `[0x02,0x02,u32]`、約10.5ms/カウント)。電源ケーブルの抜き差しでも起動 | [docs/06](06_mcu_watchdog.md) |
 | 電源ボタン長押しの検出(MCU) | MCUのステータス2バイト目のbit4(`0x10`)がラッチされる(押下で `0x80`→`0x90`)。読み取りは可能(Debianは未対応) | [docs/06](06_mcu_watchdog.md) |
 | B-CASの検出・活性化 | ドライバ経由で、カードの挿入検出と活性化(復号にはカードIDの取得は不要) | [docs/07](07_driver_ioctl_bcas.md) |
 
@@ -28,7 +29,9 @@
 | 同時に複数の番組・チャンネル | チューナーは1系統・1サービスずつ。2つ目のチューナーの有無や使い方は未調査 |
 | BS/CSの受信 | 純正コードの手順を再現した。IF帯を掃引(`nasne_fe.py s-sweep`)したが、試験した入力にはBS/CSの信号が来ておらず(AGCが最大)、**動作は未確認**。BSが来ている入力での試験が必要([docs/08](08_tuner_i2c.md)) |
 | B-CASカードIDの取得 | `CARD_ID_ACQUIRE` / `BCASMSG` の応答が返らない(復号には不要) |
-| **電源オフ** | **公式は電源ボタン長押しで電源オフ(待機約0.7W、全LED消灯)にできる**。Debianの `halt`/`poweroff` は、カーネルが `wait` ループで止まるだけで、MCUは電源を切らない(約6Wのまま)。MCUへ `[0x10,0x51]` `[0x20,0x01]` `[0x04,0x01]` `[0x40,x]` などを単独・組み合わせで書いても切れず、**切る合図は未特定**。ボタン検出→シャットダウンのDebian側実装もない。`reboot` は動く |
+| 電源ボタン長押し→自動電源オフ(実機での通し) | MCUの長押しラッチの検出(`nasne-powerbtn`)の判定ロジックは模擬で確認済み。実機で長押しして自動で `poweroff` される通しは**未確認**([docs/06](06_mcu_watchdog.md)) |
+| RTC(ハードウェア時計) | カーネルの `vixs-rtc` は評価ボードのDS1339(I2C `0xD0`)用で、この基板には無く読めない(`unable to read the hardware clock`)。時計は1970年から始まるので、`fake-hwclock`(最後に保存した時刻から再開)+ `ntpdate`(ネットワーク起動時に補正)で対処(`prepare_tree.sh` が標準で入れる) |
+| パッケージ追加(apt) | wheezy は EOL。`archive.debian.org` に向け(`[trusted=yes]` と `Check-Valid-Until false`)で使える(`prepare_tree.sh` が設定) |
 | UART / JTAG | 基板に信号が配線されていない |
 | 公式の録画データの利用・DLNA配信・DTCP-IP | 純正アプリは動かさない。録画は別の録画ソフト側で行う前提。HDD登録情報 `.hai` は解読済みだが、録画DB(`00000015/` の `.dat`)の暗号は未解読で、既存録画の移行は未対応([docs/15](15_p3_structure_and_hai.md)) |
 | ブートローダの差し替え | U-Boot / 4段目の差し替えは未実施(SPIの先頭1MBは難読化されており、書き込み時は難読化の適用が必要)。カーネル引数(`console=` など)は変えられない |

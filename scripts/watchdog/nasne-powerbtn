@@ -1,0 +1,42 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nasne-powerbtn
+# Required-Start:    nasne-mcu-wd
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: 電源ボタン長押し(MCUのステータス2バイト目のbit4)を検出して poweroff する
+### END INIT INFO
+# 公式では、電源ボタンの長押しをMCUがステータス(mcui2c r 20 6 の6バイト)の2バイト目のbit4(0x10)に立て、procmngがそれを見て終了処理に入る。
+# ここでは1秒ごとにそのビットを読み、「立っていない→立った」の変化を検出したら poweroff する(起動時にすでに立っていた分は無視する)。
+# 電源は a-nasne-poweroff が実際に切る(MCUへ [0x02,0x01])。前提: mcui2c と公式ドライバ(nasne-mcu-wd が読み込む)。
+BIN=${NASNE_BIN:-/usr/local/sbin}
+INTERVAL=${NASNE_PWRBTN_INTERVAL:-1}
+POWEROFF=${NASNE_POWEROFF_CMD:-poweroff}
+PIDFILE=/var/run/nasne-powerbtn.pid
+status_b1() { "$BIN/mcui2c" r 20 6 2>/dev/null | sed -n 's/.*data=[0-9a-f][0-9a-f] \([0-9a-f][0-9a-f]\) .*/\1/p'; }
+run() {
+    prev=0
+    v=$(status_b1); [ -n "$v" ] && prev=$((0x$v))
+    logger -t nasne-powerbtn "監視開始 (status[1]=0x$(printf %02x $prev))"
+    while :; do
+        sleep "$INTERVAL"
+        v=$(status_b1); [ -n "$v" ] || continue
+        b=$((0x$v))
+        if [ $((b & 16)) -ne 0 ] && [ $((prev & 16)) -eq 0 ]; then
+            logger -t nasne-powerbtn "電源ボタンの長押しを検出。poweroff する"
+            $POWEROFF
+            exit 0
+        fi
+        prev=$b
+    done
+}
+case "$1" in
+    start)   [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && exit 0
+             nohup "$0" run >/dev/null 2>&1 & echo $! > $PIDFILE ;;
+    stop)    [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" 2>/dev/null; rm -f $PIDFILE ;;
+    run)     run ;;
+    status)  [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && echo running || { echo stopped; exit 3; } ;;
+    *)       echo "usage: $0 {start|stop|status}"; exit 1 ;;
+esac
+exit 0

@@ -1,0 +1,34 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          a-nasne-poweroff
+# Required-Start:
+# Required-Stop:
+# X-Stop-After:      umountroot
+# Default-Start:
+# Default-Stop:      0
+# Short-Description: nasne の電源を実際に切る(MCUへ電源断を指示する。任意で起床タイマも設定する)
+### END INIT INFO
+# nasne では、カーネルの halt/poweroff は wait ループで止まるだけで、電源は切れない。電源を切るのは基板上のMCUで、
+#   [0x02,0x01] を送ると切る(公式procmngが最後に送るコマンド)。その前に [0x02,0x02,u32] で「起床タイマ」を設定すると、
+#   MCUが電源を切ってからその時間後に自動で電源を入れる(1カウント≒10.5ms、毎秒約95カウント。実測。docs/06)。
+# 名前を a- で始めているのは、rc0.d で同じ番号(K07)の halt より先に実行させるため(同番号は名前順)。
+# /etc/rc0.d の K スクリプトとして、ルートが読み取り専用になった(umountroot)あと、halt の前に実行される(insserv の X-Stop-After で順序指定)。
+# MCUコマンドが失敗したときは何もせず戻る(通常のhaltに進む)。
+# 設定: /etc/default/nasne-poweroff の WAKE_SECONDS(0=起床タイマなし。電源ボタンか電源の入れ直しで起動)
+BIN=/usr/local/sbin
+WAKE_SECONDS=0
+[ -r /etc/default/nasne-poweroff ] && . /etc/default/nasne-poweroff
+case "$1" in
+  start|stop)
+    $BIN/mcui2c r 20 6 >/dev/null 2>&1 || exit 0                 # MCUに届かないなら何もしない(同時に実行ファイルをキャッシュに載せる)
+    hdparm -y /dev/sda >/dev/null 2>&1                            # HDDを止めてから電源を切る(スタンバイ)
+    if [ "${WAKE_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+        C=$((WAKE_SECONDS * 95))                                   # 1カウント≒10.5ms
+        $BIN/mcui2c w 20 02 02 $(printf '%02x %02x %02x %02x' $((C>>24&255)) $((C>>16&255)) $((C>>8&255)) $((C&255))) >/dev/null 2>&1
+    fi
+    $BIN/mcui2c w 20 10 51 >/dev/null 2>&1                        # 表示コード0x51(終了。LEDが消える)
+    $BIN/mcui2c w 20 02 01 >/dev/null 2>&1 || exit 0              # 電源断
+    sleep 30                                                       # MCUが電源を切るのを待つ(切れなければ通常のhaltへ)
+    ;;
+esac
+exit 0
