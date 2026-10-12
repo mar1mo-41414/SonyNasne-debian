@@ -66,6 +66,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | [04_hdd_recovery_guide](docs/04_hdd_recovery_guide.md) | **HDD全損機の復旧手順** |
 | [15_p3_structure_and_hai](docs/15_p3_structure_and_hai.md) | p3の初期構造と `.hai`(v1.00なしで復旧できる理由) |
 | [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm` |
+| [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
 | [07_driver_ioctl_bcas](docs/07_driver_ioctl_bcas.md) | `xcode4drv` のioctl、B-CAS |
@@ -97,6 +98,8 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
    ├─ ofw_tool.py             … 公式ファームパッケージの分解
    ├─ nasne_hdd_rebuild.py    … HDD復旧用ツール(mkdisk / phase1 / read-id / final / p3init / verify)
    ├─ nasne_hai.py            … HDD登録情報 `.hai` の復号・生成
+   ├─ nasne_api.py            … 公式Web API(64210)のクライアント(認証トークン対応)
+   ├─ spi_ecc.py              … SPIのECC領域の確認・再構築
    ├─ build_knl.py            … SPIのKNLセグメントの解析・再構築
    ├─ spi_segments.py / spi_boot_decrypt.py … SPIフラッシュのセグメント列挙・ブートチェーン復号
    ├─ build_debian_rootfs.sh  … Debian wheezy (mipsel) のrootfs作成
