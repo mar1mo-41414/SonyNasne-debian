@@ -7,7 +7,7 @@
 # やること(すべて --out の中だけ。sudo を使う):
 #   1. --out が無ければ build_debian_rootfs.sh で Debian wheezy を作る(debootstrap + qemu-user-static、sshd、root用RSA鍵)
 #   2. 公式ファームから xcode4drv.ko / rc.xcode4 を取り出して置く(Sonyのファイルなので再配布しないこと)
-#   3. MIPS用バイナリ(mcui2c nasne-recpt1 i2cx mtdtool)をビルドして置く(--bins にビルド済みがあればそれを使う)
+#   3. MIPS用バイナリ(mcui2c nasne-recpt1 i2cx mtdtool)をビルドして置く(scripts/build_tools.sh。--bins にビルド済みがあればそれを使う)
 #   4. 起動時サービス(nasne-mcu-wd, nasne-recpt1-server)を update-rc.d、直起動の印、起動成功の印(rc.local)、ネットワーク設定
 #   5. 段階1スクリプト nasne-stage1.sh、公式アプリを1回だけ起動する nasne-boot-switch、自作カーネル knl_new.bin(+sha256)を置く
 #   --extra-packages "pkg ..." を付けると、そのDebianパッケージも追加でインストールする(例: テスト用に xfsprogs)。
@@ -45,13 +45,7 @@ $SUDO install -m 755 "$WORK/xcode4drv.ko" "$WORK/rc.xcode4" "$OUT/usr/local/sbin
 # ---- 3. バイナリ ----
 if [ -z "$BINS" ]; then
   BINS=$WORK/bin; mkdir -p "$BINS"
-  command -v docker >/dev/null || { echo "dockerが無い: --bins でビルド済みバイナリのディレクトリを指定してください" >&2; exit 1; }
-  docker image inspect nasne-kcc:gcc432 >/dev/null 2>&1 || { echo "nasne-kcc:gcc432 が無い(docs/05 ①)" >&2; exit 1; }
-  for p in "watchdog/mcui2c.c:mcui2c" "tools/nasne_recpt1.c:nasne-recpt1" "tools/i2cx.c:i2cx" "tools/mtdtool.c:mtdtool"; do
-    src=${p%%:*}; bin=${p##*:}
-    docker run --rm -v "$ROOT":/w -v "$BINS":/o -w "/w/scripts/$(dirname "$src")" nasne-kcc:gcc432 \
-      mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o "/o/$bin" "$(basename "$src")"
-  done
+  sh "$ROOT/scripts/build_tools.sh" "$BINS"     # ホストの mipsel-linux-gnu-gcc、無ければ Docker(nasne-kcc:gcc432)
 fi
 for b in mcui2c nasne-recpt1 i2cx mtdtool; do
   [ -s "$BINS/$b" ] || { echo "$BINS/$b が無い" >&2; exit 1; }
