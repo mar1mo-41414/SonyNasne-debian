@@ -34,7 +34,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
 | △ 未検証 | tvheadend・EPGStation 本体との連携、BS/CS、2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
 | ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
-| ❌ できない | `halt`/`poweroff`による電源断(純正も電源断の手段は電源ケーブルのみ) |
+| ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。純正も長押しで電源オフできる。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
 | ❌ やっていない | ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |
 
