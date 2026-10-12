@@ -3,6 +3,7 @@
 #   使い方: nasne-report [--scan]      --scan: 地デジをスキャンして、見つかったチャンネル数・サービス数だけ載せる(局名は載せない。約80秒、チューナーを使う)
 # 個体を特定できる情報(MAC・IPアドレス・HDDのシリアル・本体の個体ID・局名・B-CASの番号)は出さない作りです。それでも、貼る前に目で確認してください。
 export LC_ALL=C PATH=/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin
+SCAN=0; [ "$1" = "--scan" ] && SCAN=1     # 下の set -- で $1 が上書きされるので、先に取っておく
 sec() { printf '\n### %s\n\n```\n' "$1"; }
 end() { printf '```\n'; }
 echo "## nasne 検証レポート"
@@ -32,8 +33,8 @@ for d in /dev/sda; do
     smartctl -i $d 2>/dev/null | grep -E '^(Device Model|Model Family|User Capacity|Rotation Rate|SMART support is)'
     smartctl -H -A $d 2>/dev/null | grep -E 'overall-health|Reallocated_Sector|Power_On_Hours|Current_Pending|Temperature_Celsius'
 done
-echo "--- 区画"
-fdisk -l /dev/sda 2>/dev/null | grep -E '^(Disk /dev/sda|/dev/sda)' | sed 's/Disklabel.*//'
+echo "--- 区画(/proc/partitions。単位はKB)"
+grep -E ' sda[0-9]*$' /proc/partitions
 echo "--- マウント"
 grep -E ' (/|/data) ' /proc/mounts
 df -h / /data 2>/dev/null
@@ -44,7 +45,7 @@ end
 sec "状態ページ(nasne-statusd --once。ホスト名・SMARTの要約・MCU・チューナー)"
 nasne-statusd --once 2>/dev/null || echo "(取得できず)"
 end
-if [ "$1" = "--scan" ]; then
+if [ "$SCAN" = 1 ]; then
     sec "地デジのスキャン(局名は載せない)"
     out=$(nasne-recpt1 --scan 2>&1)
     echo "UHFチャンネル数(サービスを検出): $(echo "$out" | grep -c '^ch=')"
