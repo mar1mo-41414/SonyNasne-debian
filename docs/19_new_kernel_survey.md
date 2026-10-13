@@ -4,6 +4,13 @@
 > **まだ着手していません**(静的な調査だけ)。数字は、SIE が GPL で公開しているソース([docs/09](09_tools.md) の `fetch_gpl_sources.sh`)を実際に調べたものです。
 > 法的助言ではありません。成果物の配布の考え方は [docs/14](14_newer_debian_kernel_and_distribution.md) を見てください。
 
+
+> ### 現状メモ(2026-10)
+> 新しいカーネル(Linux 6.12 LTS)+ Debian 12 (bookworm) の起動に**目処が立ちました**。開発用に、既存の2.6.29 カーネルから kexec で新カーネルを起動する方法で、次の動作を確認しています:
+> Ethernet(1Gbps)、SATA、XFS/ext4、loop、apt、sshd、perl(FPU)、I2C マスタ+MCU(ウォッチドッグ停止・LED)。
+> ただし**まだ試験中**です: 起動直後にユーザープログラムが落ちる不安定さが残っていて(調査中)、カーネルがSPIのKNL領域(約2.5MB)に収まらず(現状 約3.7MB)、SPI単独起動・チューナー(xcode4drv の移植)・USB・SPIフラッシュは未対応です。
+> 公開できる形(ビルド手順・パッチ)は、安定してから反映します。
+
 ## 0. 要約
 
 - **やることは「SoC固有部分の移植」と「メディアエンジンのドライバ(`xcode4drv`)の移植」の2つ。** ARM/x86 のような、メインラインにほぼ揃った状態からの出発ではない。
@@ -22,7 +29,7 @@
 | 引数 | 4段目ブートが `a0` に `0x55aabeef`、`a1`〜 に引数を渡す。中身は `root=/dev/sda2 rw ethaddr=<MAC> rd_start=… rd_size=…`。**`console=` は無い**。新しいカーネルでは **内蔵コマンドライン(`CONFIG_CMDLINE`)で上書き**するのが現実的。MAC は `ethaddr=` から取る必要がある | [docs/02](02_boot_chain.md)、`arch/mips/xcode/common/prom.c` |
 | DTB | U-Boot 1.1.3 は DTB を渡せない。MIPS は **カーネルに DTB を内蔵する**(`arch/mips/boot/dts/` に置く方式)か、カーネルの末尾に付ける(`CONFIG_MIPS_RAW_APPENDED_DTB`)ことができる | カーネルの機能 |
 | メモリ | 約256MB。ベンダーのカーネルは `memsize=0xf800000`(248MB)を使い、**末尾 64KB(`0x1FFF0000`〜)はレジスタ空間として除く**。メディアエンジンが使う領域の切り出し方は、`xcode4drv` 側とあわせて要調査 | `arch/mips/xcode/viper/board.c` |
-| CPU | MIPS 74Kc(MIPS32r2、リトルエンディアン)。**FPU は無い**(`FPU V0.0`)。Debian の mipsel はハードフロート前提なので、**カーネルの FPU エミュレータが要る**(遅い) | `/proc/cpuinfo`、wheezy は動作中 |
+| CPU | MIPS 74Kc(MIPS32r2、リトルエンディアン)。**FPU は有る**(74Kf。`/proc/cpuinfo` の `FPU V0.0` は表示だけの癖で、ベンダーのカーネルが無いと誤読していた)。Debian の mipsel はハードフロート前提だが、実機の FPU で動く | `/proc/cpuinfo`、wheezy は動作中 |
 | 割り込み | CPU の IRQ 2〜7 を使い、**ViXS 独自の割り込みコントローラ(50本以上、ベクタ割り込み方式)**で配る | `arch/mips/xcode/common/interrupts.c`、`irq-mapping.h` |
 | 時計 | MIPS 標準の count/compare(`VIPER_TIMER_IRQ`)。**RTC は基板に無い**(ドライバは不要) | ベンダーソース、docs/10 |
 
