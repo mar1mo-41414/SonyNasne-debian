@@ -51,7 +51,8 @@
 |---|---|
 | Debian 13(クリーンな仮想マシン) | ✅ `nasne_setup.py build` が最後まで通る([docs/13](13_full_setup_from_official_hdd.md)) |
 | Ubuntu 24.04 | ✅ `nasne_setup.py check` が不足を正しく報告 / ❓ ビルドの通しは未確認 |
-| 他のLinux、macOS、WSL | ❓ Docker・`debootstrap`・`qemu-user-static` が要る |
+| WSL2(Windows 11)上の Ubuntu 24.04 | 🟡 `nasne_setup.py build --download-official` で、`knl_new.bin`(約2.1MB、`build_knl.py verify` OK)・`debian_tree.tar`(約150MB)・`vmlinux_new.bin` の生成まで成功の報告(実機適用の前。Wheezy の GPG 期限切れの警告は出るが無害) |
+| 他のLinux、macOS | ❓ Docker・`debootstrap`・`qemu-user-static` が要る |
 
 ## 5. 報告してほしいこと
 
