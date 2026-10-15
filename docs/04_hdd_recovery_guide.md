@@ -45,6 +45,9 @@ nasneは起動時に、HDDの `00110022.dlm`(マネージャ)に書かれた「�
 
 以下、新しいHDDが `/dev/sdX` として見えているとします。**`sdX`は必ず `lsblk` で型番・容量・シリアルを見て確認してください。間違えるとPCのディスクが消えます。**
 
+> **マウントを忘れないでください。** `sync && sudo umount ...` で `not mounted` と出たら、マウントできていません。このままだとファイルはHDDではなく
+> PC(ライブUSB)のメモリ上に書かれ、HDDは空のままなので、nasneは電源LEDが点滅したまま起動しません(ツールもマウント漏れを検出して止まります)。
+
 ### 1. HDDを作り直す(全消去)
 
 ```bash
@@ -62,6 +65,7 @@ sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <lsblkで確�
 
 ```bash
 sudo mkdir -p /mnt/nasne_sys1 && sudo mount /dev/sdX1 /mnt/nasne_sys1
+findmnt /mnt/nasne_sys1        # 何か表示されればマウントできている(何も出なければ失敗。次に進まない)
 python3 scripts/nasne_hdd_rebuild.py phase1 KRST3101_0260_SECURE.dlm /mnt/nasne_sys1     # ヘッダ+8=0の版を置く
 sync && sudo umount /mnt/nasne_sys1
 ```
@@ -81,6 +85,7 @@ python3 scripts/nasne_hdd_rebuild.py verify /mnt/nasne_sys1         # 「結果:
 sync && sudo umount /mnt/nasne_sys1
 
 sudo mkdir -p /mnt/nasne_p3 && sudo mount /dev/sdX3 /mnt/nasne_p3
+findmnt /mnt/nasne_p3
 sudo python3 scripts/nasne_hdd_rebuild.py p3init /mnt/nasne_p3 --chipid <控えた16桁> --device /dev/sdX
 sync && sudo umount /mnt/nasne_p3
 ```
@@ -113,6 +118,8 @@ nasneに挿して電源を入れ、**約2分後にREC・LANが高速点滅した
 | 手順2で、2〜3分たってもREC/LANが高速点滅にならない | initの検査に失敗している(`ChipID ERROR`/`DLM date ERROR`/`CRC ERROR`)。区画ラベル(`sys1`/`sys2`)・ext3か確認 |
 | 手順4で、PWR/REC赤点灯・LANオレンジで止まる(約35秒後にネットワークも切れる) | p3の初期構造が無い。`p3init` を実行したか確認(空のp3にだけ作れる。すでに何か入っているなら `mkdisk` からやり直す) |
 | 手順4で、PWR点滅のままネットワークに出ない | p3の区画が無い(`mkdisk` の既定で作る)、または `final` の `--chipid` が違う |
+| 手順4で、PWR緑点滅+LAN/HDDが橙・赤で点滅し、ネットワークに出ない | init の失敗ループ。**sys1に `00550066.dlm` が無い**(マウント漏れでPC側に書いた)ことが多い。HDDをPCに戻して `ls /mnt/nasne_sys1` で `00550066.dlm` `00110022.dlm` `11002200` `33004400` があるか確認 |
+| `p3init` が「p3 が空ではない」と言う | 手順2でnasneを一度起動すると、p3に `share` などが作られることがある。**sys1を消さずに** `sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <シリアル> --p3-only` でp3だけ作り直し、`p3init` をやり直す(`mkdisk` を丸ごとやり直すと sys1 も消えるので、手順3の `final` からやり直しになる) |
 | `00110022.dlm` が作られない(`read-id` が失敗する) | initがそこまで進んでいない。区画のラベルとext3、`00550066.dlm` の配置を確認 |
 | 手順4で、`p3init` まで済んでいるのに、約40秒後に固まる(PWR/REC赤点灯・LAN点灯)。本体のSPI(NV領域)を、別のHDDを使っていた頃の状態に戻した後などに起きた | 本体のNV(SPIのjffs2)に、前のHDDとの対応や録画まわりの状態が入っていて、**新しいHDDと食い違う**と、公式アプリが固まる(実機で再現。原本のNVでは固まり、**NVを空にすると復旧した**)。NVを触っていなければ、通常は起きない。**復旧: NVを空にする**(公式アプリが作り直す。設定=本体名などは初期値に戻る): Debianが動くなら `nasne-nvreset reset --yes`、公式のHDDだけなら、復元・NV用の `.dlm`([docs/16](16_spi_backup_dlm.md) の `--mode nvreset`)。いずれも、先に今のNVを保存する |
 | 起動するが、HDDが「未登録」と出る | `.hai` のシリアルとHDDが一致していない(`p3init` の `--device` を取り違えた)。`mkdisk` からやり直す |

@@ -47,7 +47,21 @@ def seg_date(h) -> str:
     return bytes(h[0x14:0x34]).split(b"\0", 1)[0].decode("latin1")
 
 
+ALLOW_UNMOUNTED = False
+
+
+def need_mounted(path, what):
+    num = {"sys1": 1, "p3": 3}.get(what, 1)
+    """書き込み先がマウントされていないと、HDDではなくPC(ライブUSB)のメモリ上に書いてしまい、HDDは空のままになる(起動失敗の典型原因)。"""
+    if ALLOW_UNMOUNTED or os.path.ismount(os.path.abspath(path)):
+        return
+    sys.exit(f"エラー: {path} は区画にマウントされていません({what})。このまま実行するとHDDではなくPC側に書き込まれ、HDDは空のままになります。\n"
+             f"  先に `lsblk` で区画名を確認し、`sudo mkdir -p {path} && sudo mount /dev/sdX{num} {path}`(sdX は HDD の名前)でマウントしてください。\n"
+             f"  (意図してマウントしていない場所を使うときだけ --allow-unmounted)")
+
+
 def cmd_phase1(a):
+    need_mounted(a.sys1, "sys1")
     segs = load_package(a.package)
     dlm, _ = segs["DLM"]
     patched = ofw_tool.patch(dlm, 0)
@@ -64,6 +78,7 @@ def cmd_phase1(a):
 def cmd_read_id(a):
     p = a.path
     if os.path.isdir(p):
+        need_mounted(p, "sys1")
         p = os.path.join(p, "00110022.dlm")
     if not os.path.exists(p):
         sys.exit("エラー: 00110022.dlm が無い。nasneが起動できていない(initが走っていない)可能性があります")
@@ -82,6 +97,7 @@ def cmd_read_id(a):
 
 
 def cmd_final(a):
+    need_mounted(a.sys1, "sys1")
     chipid = bytes.fromhex(a.chipid)
     if len(chipid) != 8:
         sys.exit("エラー: --chipid は16桁の16進数(8バイト)")
@@ -108,6 +124,7 @@ V100_MD5 = "1c921378f2a7846a6492982c98c82fcd"       # 公式 v1.00 の 00550066.
 
 
 def cmd_v100(a):
+    need_mounted(a.sys1, "sys1")
     import hashlib
     data = open(a.dlm, "rb").read()
     md5 = hashlib.md5(data).hexdigest()
@@ -140,10 +157,13 @@ DB_SIZE = 102400
 
 def cmd_p3init(a):
     root = a.p3
+    need_mounted(root, "p3")
     if not os.path.isdir(root):
         sys.exit(f"エラー: {root} が無い")
     if [n for n in os.listdir(root) if n != "lost+found"]:
-        sys.exit(f"エラー: {root} が空ではない。p3 が空(mkdisk 直後)のときだけ使えます(録画データを守るため)")
+        sys.exit(f"エラー: {root} が空ではない。p3 が空(mkdisk 直後)のときだけ使えます(録画データを守るため)。\n"
+                 f"  手順2でnasneを一度起動すると、p3に share などが作られて空でなくなることがあります。その場合は、sys1を消さずにp3だけ作り直せます:\n"
+                 f"    sudo umount {root}; sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <シリアル> --p3-only")
     def mk(path, mode=0o755):
         os.makedirs(os.path.join(root, path), exist_ok=True)
         os.chmod(os.path.join(root, path), mode)
@@ -177,6 +197,13 @@ def _run(cmd, **kw):
     return r.stdout
 
 
+def _mkfs_p3(part, size):
+    # 記事のオプション。agcount は容量で変える(1TBまで4、2TBまで8、それ以上は16)。物理セクタに関係なく -s size=512
+    agc = 4 if size <= 1.2e12 else (8 if size <= 2.5e12 else 16)
+    _run(["mkfs.xfs", "-q", "-f", "-m", "crc=0", "-d", f"agcount={agc}", "-i", "size=256,attr=2,projid32bit=0",
+          "-L", "user", "-n", "ftype=0", "-s", "size=512", part])
+
+
 def cmd_mkdisk(a):
     import subprocess
     dev = a.device
@@ -195,6 +222,14 @@ def cmd_mkdisk(a):
     if root_src.startswith(dev):
         sys.exit("エラー: システムのディスクです")
     size = int(_run(["lsblk", "-bdno", "SIZE", dev]).strip())
+    p = lambda n: dev + ("p" if dev[-1].isdigit() else "") + str(n)
+    if a.p3_only:
+        if not os.path.exists(p(3)):
+            sys.exit(f"エラー: {p(3)} が無い。先に --p3-only なしで mkdisk を実行してください")
+        print(f"{dev}: {' '.join(info[1:])} の p3 ({p(3)}) だけを作り直します(sys1・sys2はそのまま)")
+        _mkfs_p3(p(3), size)
+        print("完了: p3(XFS)を空にしました。次: p3をマウントして p3init")
+        return
     print(f"{dev}: {' '.join(info[1:])} シリアル {serial} ({size / 1e9:.0f}GB) を全消去して nasne 用に作り直します")
     _run(["wipefs", "-a", dev])
     open(dev, "r+b").write(b"\0" * (8 << 20))                       # 先頭8MB(区画表・旧署名)を消す
@@ -205,14 +240,10 @@ def cmd_mkdisk(a):
     _run(["partprobe", dev])
     import time
     time.sleep(1)
-    p = lambda n: dev + ("p" if dev[-1].isdigit() else "") + str(n)
     _run(["mkfs.ext3", "-q", "-F", "-L", "sys1", p(1)])
     _run(["mkfs.ext3", "-q", "-F", "-L", "sys2", p(2)])
     if a.p3 == "xfs":
-        # 記事のオプション。agcount は容量で変える(1TBまで4、2TBまで8、それ以上は16)。物理セクタに関係なく -s size=512
-        agc = 4 if size <= 1.2e12 else (8 if size <= 2.5e12 else 16)
-        _run(["mkfs.xfs", "-q", "-f", "-m", "crc=0", "-d", f"agcount={agc}", "-i", "size=256,attr=2,projid32bit=0",
-              "-L", "user", "-n", "ftype=0", "-s", "size=512", p(3)])
+        _mkfs_p3(p(3), size)
     print("完了: sys1(ext3)・sys2(ext3)" + ("・user(XFS)" if a.p3 == "xfs" else "") + "。次: sys1をマウントして v100 または phase1/final")
 
 
@@ -221,6 +252,7 @@ def hdr(path):
 
 
 def cmd_verify(a):
+    need_mounted(a.sys1, "sys1")
     ok = True
     top = os.path.join(a.sys1, "00110022.dlm")
     rootfs = os.path.join(a.sys1, "00550066.dlm")
@@ -251,6 +283,7 @@ def cmd_verify(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--allow-unmounted", action="store_true", help="書き込み先がマウントされていなくても続ける(通常は不要)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("phase1"); p.add_argument("package"); p.add_argument("sys1")
     p = sub.add_parser("read-id"); p.add_argument("path")
@@ -259,8 +292,9 @@ def main():
     p = sub.add_parser("v100"); p.add_argument("dlm"); p.add_argument("sys1")
     p = sub.add_parser("p3init"); p.add_argument("p3"); p.add_argument("--chipid", required=True); p.add_argument("--device", required=True)
     p = sub.add_parser("hai"); p.add_argument("p3"); p.add_argument("--chipid", required=True); p.add_argument("--device", required=True)
-    p = sub.add_parser("mkdisk"); p.add_argument("device"); p.add_argument("--serial", required=True); p.add_argument("--p3", choices=["xfs", "none"], default="xfs")
+    p = sub.add_parser("mkdisk"); p.add_argument("device"); p.add_argument("--serial", required=True); p.add_argument("--p3", choices=["xfs", "none"], default="xfs"); p.add_argument("--p3-only", action="store_true", help="p3(XFS)だけ作り直す(sys1・sys2は消さない)")
     a = ap.parse_args()
+    globals()["ALLOW_UNMOUNTED"] = a.allow_unmounted
     {"phase1": cmd_phase1, "read-id": cmd_read_id, "final": cmd_final, "verify": cmd_verify, "v100": cmd_v100, "mkdisk": cmd_mkdisk, "hai": cmd_hai, "p3init": cmd_p3init}[a.cmd](a)
 
 
