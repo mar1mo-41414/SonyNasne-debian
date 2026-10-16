@@ -23,6 +23,7 @@
 | 320GB(2.5インチSATA、Hitachi) | ✅ 復旧(`mkdisk`→`final`→`p3init`)、公式での録画、`embed` の `.dlm` でDebian、SPIバックアップ・復元 |
 | 500GB | ✅ 復旧・Debian直起動(2台) |
 | 1TB | ✅ Debian直起動(p3をext3にして直接)/ 🟡 HGST HTS541010B9E380 でも Debian 直起動の報告あり |
+| SSD 256GB(2.5インチSATA) | 🟡 公式で稼働していたHDDを SSD に換装し、`00550066.dlm` を上書きして Debian 直起動に成功したとの報告(USB-SATAでPCにつないで作成) |
 | 2TB 以上 | ❓(XFSの `agcount` は容量で変える。[docs/04](04_hdd_recovery_guide.md)) |
 | 別のメーカー(WD・Seagate・Toshiba など) | ❓ **`.hai`(HDD登録情報)が、型番とシリアルの先頭を使う**。型番の長さや書式が違うと合わない可能性 |
 | SMR のHDD、USB外付けHDD | ❓ |
@@ -34,12 +35,12 @@
 | HDDの復旧(v1.00 なし) | ✅ | [docs/04](04_hdd_recovery_guide.md) |
 | SPIのバックアップ(`.dlm`) | ✅ `--dest sys1` `both` / ⚠️ `p3` 単独は未確認 | [docs/16](16_spi_backup_dlm.md) |
 | SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
-| Debian直起動(`embed`・`image`) | ✅ | [docs/13](13_full_setup_from_official_hdd.md) |
+| Debian直起動(`embed`・`image`) | ✅ / 🟡 別の人の報告あり(公式で稼働していたHDDの `00550066.dlm` を上書きして成功) | [docs/13](13_full_setup_from_official_hdd.md) |
 | Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
 | 公式アプリを1回だけ起動(`official-once`) | ✅ NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
 | 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
 | 起動失敗時の自動フォールバック | ❓ 実機では失敗が起きなかった | [docs/05](05_kernel_and_direct_boot.md) |
-| 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ | [docs/11](11_tv_streaming.md) |
+| 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
 | BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**このリポジトリのコードにはまだ取り込んでいない**ので、標準の `nasne-recpt1` では BS の既定スロット以外は受信できません。CS は未確認。作者の環境は BS/CS の信号が来ていない | [docs/08](08_tuner_i2c.md) |
 | 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
