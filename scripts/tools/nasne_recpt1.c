@@ -28,6 +28,7 @@
 #define SYS_read   4003
 #define SYS_nanosleep 4166
 #define SYS_creat  4008
+#define SYS_lseek  4019
 #define SYS_fork   4002
 #define SYS_waitpid 4007
 #define SYS_execve 4011
@@ -665,6 +666,19 @@ static long lockfd = -1;
 static int acquire_tuner(int is_sat) {
     lockfd = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
     if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中 */
+
+    /* 前回のクローズ時刻からの経過時間を検証し、300ms 未満の連射時のみ差分だけ待機する動的クールダウン。
+     * 通常視聴時は待機時間0msを保ちつつ、Mirakurun等のミリ秒単位の連続選局時にViXS SoC内部DMAや復調ICのセトリング時間を確保し、バスロック(D状態固まり)を確実に防止する。 */
+    {
+        unsigned long last_close = 0;
+        sys3(SYS_lseek, lockfd, 0, 0);
+        if (sys3(SYS_read, lockfd, (long)&last_close, sizeof(last_close)) == sizeof(last_close)) {
+            unsigned long now = now_ms();
+            if (now >= last_close && (now - last_close) < 300) {
+                msleep(300 - (now - last_close));
+            }
+        }
+    }
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
     if (!fw_alive()) reload_driver();
@@ -675,7 +689,12 @@ static int acquire_tuner(int is_sat) {
 static void release_tuner(void) {
     if (fd >= 0) sys3(SYS_close, fd, 0, 0);
     fd = -1;
-    if (lockfd >= 0) sys3(SYS_close, lockfd, 0, 0);       /* flock も解放される */
+    if (lockfd >= 0) {
+        unsigned long t = now_ms();
+        sys3(SYS_lseek, lockfd, 0, 0);
+        sys3(SYS_write, lockfd, (long)&t, sizeof(t)); /* 次のセッションのために終了時刻を記録 */
+        sys3(SYS_close, lockfd, 0, 0);                 /* flock も解放される */
+    }
     lockfd = -1;
 }
 
