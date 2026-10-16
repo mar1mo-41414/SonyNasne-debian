@@ -88,22 +88,38 @@ sub mcu_info {
     };
 }
 
-# nasne-recpt1 のプロセスが D 状態(カーネルのドライバの中で戻らない)のまま固まっていないか。
-# D 状態を見つけたら、1秒おきに3回確かめて、3回とも D のものを「固まっている」とする(正常な受信中は D が一瞬しか続かない)。電源の入れ直しでしか戻らない。
-sub recpt1_dstate {
+# nasne-recpt1 のプロセスが、カーネルのドライバの中で戻らなくなって「固まっている」かどうか。
+# D 状態だけでは判定できない: 正常な受信中も、ドライバの中で待つので、ほとんどのサンプルで D になる(実測: 受信中の10サンプル中9回が D)。
+# 固まっているものは「D 状態のまま、CPU 時間(utime+stime)が全く進まない」。状態ページの要求をまたいで前回の観測を覚えておき、
+# STUCK_SECS 秒以上、D のままCPU時間が同じなら「固まっている」とする。電源の入れ直しでしか戻らない。
+my $ONCE = 0;
+my $STUCK_SECS = 30;
+my %dprev;   # pid => [CPU時間, 最初にその値を見た時刻]
+sub recpt1_dstate {   # D 状態の nasne-recpt1 の { pid => CPU時間(utime+stime) }
     my %d;
     for my $f (glob '/proc/[0-9]*/stat') {
         open(my $h, '<', $f) or next; my $l = <$h>; close $h;
-        $d{$1} = 1 if defined $l && $l =~ /^(\d+) \(nasne-recpt1\) D/;
+        $d{$1} = $2 + $3 if defined $l && $l =~ /^(\d+) \(nasne-recpt1\) D (?:\S+ ){10}(\d+) (\d+)/;
     }
     return %d;
 }
 sub stuck_recpt1 {
+    my $once = shift;
     my %a = recpt1_dstate();
-    return () unless %a;
-    select(undef, undef, undef, 1.0); my %b = recpt1_dstate();
-    select(undef, undef, undef, 1.0); my %c = recpt1_dstate();
-    return grep { $b{$_} && $c{$_} } keys %a;
+    my $now = time;
+    for my $pid (keys %dprev) { delete $dprev{$pid} unless exists $a{$pid}; }
+    my @stuck;
+    for my $pid (keys %a) {
+        my $p = $dprev{$pid};
+        if (!$p || $p->[0] != $a{$pid}) { $dprev{$pid} = [$a{$pid}, $now]; next; }   # 初めて見た / CPU時間が進んだ → 動いている
+        push @stuck, $pid if $now - $p->[1] >= $STUCK_SECS;
+    }
+    if ($once && %a && !@stuck) {   # 1回きりの実行(nasne-report)では前回の観測が無いので、短く待って CPU 時間が進むか見る
+        select(undef, undef, undef, 3.0);
+        my %b = recpt1_dstate();
+        push @stuck, grep { exists $b{$_} && $b{$_} == $a{$_} } keys %a;
+    }
+    return @stuck;
 }
 
 sub tuner_info {
@@ -113,7 +129,7 @@ sub tuner_info {
     close $s;
     my ($body) = $resp =~ /\r\n\r\n(.*)$/s;
     $body = '' unless defined $body; $body =~ s/\s+$//;
-    my @stuck = stuck_recpt1();
+    my @stuck = stuck_recpt1($ONCE);
     return { available => bool(1), status => $body, busy => bool($body ne '' && $body ne 'idle'), stuck => bool(scalar @stuck) };
 }
 
@@ -232,7 +248,7 @@ sub handle {
 }
 
 # ---- 起動 ----
-if (@ARGV && $ARGV[0] eq '--once') { print jenc(gather()), "\n"; exit 0; }
+if (@ARGV && $ARGV[0] eq '--once') { $ONCE = 1; print jenc(gather()), "\n"; exit 0; }
 $SIG{PIPE} = 'IGNORE';
 my $srv = IO::Socket::INET->new(Listen => 8, LocalAddr => $BIND, LocalPort => $PORT, ReuseAddr => 1, Proto => 'tcp') or die "listen $BIND:$PORT: $!\n";
 print STDERR strftime('%F %T', localtime) . " nasne-statusd listening on $BIND:$PORT\n";
