@@ -163,6 +163,11 @@ p3に置く設定:
 デバッグ用: p3に `/etc/nasne-init-debug`(中身は1行 `IP NETMASK GATEWAY`)があると、静的IPと**認証なしの** telnet を上げる。
 起動直後に固まる原因調査用。普段は置かないこと。`/etc/nasne-init-hold` があると、`/go` というファイルができるまで待機する。
 
+**フォールバックの実機確認(`embed`・`image` 構成、1台)**: 起動カウンタを `xx` にして再起動すると、`nasne_init` が `FALLBACK: boot count 'xx' >= 2` と判断して Sony の `/init` へ `exec` する(PID 1 が Sony の `busybox`)。
+**ただし、公式アプリ(`procmng`)は起動しない**。Sony の `rcS` の段階1ブロックが `nasne-stage1.sh` を実行して終わる(SPIのKNLが目的のカーネルなら何もしない)ためで、ネットワークは上がり、ssh(Debian の chroot)で入れる。
+つまり**フォールバックは「公式アプリが動く」ではなく「Sony の miniroot + ssh で入れる救出用の状態になる」**。公式アプリを動かすのは `official-once`(印あり)で、こちらは段階1を飛ばして公式を起動する(実機で確認)。
+フォールバック中に ssh で入って、`/var/lib/nasne-boot-count` を空にして再起動すれば Debian に戻る。段階1(`nasne-stage1.sh`)が SPI の KNL を書き戻そうとしないよう、chroot 内の `knl_new.bin` は SPI のカーネルと同じものにしておくこと(違うと、試行回数の上限(2)まで書き直そうとする)。
+
 外部ramdisk(SPIのRFS = Sony miniroot)は内蔵cpioの後に展開されるので、`/nasne_init` の実行時点でフォールバック先の `/init` が存在する。
 SPIのRFSはまだ読み込まれている(`switch_root` で捨てられる)。完全に外すには自前のRFSが必要(未実施)。
 

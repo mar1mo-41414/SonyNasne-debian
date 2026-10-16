@@ -38,9 +38,9 @@
 | SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
 | Debian直起動(`embed`・`image`) | ✅ / 🟡 別の人の報告あり(公式で稼働していたHDDの `00550066.dlm` を上書きして成功) | [docs/13](13_full_setup_from_official_hdd.md) |
 | Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
-| 公式アプリを1回だけ起動(`official-once`) | ✅ NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
+| 公式アプリを1回だけ起動(`official-once`) | ✅ 1TB の `embed`・`image` 構成でも確認(予約 → 公式が `0260` → 電源を入れ直すと Debian に戻り、印は消費)。NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
 | 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
-| 起動失敗時の自動フォールバック | ❓ 実機では失敗が起きなかった | [docs/05](05_kernel_and_direct_boot.md) |
+| 起動失敗時の自動フォールバック | ⚠️ `nasne_init` が Sony の miniroot へ切り替える所までは実機で確認(起動カウンタ `xx`)。**公式アプリは起動せず、ssh で入れる救出用の状態になる**。公式を動かすのは `official-once` | [docs/05](05_kernel_and_direct_boot.md) |
 | 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
 | BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
