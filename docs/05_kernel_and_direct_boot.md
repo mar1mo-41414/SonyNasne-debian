@@ -165,7 +165,10 @@ p3に置く設定:
 
 **フォールバックの実機確認(`embed`・`image` 構成、1台)**: 起動カウンタを `xx` にして再起動すると、`nasne_init` が `FALLBACK: boot count 'xx' >= 2` と判断して Sony の `/init` へ `exec` する(PID 1 が Sony の `busybox`)。
 **ただし、公式アプリ(`procmng`)は起動しない**。Sony の `rcS` の段階1ブロックが `nasne-stage1.sh` を実行して終わる(SPIのKNLが目的のカーネルなら何もしない)ためで、ネットワークは上がり、ssh(Debian の chroot)で入れる。
-つまり**フォールバックは「公式アプリが動く」ではなく「Sony の miniroot + ssh で入れる救出用の状態になる」**。公式アプリを動かすのは `official-once`(印あり)で、こちらは段階1を飛ばして公式を起動する(実機で確認)。
+つまり**フォールバックは「公式アプリが動く」ではなく「Sony の miniroot + ssh で入れる救出用の状態になる」**。
+これは**設計どおり**で、バグではない: 段階1の `rcS` ブロック(`rcS_block_p3.sh`)は「通常は公式アプリを起動しない(Debian への移行が主)」で、公式を起動するのは `official-once` の印があるときだけ。
+フォールバックは「Debian が2回、成功印なしで終わった」状態なので、原因(カーネルの不整合・イメージの破損など)を確かめる前に公式アプリを自動で走らせると、公式が p3 の NV・録画DBを書き換えて、Debian 側と状態が食い違うおそれがある。
+そのため、フォールバック時は ssh で入れる救出用の状態で止める(実機で、原因の調査と修復ができた)。公式に切り替えたいときは `nasne-boot-switch official-once` で予約して再起動する。公式アプリを動かすのは `official-once`(印あり)で、こちらは段階1を飛ばして公式を起動する(実機で確認)。
 フォールバック中に ssh で入って、`/var/lib/nasne-boot-count` を空にして再起動すれば Debian に戻る。段階1(`nasne-stage1.sh`)が SPI の KNL を書き戻そうとしないよう、chroot 内の `knl_new.bin` は SPI のカーネルと同じものにしておくこと(違うと、試行回数の上限(2)まで書き直そうとする)。
 
 外部ramdisk(SPIのRFS = Sony miniroot)は内蔵cpioの後に展開されるので、`/nasne_init` の実行時点でフォールバック先の `/init` が存在する。
