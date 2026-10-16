@@ -346,10 +346,12 @@ static int recv_pt(unsigned long tmo, unsigned char **p, unsigned long *sz) {
     return *p != 0;
 }
 
-/* PATとPMTを集める。戻り値: 0=成功 */
-static unsigned char sec_buf[8][1100]; static unsigned long sec_have[8]; static unsigned long sec_pid[8], sec_nsec;
+/* PATとPMTを集める。戻り値: 0=成功
+ * BS/CSでは1トランスポンダ(PAT)内に8個以上のサービス(マルチ編成・データ・ES等を含む)が存在するため上限を32とする */
+#define MAX_SEC 32
+static unsigned char sec_buf[MAX_SEC][1100]; static unsigned long sec_have[MAX_SEC]; static unsigned long sec_pid[MAX_SEC], sec_nsec;
 struct svc { unsigned long pn, pmt, pcr, ecm, vpid, vst, apid, ast; int ok, seg1; };      /* seg1: ワンセグ(PMTのPIDが0x1FC8)。SECUREDTSを開くとファームが固まるため扱わない */
-static struct svc svcs[8]; static int nsvc;
+static struct svc svcs[MAX_SEC]; static int nsvc;
 
 static void feed(const unsigned char *q) {
     unsigned long pid = ((q[1] & 0x1f) << 8) | q[2], af = (q[3] >> 4) & 3, i; const unsigned char *pl; unsigned long pln;
@@ -386,7 +388,7 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
         for (k = 0; k + 188 <= sz; k += 188) if (p[k] == 0x47) feed(p + k);
         if (!pat_done && sec_complete(0)) {
             unsigned char *s = sec_buf[0]; unsigned long ln = (((s[1] & 0xf) << 8) | s[2]) + 3;
-            for (j = 8; j + 4 <= ln - 4 && sec_nsec < 8; j += 4) {
+            for (j = 8; j + 4 <= ln - 4 && sec_nsec < MAX_SEC; j += 4) {
                 unsigned long pn = (s[j] << 8) | s[j + 1], pid = ((s[j + 2] & 0x1f) << 8) | s[j + 3];
                 if (!pn) continue;
                 sec_pid[sec_nsec] = pid; sec_have[sec_nsec] = 0; svcs[nsvc].pn = pn; svcs[nsvc].pmt = pid; svcs[nsvc].ok = 0; svcs[nsvc].seg1 = (pid == 0x1fc8); nsvc++; sec_nsec++;
@@ -408,6 +410,7 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
                     if ((st == 0x0f || st == 0x11) && !svcs[i].apid) { svcs[i].apid = ep; svcs[i].ast = st; }
                 }
                 svcs[i].ok = 1;
+                if (want_sid && svcs[i].pn == want_sid && svcs[i].vpid && svcs[i].apid && !svcs[i].seg1) return (int)i;
             }
             if (all) {
                 for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].vpid && svcs[i].apid && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
@@ -467,12 +470,17 @@ static void close_streams(void) {
     if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 
+/* 地デジは復号ストリーム(OPEN_SECUREDTS)にPMTが含まれるため、PSIから混ぜると二重になりCCエラーが生じる。
+ * 衛星(is_sat)のセッションでのみ cur_pmt_pid を設定し、PMTをPSIストリームから透過させる。 */
 static unsigned long cur_pmt_pid = 0;
 static int is_si_pid(unsigned long pid) {
     int i;
-    if (pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28) || (cur_pmt_pid && pid == cur_pmt_pid)) return 1;
-    for (i = 0; i < nsvc; i++) {
-        if (svcs[i].pmt == pid) return 1;
+    if (pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28)) return 1;
+    if (cur_pmt_pid) {
+        if (pid == cur_pmt_pid) return 1;
+        for (i = 0; i < nsvc; i++) {
+            if (svcs[i].pmt == pid) return 1;
+        }
     }
     return 0;
 }
@@ -540,6 +548,7 @@ static unsigned long get_bs_tsid(unsigned long ch, unsigned long slot) {
         case 13:
             if (slot == 0) return 0x40d0;
             if (slot == 1) return 0x40d1;
+            if (slot == 2) return 0x46d2; /* 2024年11月BS帯域再編: 放送大学(TS2) */
             break;
         case 15:
             if (slot == 0 || slot == 1) return 0x40f1;
@@ -549,6 +558,7 @@ static unsigned long get_bs_tsid(unsigned long ch, unsigned long slot) {
             if (slot == 0) return 0x4730;
             if (slot == 1) return 0x4731;
             if (slot == 2) return 0x4732;
+            if (slot == 3) return 0x4733;
             break;
         case 21:
             if (slot == 0) return 0x4750;
@@ -707,7 +717,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
     s = &svcs[sel];
-    cur_pmt_pid = s->pmt;
+    if (is_sat) cur_pmt_pid = s->pmt;
     if (verbose) { err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid); err(" audio 0x"); errhex(s->apid); err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n"); }
     lgx("open_streams begin", 0);
     if (open_streams(s, is_sat) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
@@ -829,10 +839,10 @@ static int arib_to_utf8(const unsigned char *s, int len, unsigned char *o, int m
 }
 
 struct sdt_ent { unsigned long sid; unsigned char name[100]; };
-static struct sdt_ent sdt_tab[16]; static int nsdt;
+static struct sdt_ent sdt_tab[MAX_SEC]; static int nsdt;
 static void sdt_parse(const unsigned char *s) {
     unsigned long ln = (((s[1] & 0xf) << 8) | s[2]) + 3, e = 11;
-    while (e + 5 <= ln - 4 && nsdt < 16) {
+    while (e + 5 <= ln - 4 && nsdt < MAX_SEC) {
         unsigned long sid = (s[e] << 8) | s[e + 1], dl = ((s[e + 3] & 0xf) << 8) | s[e + 4], d = e + 5, de = e + 5 + dl;
         int k;
         for (k = 0; k < nsdt; k++) if (sdt_tab[k].sid == sid) break;
