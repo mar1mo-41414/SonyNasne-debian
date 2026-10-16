@@ -70,7 +70,7 @@ python3 scripts/nasne_hdd_rebuild.py phase1 KRST3101_0260_SECURE.dlm /mnt/nasne_
 sync && sudo umount /mnt/nasne_sys1
 ```
 
-HDDをnasneに挿して電源を入れ、**2〜3分待って電源を切り**、HDDをPCに戻す(このときアプリは起動しない。initが個体IDを書くところまでで十分)。
+HDDをnasneに挿して電源を入れ、**2〜3分待って電源を切り**、HDDをPCに戻す(initが個体IDを書くところまでで十分。**アプリが少し動いて、p3に `share` などが作られる**ことがあり、そのときは手順3の `p3init` が「空ではない」と断る。対処は下の「困ったとき」)。
 
 ```bash
 sudo mount /dev/sdX1 /mnt/nasne_sys1
@@ -98,6 +98,20 @@ sync && sudo umount /mnt/nasne_p3
 HDDをnasneに挿して電源を入れる。約1分で公式アプリが起動し、PWRが緑になる(`http://<nasneのIP>:64210/status/softwareVersionGet` が `0260` を返す)。
 ネットワークの設定などは公式の画面(nasne HOME、nasne ACCESS)から行う。
 
+**PWR/REC が赤点灯、LAN が点灯したまま、ネットワークにも出ない(約40秒で止まる)場合**は、本体のNV(SPIの設定領域)に、前に使っていたHDDの状態が残っていて、新しいHDDと食い違っている可能性が高い
+(別のHDDを使っていた本体で起きる。実機で確認)。**NVを空にする `.dlm` に差し替えて、もう一度起動する**と直る
+(今のNVは、先にHDDの `/spi_backup/` へ保存されるので、あとで戻せる。作り方は [docs/16](16_spi_backup_dlm.md) の `--mode nvreset`):
+
+```bash
+# 1. 元の公式 00550066.dlm を控える(あとで戻す)
+cp /mnt/nasne_sys1/00550066.dlm 00550066.dlm.orig
+# 2. NVを空にする版を作って、sys1 に置く(mtdtool は docs/09 の build_tools.sh でビルド)
+python3 scripts/stage1/make_stage1_dlm.py build --official 00550066.dlm.orig --out nvreset.dlm --mode nvreset --mtdtool <mtdtool>
+cp nvreset.dlm /mnt/nasne_sys1/00550066.dlm; sync; sudo umount /mnt/nasne_sys1
+# 3. HDDをnasneに挿して電源を入れる。NVを保存・消去して自動で再起動し、約3分で公式アプリが起動する(1回だけ実行される)
+# 4. 起動を確認したら、HDDをPCに戻して、元の 00550066.dlm.orig を戻す
+```
+
 ## (参考)v1.00 の `00550066.dlm` が手元にある場合
 
 v1.00(21,287,161バイト、md5 `1c921378f2a7846a6492982c98c82fcd`)で p3 を初期化させる、ネットの記事の方式も使える。Sony由来のファイルで、Sonyは配布していない。
@@ -119,7 +133,7 @@ nasneに挿して電源を入れ、**約2分後にREC・LANが高速点滅した
 | 手順4で、PWR/REC赤点灯・LANオレンジで止まる(約35秒後にネットワークも切れる) | p3の初期構造が無い。`p3init` を実行したか確認(空のp3にだけ作れる。すでに何か入っているなら `mkdisk` からやり直す) |
 | 手順4で、PWR点滅のままネットワークに出ない | p3の区画が無い(`mkdisk` の既定で作る)、または `final` の `--chipid` が違う |
 | 手順4で、PWR緑点滅+LAN/HDDが橙・赤で点滅し、ネットワークに出ない | init の失敗ループ。**sys1に `00550066.dlm` が無い**(マウント漏れでPC側に書いた)ことが多い。HDDをPCに戻して `ls /mnt/nasne_sys1` で `00550066.dlm` `00110022.dlm` `11002200` `33004400` があるか確認 |
-| `p3init` が「p3 が空ではない」と言う | 手順2でnasneを一度起動すると、p3に `share` などが作られることがある。**sys1を消さずに** `sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <シリアル> --p3-only` でp3だけ作り直し、`p3init` をやり直す(`mkdisk` を丸ごとやり直すと sys1 も消えるので、手順3の `final` からやり直しになる) |
+| `p3init` が「p3 が空ではない」と言う(実機で再現) | 手順2でnasneを一度起動すると、p3に `share` などが作られることがある。**sys1を消さずに** `sudo python3 scripts/nasne_hdd_rebuild.py mkdisk /dev/sdX --serial <シリアル> --p3-only` でp3だけ作り直し、`p3init` をやり直す(`mkdisk` を丸ごとやり直すと sys1 も消えるので、手順3の `final` からやり直しになる) |
 | `00110022.dlm` が作られない(`read-id` が失敗する) | initがそこまで進んでいない。区画のラベルとext3、`00550066.dlm` の配置を確認 |
 | 手順4で、`p3init` まで済んでいるのに、約40秒後に固まる(PWR/REC赤点灯・LAN点灯)。本体のSPI(NV領域)を、別のHDDを使っていた頃の状態に戻した後などに起きた | 本体のNV(SPIのjffs2)に、前のHDDとの対応や録画まわりの状態が入っていて、**新しいHDDと食い違う**と、公式アプリが固まる(実機で再現。原本のNVでは固まり、**NVを空にすると復旧した**)。NVを触っていなければ、通常は起きない。**復旧: NVを空にする**(公式アプリが作り直す。設定=本体名などは初期値に戻る): Debianが動くなら `nasne-nvreset reset --yes`、公式のHDDだけなら、復元・NV用の `.dlm`([docs/16](16_spi_backup_dlm.md) の `--mode nvreset`)。いずれも、先に今のNVを保存する |
 | 起動するが、HDDが「未登録」と出る | `.hai` のシリアルとHDDが一致していない(`p3init` の `--device` を取り違えた)。`mkdisk` からやり直す |

@@ -26,6 +26,7 @@
 | SSD 256GB(2.5インチSATA) | 🟡 公式で稼働していたHDDを SSD に換装し、`00550066.dlm` を上書きして Debian 直起動に成功したとの報告(USB-SATAでPCにつないで作成) |
 | 2TB 以上 | ❓(XFSの `agcount` は容量で変える。[docs/04](04_hdd_recovery_guide.md)) |
 | 別のメーカー(WD・Seagate・Toshiba など) | ❓ **`.hai`(HDD登録情報)が、型番とシリアルの先頭を使う**。型番の長さや書式が違うと合わない可能性 |
+| 500GB(東芝 MQ01ABF050)で、`mkdisk`→`phase1`→(`p3init` が拒否→`mkdisk --p3-only`)→`final`→`p3init`→(NV食い違い→`nvreset`)→公式 v2.60 起動(HDD登録済み) | ✅ 実機の通しで確認(別の人の報告と同じ症状を再現して、手順を修正) |
 | SMR のHDD、USB外付けHDD | ❓ |
 
 ## 3. 機能(作者の環境での状況)
