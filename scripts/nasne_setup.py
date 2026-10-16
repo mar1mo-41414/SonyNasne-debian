@@ -135,6 +135,14 @@ def build(a):
     # 4. カーネル
     step(4, "自作カーネルのビルド(直起動用の内蔵initramfs入り)")
     vmlinux = os.path.join(ROOT, "gpl_src", "build", "out", "vmlinux_new.bin")
+    # ビルド済みのカーネルが、入力(内蔵initramfs・ビルドスクリプト)より古ければ作り直す。
+    # (古いまま使うと、nasne_init の更新(imageモード対応など)が入らず、起動時にSonyの経路へフォールバックし続ける)
+    kb = os.path.join(ROOT, "scripts", "kernel_build")
+    inputs = [os.path.join(kb, "build.sh"), os.path.join(kb, "initramfs", "nasne_init"), os.path.join(kb, "initramfs", "initramfs.list")]
+    newest_input = max(os.path.getmtime(f) for f in inputs if os.path.isfile(f))
+    if os.path.isfile(vmlinux) and os.path.getmtime(vmlinux) < newest_input:
+        print(f"  {vmlinux} は、入力(nasne_init など)より古いので作り直します")
+        os.remove(vmlinux)
     if not os.path.isfile(vmlinux):
         run(["sh", os.path.join(ROOT, "scripts", "kernel_build", "build.sh")], env=dict(os.environ, NASNE_CUSTOM="1"))
     else:
@@ -144,6 +152,9 @@ def build(a):
     step(5, "KNLセグメント(公式のKNLを雛形に、自作カーネルを包む)")
     knl = os.path.join(work, "knl_new.bin")
     ofw = os.path.join(work, "ofw_out")
+    if os.path.isfile(knl) and os.path.getmtime(knl) < os.path.getmtime(vmlinux):
+        print("  knl_new.bin は、カーネルより古いので作り直します")
+        os.remove(knl)
     if not os.path.isfile(knl):
         run([sys.executable, os.path.join(ROOT, "scripts", "ofw_tool.py"), "split", pkg, ofw])
         run([sys.executable, os.path.join(ROOT, "scripts", "build_knl.py"), "build", os.path.join(ofw, "KNL.bin"), knl,
@@ -154,6 +165,9 @@ def build(a):
     step(6, "Debian wheezy (mipsel) のツリー(debootstrap。数分)")
     tree = os.path.join(work, "tree")
     tar = os.path.join(work, "debian_tree.tar")
+    if os.path.isfile(tar) and os.path.getmtime(tar) < os.path.getmtime(knl):
+        print("  debian_tree.tar は、KNLより古い(KNLを作り直した)ので作り直します")
+        run(sudo + ["rm", "-rf", tree, tar])
     if not os.path.isfile(tar):
         run(sudo + [os.path.join(ROOT, "scripts", "stage1", "prepare_tree.sh"), "--out", tree, "--knl", knl,
                     "--official", pkg, "--ssh-pubkey", pub])
