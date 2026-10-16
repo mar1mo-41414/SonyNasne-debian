@@ -44,7 +44,7 @@
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
 | BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
 | 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
-| 数日の連続運用 | ❓ | |
+| 数日の連続運用 | ✅ 約4日(EPGStation の予約録画12本、計約45GB)。録画は全部、予約どおりの長さ(30分・35分・約2時間)で、デマックスの最後まで読めた。HDD の温度は28〜47℃。Home Assistant と Prometheus での監視も実機で確認 | [docs/11](11_tv_streaming.md)、[docs/18](18_status_page.md) |
 
 ## 4. ビルドするPC
 
