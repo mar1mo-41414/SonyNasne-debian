@@ -22,7 +22,7 @@
 |---|---|
 | 320GB(2.5インチSATA、Hitachi) | ✅ 復旧(`mkdisk`→`final`→`p3init`)、公式での録画、`embed` の `.dlm` でDebian、SPIバックアップ・復元 |
 | 500GB | ✅ 復旧・Debian直起動(2台) |
-| 1TB | ✅ Debian直起動(p3をext3にして直接) |
+| 1TB | ✅ Debian直起動(p3をext3にして直接)/ 🟡 HGST HTS541010B9E380 でも Debian 直起動の報告あり |
 | 2TB 以上 | ❓(XFSの `agcount` は容量で変える。[docs/04](04_hdd_recovery_guide.md)) |
 | 別のメーカー(WD・Seagate・Toshiba など) | ❓ **`.hai`(HDD登録情報)が、型番とシリアルの先頭を使う**。型番の長さや書式が違うと合わない可能性 |
 | SMR のHDD、USB外付けHDD | ❓ |
@@ -41,7 +41,7 @@
 | 起動失敗時の自動フォールバック | ❓ 実機では失敗が起きなかった | [docs/05](05_kernel_and_direct_boot.md) |
 | 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
-| BS/CS | ❓ 作者の環境では、BS/CS の信号が来ていない | |
+| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**このリポジトリのコードにはまだ取り込んでいない**ので、標準の `nasne-recpt1` では BS の既定スロット以外は受信できません。CS は未確認。作者の環境は BS/CS の信号が来ていない | [docs/08](08_tuner_i2c.md) |
 | 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
 | 数日の連続運用 | ❓ | |
 
@@ -51,6 +51,7 @@
 |---|---|
 | Debian 13(クリーンな仮想マシン) | ✅ `nasne_setup.py build` が最後まで通る([docs/13](13_full_setup_from_official_hdd.md)) |
 | Ubuntu 24.04 | ✅ `nasne_setup.py check` が不足を正しく報告 / ❓ ビルドの通しは未確認 |
+| Raspberry Pi 5(ARM64)上の Debian 13 | 🟡 `nasne_setup.py` でセットアップでき、`nasne-recpt1` の MIPS 用ビルドも通ったとの報告(依存関係は一部調整が必要だった。ARM64 ホストでの MIPS クロスコンパイル) |
 | WSL2(Windows 11)上の Ubuntu 24.04 | 🟡 `nasne_setup.py build --download-official` で、`knl_new.bin`(約2.1MB、`build_knl.py verify` OK)・`debian_tree.tar`(約150MB)・`vmlinux_new.bin` の生成まで成功の報告(実機適用の前。Wheezy の GPG 期限切れの警告は出るが無害) |
 | 他のLinux、macOS | ❓ Docker・`debootstrap`・`qemu-user-static` が要る |
 
