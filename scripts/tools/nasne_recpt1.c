@@ -173,6 +173,140 @@ static int fe_tune(unsigned long hz) {
 
 static int fe_tune_quick(unsigned long hz);
 static int fe_tune_quick(unsigned long hz) { int r; lock_wait_ms = 1500; r = fe_tune(hz); lock_wait_ms = 4000; return r; }
+
+/* ---- ISDB-S (衛星チューナー) 制御 ---- */
+#define DEMOD_S 0x22
+#define TUNER_S 0xc6
+#define TUNER_S_B 0xc8
+#define LO_KHZ 10678000UL
+#define XTAL_HZ 16000000UL
+
+static unsigned char shadow_s[8] = { 0x03, 0x13, 0xdc, 0x85, 0x12, 0x01, 0xe6, 0x1e };
+
+static unsigned long dem_s_w(unsigned char reg, unsigned char v) {
+    unsigned char d[2]; d[0] = reg; d[1] = v;
+    return xfer(DEMOD_S, 1, d, 2, 1);
+}
+
+static unsigned long dem_s_r(unsigned char reg, unsigned char *out) {
+    unsigned char d[2]; d[0] = reg;
+    if (xfer(DEMOD_S, 1, d, 1, 0) != 1) return 0;
+    return xfer(DEMOD_S, 0, out, 1, 1);
+}
+
+static unsigned long tun_s_w_bit(unsigned char reg, unsigned char mask, unsigned char val) {
+    unsigned char new_v = ((~mask & shadow_s[reg]) | (val & mask)) & 0xff;
+    shadow_s[reg] = new_v;
+    unsigned char d[4];
+    d[0] = 0xfe; d[1] = TUNER_S; d[2] = reg; d[3] = new_v;
+    return xfer(DEMOD_S, 1, d, 4, 1);
+}
+
+static unsigned long tun_s_w_raw(const unsigned char *bytes, int n) {
+    unsigned char d[32]; int i;
+    d[0] = 0xfe; d[1] = TUNER_S;
+    for (i = 0; i < n && i < 28; i++) d[2 + i] = bytes[i];
+    return xfer(DEMOD_S, 1, d, 2 + n, 1);
+}
+
+static void fe_init_s(void) {
+    static const unsigned char init_tuner[9] = { 0x00, 0x03, 0x13, 0xdc, 0x85, 0x12, 0x01, 0xe6, 0x1e };
+    unsigned char c8_init[4];
+    c8_init[0] = 0xfe; c8_init[1] = TUNER_S_B; c8_init[2] = 0x02; c8_init[3] = 0x53;
+    tun_s_w_raw(init_tuner, 9);
+    tun_s_w_bit(1, 0xc0, 0x00);
+    tun_s_w_bit(1, 0x0f, 0x03);
+
+    dem_s_w(0x03, 0x01); dem_s_w(0x06, 0x40); dem_s_w(0x07, 0x01); dem_s_w(0x08, 0x00); dem_s_w(0x10, 0xb1);
+    dem_s_w(0x11, 0x40); dem_s_w(0x85, 0x7a); dem_s_w(0x8e, 0x05); dem_s_w(0xa3, 0x33); dem_s_w(0xa5, 0xc0);
+
+    xfer(DEMOD_S, 1, c8_init, 4, 1);
+
+    tun_s_w_bit(0, 0x07, 0x00);
+    dem_s_w(0x13, 0x80);
+    dem_s_w(0x17, 0xff);
+}
+
+static void calc_s_pll(unsigned long if_khz, unsigned char *reg2, unsigned char *reg3) {
+    unsigned long l28, l24, base, p, target;
+    long s1 = 1000, s2 = 0;
+    int s0;
+    unsigned long n, t0;
+
+    if (if_khz < 1022001UL) {
+        l28 = 1; l24 = 0; base = 2;
+    } else if (if_khz < 1324577UL) {
+        l28 = 1; l24 = 1; base = 2;
+    } else if (if_khz < 2046001UL) {
+        l28 = 0; l24 = 0; base = 1;
+    } else {
+        l28 = 0; l24 = 1; base = 1;
+    }
+    p = 1UL << base;
+    target = 10 * p;
+    for (s0 = 1; s0 <= 4; s0++) {
+        long v = 160 / (1 << s0);
+        long diff = v > (long)target ? v - target : (long)target - v;
+        long diff_s1 = s1 > (long)target ? s1 - target : (long)target - s1;
+        if (diff < diff_s1) {
+            s2 = s0 - 1;
+            s1 = 160 / (1 << (s2 + 1));
+        }
+    }
+    n = (unsigned long)((1UL << (s2 + 1)) * if_khz * p * 10 / (XTAL_HZ / 1000));
+    t0 = n + 5;
+    *reg2 = (unsigned char)((t0 / 10) & 0xff);
+    *reg3 = (unsigned char)(((l24 << 5) | (l28 << 4) | (s2 << 6) | (t0 / 2560)) & 0xff);
+}
+
+static int fe_tune_s(unsigned long if_khz, unsigned long ts_id) {
+    unsigned char reg2 = 0, reg3 = 0;
+    unsigned long t0;
+    calc_s_pll(if_khz, &reg2, &reg3);
+
+    tun_s_w_bit(0, 0x07, 0x03);
+    dem_s_w(0x13, 0x00);
+    dem_s_w(0x17, 0x00);
+    dem_s_w(0xa5, 0x80);
+    dem_s_w(0x07, 0x01);
+    dem_s_w(0xa6, 0x04);
+    dem_s_w(0x03, 0x01);
+    dem_s_w(0x0a, 0x00);
+    dem_s_w(0x11, 0x00);
+    dem_s_w(0x03, 0x01);
+
+    tun_s_w_bit(0, 0xf8, 0x00);
+    tun_s_w_bit(3, 0xff, reg3);
+    tun_s_w_bit(2, 0xff, reg2);
+    tun_s_w_bit(5, 0x04, 0x04);
+
+    msleep(20);
+    dem_s_w(0x0a, 0xff);
+    dem_s_w(0x11, 0x40);
+    dem_s_w(0x03, 0x01);
+
+    if (ts_id) {
+        dem_s_w(0x8f, (ts_id >> 8) & 0xff);
+        dem_s_w(0x90, ts_id & 0xff);
+    }
+
+    t0 = now_ms();
+    while (now_ms() - t0 < lock_wait_ms && !stop_flag) {
+        unsigned char c3 = 0xff, ea = 0x00;
+        msleep(50);
+        if (dem_s_r(0xc3, &c3) && dem_s_r(0xea, &ea)) {
+            if ((c3 & 0x10) == 0 && (ea & 0x80) != 0) {
+                if (ts_id) {
+                    dem_s_w(0x8f, (ts_id >> 8) & 0xff);
+                    dem_s_w(0x90, ts_id & 0xff);
+                    msleep(20);
+                }
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
 /* ---- ファーム確認・ドライバ再読込 ---- */
 static int fw_alive(void) {
     clr(tb, 0xb0 / 4 + 2);
@@ -287,7 +421,7 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
 }
 
 static void set(unsigned long off, unsigned long v) { ob_sec[off / 4] = v; }
-static int open_streams(struct svc *s) {
+static int open_streams(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
     clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
@@ -309,9 +443,9 @@ static int open_streams(struct svc *s) {
     /* 復号ストリーム: 純正の既定値(映像パススルー設定)+番組ごとのPID */
     clr(ob_sec, 0x9ec / 4 + 2);
     set(0xb4, h_g0); set(0xb8, h_g1); set(0xbc, h_pt0); set(0xc0, h_pt1);
-    set(0xac, 0x8204141); set(0xb0, 0x80006); set(0xcc, 0); set(0xd4, 1);
+    set(0xac, 0x8204141); set(0xb0, 0x80006); set(0xcc, is_sat ? 1 : 0); set(0xd4, 1);
     set(0xd8, s->vpid); set(0xdc, s->vpid); set(0xe0, 0); set(0xe4, 0x1e8480); set(0xe8, 0x1e); set(0xec, 0x2d0); set(0xf0, 0x1e0);
-    set(0xf4, 1); set(0xf8, 0); set(0x100, s->apid); set(0x110, s->apid); set(0x120, 0x10000); set(0x12c, 0x2dc6c0);
+    set(0xf4, 1); set(0xf8, is_sat ? 1 : 0); set(0x100, s->apid); set(0x110, s->apid); set(0x120, 0x10000); set(0x12c, 0x2dc6c0);
     set(0x134, 0x300d8); set(0x138, 0x30); set(0x13c, s->pcr); set(0x140, 0x900000); set(0x144, 2); set(0x148, 3);
     set(0x160, s->pn); set(0x178, s->ecm); set(0x184, 1); set(0x194, s->pn); set(0x19c, 0x40);
     set(0x1a0, 2); set(0x1a4, s->vpid); set(0x1a8, s->apid); set(0x204, s->ecm); set(0x208, s->ecm); set(0x264, s->vst); set(0x268, s->ast);
@@ -333,8 +467,14 @@ static void close_streams(void) {
     if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 
+static unsigned long cur_pmt_pid = 0;
 static int is_si_pid(unsigned long pid) {
-    return pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28);
+    int i;
+    if (pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28) || (cur_pmt_pid && pid == cur_pmt_pid)) return 1;
+    for (i = 0; i < nsvc; i++) {
+        if (svcs[i].pmt == pid) return 1;
+    }
+    return 0;
 }
 static int out_fd = 1;
 static unsigned long olen;
@@ -366,16 +506,160 @@ static unsigned long parse_mhz(const char *v) {
 }
 
 static int starts(const char *s, const char *pre) { while (*pre) { if (*s++ != *pre++) return 0; } return 1; }
+
+static unsigned long get_bs_tsid(unsigned long ch, unsigned long slot) {
+    switch (ch) {
+        case 1:
+            if (slot == 0) return 0x4010;
+            if (slot == 1) return 0x4011;
+            if (slot == 2) return 0x4012;
+            break;
+        case 3:
+            if (slot == 0) return 0x4030;
+            if (slot == 1) return 0x4631; /* 2024年10月BS帯域再編: BSアニマックス(TS1) */
+            if (slot == 2) return 0x4032;
+            break;
+        case 5:
+            if (slot == 0) return 0x4450;
+            if (slot == 1) return 0x4451;
+            break;
+        case 7:
+            if (slot == 0) return 0x4670;
+            break;
+        case 9:
+            if (slot == 0) return 0x4090;
+            if (slot == 1) return 0x4091;
+            if (slot == 2) return 0x4092;
+            break;
+        case 11:
+            if (slot == 0) return 0x46b0;
+            if (slot == 1) return 0x46b1;
+            if (slot == 2) return 0x46b2;
+            if (slot == 3) return 0x46b3;
+            break;
+        case 13:
+            if (slot == 0) return 0x40d0;
+            if (slot == 1) return 0x40d1;
+            break;
+        case 15:
+            if (slot == 0 || slot == 1) return 0x40f1;
+            if (slot == 2) return 0x40f2;
+            break;
+        case 19:
+            if (slot == 0) return 0x4730;
+            if (slot == 1) return 0x4731;
+            if (slot == 2) return 0x4732;
+            break;
+        case 21:
+            if (slot == 0) return 0x4750;
+            if (slot == 1) return 0x4751;
+            if (slot == 2) return 0x4752;
+            break;
+        case 23:
+            if (slot == 0) return 0x4772;
+            if (slot == 1) return 0x4971;
+            if (slot == 2) return 0x4972;
+            if (slot == 3) return 0x4973;
+            break;
+    }
+    return 0x4000 | (ch << 4) | (slot & 0x0f);
+}
+
+/* CSトランスポンダ(ND2〜ND24)ごとのTSIDを返す。
+ * 東経110度CSデジタル放送(ARIB STD-B10)では1トランスポンダ=1TS構成となっており、
+ * CS1ネットワーク(ND2, ND8, ND10)には0x6000番台、CS2ネットワーク(ND4, ND6, ND12〜ND24)には0x7000番台が割り当てられている。
+ * スロット多重のBSとは異なり、各トランスポンダ番号から一意にTSIDが定まる。
+ */
+static unsigned long get_cs_tsid(unsigned long ch) {
+    switch (ch) {
+        case 2:  return 0x6020; /* ND2  (CS1) */
+        case 4:  return 0x7040; /* ND4  (CS2) */
+        case 6:  return 0x7060; /* ND6  (CS2) */
+        case 8:  return 0x6080; /* ND8  (CS1) */
+        case 10: return 0x60a0; /* ND10 (CS1) */
+        case 12: return 0x70c0; /* ND12 (CS2) */
+        case 14: return 0x70e0; /* ND14 (CS2) */
+        case 16: return 0x7100; /* ND16 (CS2) */
+        case 18: return 0x7120; /* ND18 (CS2) */
+        case 20: return 0x7140; /* ND20 (CS2) */
+        case 22: return 0x7160; /* ND22 (CS2) */
+        case 24: return 0x7180; /* ND24 (CS2) */
+        default: return 0;
+    }
+}
+
+/* チャンネル判別:
+ *   13〜62: 地デジ (is_sat = 0, val = uhf_hz(ch))
+ *   BS1〜BS23, BS01_0〜BS23_3: BS放送 (is_sat = 1, val = if_khz)
+ *   CS2〜CS24, CS02〜CS24: CS放送 (is_sat = 1, val = if_khz)
+ *   戻り値: 1=正常パース、0=エラー
+ */
+static int parse_channel_str(const char *s, int *is_sat, unsigned long *val, unsigned long *ts_id) {
+    if (!s || !*s) return 0;
+    *ts_id = 0;
+    if ((s[0] | 32) == 'b' && (s[1] | 32) == 's') {
+        const char *p = s + 2;
+        unsigned long ch = 0;
+        unsigned long slot = 0;
+        int has_slot = 0;
+        while (*p == '0') p++;
+        while (*p >= '0' && *p <= '9') { ch = ch * 10 + (*p - '0'); p++; }
+        if (*p == '_') {
+            p++;
+            while (*p >= '0' && *p <= '9') { slot = slot * 10 + (*p - '0'); p++; has_slot = 1; }
+        }
+        if (ch >= 1 && ch <= 23 && (ch % 2 == 1)) {
+            *is_sat = 1;
+            *val = (11727480UL + ((ch - 1) / 2) * 38360UL) - LO_KHZ;
+            if (has_slot) {
+                *ts_id = get_bs_tsid(ch, slot);
+            }
+            return 1;
+        }
+        return 0;
+    }
+    if ((s[0] | 32) == 'c' && (s[1] | 32) == 's') {
+        const char *p = s + 2;
+        unsigned long ch = 0;
+        unsigned long slot = 0;
+        int has_slot = 0;
+        while (*p == '0') p++;
+        while (*p >= '0' && *p <= '9') { ch = ch * 10 + (*p - '0'); p++; }
+        if (*p == '_') {
+            p++;
+            while (*p >= '0' && *p <= '9') { slot = slot * 10 + (*p - '0'); p++; has_slot = 1; }
+        }
+        if (ch >= 2 && ch <= 24 && (ch % 2 == 0)) {
+            *is_sat = 1;
+            *val = (12291000UL + ((ch - 2) / 2) * 40000UL) - LO_KHZ;
+            *ts_id = get_cs_tsid(ch);
+            (void)slot; (void)has_slot;
+            return 1;
+        }
+        return 0;
+    }
+    if (is_num(s)) {
+        unsigned long ch = parse_dec(s);
+        if (ch >= 13 && ch <= 62) {
+            *is_sat = 0;
+            *val = uhf_hz(ch);
+            *ts_id = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 #define BUSY_WAIT_MS 10000
 static long lockfd = -1;
-static int acquire_tuner(void) {
+static int acquire_tuner(int is_sat) {
     lockfd = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
-    if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中(開いたfdは閉じる。再試行で増やさない) */
+    if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中 */
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
     if (!fw_alive()) reload_driver();
     if (fd < 0 || !fw_alive()) { err("ファームが動いていない\n"); return 1; }
-    fe_init();
+    if (is_sat) fe_init_s(); else fe_init();
     return 0;
 }
 static void release_tuner(void) {
@@ -396,20 +680,26 @@ static void send_headers(int sock) {
 }
 
 /* 1回の選局+受信セッション。http>0 のとき out_fd がソケットで、準備できた時点でHTTPヘッダを送る。戻り値は終了コード */
-static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
+static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
-    lgx("session start hz", hz);
-    rc = acquire_tuner();
+    cur_pmt_pid = 0;
+    lgx("session start freq", freq_val);
+    if (is_sat) lgx("session ts_id", ts_id);
+    rc = acquire_tuner(is_sat);
     /* HTTPでは、直前のセッションの終了処理中(ロックがまだ残っている)にすぐ次の要求が来ることがある(tvheadend・VLCのプレイリストの次送り等)。
      * すぐ503を返さず、最大 BUSY_WAIT_MS だけ待って再試行する(本当に使用中なら、そのあと503) */
-    if (rc == 3 && http) { unsigned long w; for (w = 0; w < BUSY_WAIT_MS && rc == 3; w += 100) { msleep(100); rc = acquire_tuner(); } }
+    if (rc == 3 && http) { unsigned long w; for (w = 0; w < BUSY_WAIT_MS && rc == 3; w += 100) { msleep(100); rc = acquire_tuner(is_sat); } }
     if (rc == 3) { err("チューナー使用中\n"); if (http) http_status(ofd, "HTTP/1.0 503 Service Unavailable", "tuner busy\n"); return 3; }
     if (rc) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "driver/firmware error\n"); release_tuner(); return 1; }
     lgx("tuner acquired", 0);
-    if (!fe_tune(hz)) { err("ロックしなかった(信号なし)\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "no signal\n"); release_tuner(); return 1; }
+    if (is_sat) {
+        if (!fe_tune_s(freq_val, ts_id)) { err("衛星ロックしなかった(信号なし)\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "no signal\n"); release_tuner(); return 1; }
+    } else {
+        if (!fe_tune(freq_val)) { err("地上波ロックしなかった(信号なし)\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "no signal\n"); release_tuner(); return 1; }
+    }
     clr(ob_pt, 0x484 / 4 + 2);
-    ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = 0; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
+    ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = is_sat ? 1 : 0; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
     if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) { err("PSIストリームを開けない\n"); if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "psi stream\n"); release_tuner(); return 1; }
     h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4];
     lgx("psi stream opened", h_pt0);
@@ -417,9 +707,10 @@ static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_m
     lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
     s = &svcs[sel];
+    cur_pmt_pid = s->pmt;
     if (verbose) { err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid); err(" audio 0x"); errhex(s->apid); err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n"); }
     lgx("open_streams begin", 0);
-    if (open_streams(s) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
+    if (open_streams(s, is_sat) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
     lgx("streaming begin", 0);
     if (http) send_headers(ofd);
     t_start = now_ms();
@@ -440,7 +731,7 @@ static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_m
         } else if (rv == 6) {
             if (++nto > 100) { err("出力が止まった\n"); break; }          /* 約20秒 */
         } else { err("RECV エラー rv="); errhex(rv); err("\n"); break; }
-        {   /* SI(NIT/SDT/EIT/TOT 等)をPSIストリームから混ぜる */
+        {   /* SI(NIT/SDT/EIT/TOT 等)およびPMTをPSIストリームから混ぜる */
             unsigned char *p; unsigned long psz;
             if (recv_pt(1, &p, &psz)) for (k = 0; k + 188 <= psz; k += 188)
                 if (p[k] == 0x47 && is_si_pid(((p[k + 1] & 0x1f) << 8) | p[k + 2])) put_pkt(p + k);
@@ -449,6 +740,7 @@ static int session(unsigned long hz, unsigned long want_sid, unsigned long dur_m
     }
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);
+    cur_pmt_pid = 0;
     close_streams();
     lgx("closed", 0);
     release_tuner();
@@ -589,7 +881,7 @@ static long cache_fd = -1;
 static int scan(int ofd) {
     unsigned long ch; int rc;
     out_fd = ofd; stop_flag = 0;
-    rc = acquire_tuner();
+    rc = acquire_tuner(0);
     if (rc) { err("チューナーを確保できない\n"); return rc; }
     sys3(SYS_mkdir, (long)"/var/lib", 0755, 0); sys3(SYS_mkdir, (long)CACHE_DIR, 0755, 0);
     cache_fd = sys3(SYS_open, (long)CACHE_TMP, 0x100 | 0x200 | 0x1 /* O_CREAT|O_TRUNC|O_WRONLY(MIPS) */, 0644);
@@ -719,21 +1011,36 @@ static int listen_port(unsigned long port) {
                 sys3(SYS_exit, 0, 0, 0);
             }
             if (starts(p, "tuner/")) p += 6;                                   /* /tuner/<ch>?sid=0xNNNN&sec=N  または /<ch>?... */
-            while (*p >= '0' && *p <= '9') { ch = ch * 10 + (*p - '0'); p++; }
-            while (*p == '?' || *p == '&') {
-                p++;
-                if (starts(p, "sid=")) {
-                    p += 4;
-                    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { sid = sid * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
-                    else while (*p >= '0' && *p <= '9') { sid = sid * 10 + (*p - '0'); p++; }
-                } else if (starts(p, "sec=")) { p += 4; while (*p >= '0' && *p <= '9') { sec = sec * 10 + (*p - '0'); p++; } }
-                else break;
+            {
+                char ch_buf[32]; int ci = 0; int is_sat = 0; unsigned long freq_val = 0, ts_id = 0, parsed_ts_id = 0;
+                while (*p && *p != '?' && *p != '&' && *p != ' ' && *p != '\r' && *p != '\n' && ci < 31) {
+                    ch_buf[ci++] = *p++;
+                }
+                ch_buf[ci] = 0;
+                while (*p == '?' || *p == '&') {
+                    p++;
+                    if (starts(p, "sid=")) {
+                        p += 4;
+                        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { sid = sid * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
+                        else while (*p >= '0' && *p <= '9') { sid = sid * 10 + (*p - '0'); p++; }
+                    } else if (starts(p, "tsid=")) {
+                        p += 5;
+                        ts_id = 0;
+                        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { ts_id = ts_id * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
+                        else while (*p >= '0' && *p <= '9') { ts_id = ts_id * 10 + (*p - '0'); p++; }
+                    } else if (starts(p, "sec=")) { p += 4; while (*p >= '0' && *p <= '9') { sec = sec * 10 + (*p - '0'); p++; } }
+                    else break;
+                }
+                if (!parse_channel_str(ch_buf, &is_sat, &freq_val, &parsed_ts_id)) {
+                    http_status(c, "HTTP/1.0 400 Bad Request", "channel must be UHF 13-62, BS1-BS23, or CS2-CS24\n");
+                    sys3(SYS_exit, 0, 0, 0);
+                }
+                if (!ts_id) ts_id = parsed_ts_id;
+                set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
+                session(is_sat, freq_val, ts_id, sid, sec * 1000, (int)c, 1);
+                sys3(SYS_close, c, 0, 0);
+                sys3(SYS_exit, 0, 0, 0);
             }
-            if (ch < 13 || ch > 62) { http_status(c, "HTTP/1.0 400 Bad Request", "channel must be UHF 13-62: /tuner/<ch>[?sid=0xNNNN&sec=N]\n"); sys3(SYS_exit, 0, 0, 0); }
-            set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
-            session(uhf_hz(ch), sid, sec * 1000, (int)c, 1);
-            sys3(SYS_close, c, 0, 0);
-            sys3(SYS_exit, 0, 0, 0);
         }
         sys3(SYS_close, c, 0, 0);
     }
@@ -744,30 +1051,39 @@ int main_c(long *sp) {
     int argc = (int)sp[0], ai, npos = 0, do_scan = 0;
     char **argv = (char **)(sp + 1);
     const char *pos[3] = { 0, 0, 0 };
-    unsigned long want_sid = 0, freq_hz = 0, dur_ms = 0, port = 0; int ofd = 1;
+    unsigned long want_sid = 0, freq_hz = 0, dur_ms = 0, port = 0, cli_tsid = 0; int ofd = 1;
     for (ai = 1; ai < argc; ai++) {
         const char *a = argv[ai];
         if (streq(a, "--sid") && ai + 1 < argc) { const char *v = argv[++ai]; want_sid = (v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) ? parse_hex(v + 2) : parse_dec(v); }
+        else if (streq(a, "--tsid") && ai + 1 < argc) { const char *v = argv[++ai]; cli_tsid = (v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) ? parse_hex(v + 2) : parse_dec(v); }
         else if (streq(a, "--freq") && ai + 1 < argc) freq_hz = parse_mhz(argv[++ai]);
         else if (streq(a, "--listen") && ai + 1 < argc) port = parse_dec(argv[++ai]);
         else if (streq(a, "--scan")) do_scan = 1;
         else if (streq(a, "-v")) verbose = 1;
-        else if (streq(a, "--device") || streq(a, "--lnb") || streq(a, "--tsid") || streq(a, "--udp") || streq(a, "--port") || streq(a, "--http")) ai++;
+        else if (streq(a, "--device") || streq(a, "--lnb") || streq(a, "--udp") || streq(a, "--port") || streq(a, "--http")) ai++;
         else if (a[0] == '-' && a[1] == '-') { /* --b25 --strip 等の recpt1 オプションは無視 */ }
         else if (npos < 3) pos[npos++] = a;
     }
     if (port) { logv = 1; return listen_port(port); }        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
     set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
     if (do_scan) return scan(1);
-    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [-v] <UHF ch 13-62 | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }
+    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23 | CS2-CS24 | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }
     {
         const char *chs, *secs, *dst;
-        if (freq_hz) { secs = pos[0]; dst = pos[1]; chs = 0; } else { chs = pos[0]; secs = pos[1]; dst = pos[2]; }
-        if (chs) { if (!is_num(chs) || parse_dec(chs) < 13 || parse_dec(chs) > 62) { err("チャンネルは UHF 13〜62 の数字で指定してください\n"); return 2; } freq_hz = uhf_hz(parse_dec(chs)); }
+        int is_sat = 0; unsigned long freq_val = 0, parsed_tsid = 0;
+        if (freq_hz) { secs = pos[0]; dst = pos[1]; chs = 0; freq_val = freq_hz; is_sat = 0; }
+        else { chs = pos[0]; secs = pos[1]; dst = pos[2]; }
+        if (chs) {
+            if (!parse_channel_str(chs, &is_sat, &freq_val, &parsed_tsid)) {
+                err("チャンネルは UHF 13〜62、BS1〜BS23、または CS2〜CS24 で指定してください\n");
+                return 2;
+            }
+        }
+        if (!cli_tsid) cli_tsid = parsed_tsid;
         dur_ms = streq(secs, "-") ? 0 : parse_dec(secs) * 1000;
         if (!streq(dst, "-")) { ofd = sys3(SYS_creat, (long)dst, 0644, 0); if (ofd < 0) { err("出力ファイルを開けない\n"); return 1; } }
+        return session(is_sat, freq_val, cli_tsid, want_sid, dur_ms, ofd, 0);
     }
-    return session(freq_hz, want_sid, dur_ms, ofd, 0);
 }
 
 __asm__(".text\n.globl __start\n.ent __start\n__start:\n"
