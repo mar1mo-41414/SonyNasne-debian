@@ -7,11 +7,14 @@
 | 部品 | 型番 | 役割 |
 |---|---|---|
 | メインSoC | **ViXS XCode 4210**("Viper") | MIPS 74Kc コア(512MHz)+ メディア処理(MPEG-2/H.264)+ SATA / USB / Ethernet。Linuxはこのチップ上で動く |
-| 復調IC | **東芝 TC90532系**(基板刻印 `TC90532XBG`) | 地上波(ISDB-T)/ BS・CS(ISDB-S)の復調 |
+| 復調IC | **東芝 TC90532系**(基板刻印 `TC90532XBG`) | 地上波(ISDB-T)/ BS・CS(ISDB-S)の復調。**レジスタ配置は Linux の `tc90522` ドライバ(PT3 などの受信カードが使う東芝TC90522)と同じ**で、T=I2C 7bit `0x10`、S=`0x11`、ISDB-S のスロット(TSID)選択は reg `0x8F`/`0x90`([docs/08](08_tuner_i2c.md)) |
+| RFチューナーIC(地デジ) | **MaxLinear MxL301**(基板の刻印 `MXL301`、MaxLinear のロゴ) | ISDB-T の RF チューナー(PT3 などでも、東芝の復調ICとの組み合わせで使われる部品)。32ピンQFN。2026-10 の分解の目視 |
+| RFチューナーIC(衛星) | **ST STV6110A** と読める(刻印 `STV6110A`、ST のロゴ。小さくて、読み取りは確度が中程度) | 衛星(ISDB-S)の RF チューナーとみられる。32ピンQFN。BS/CS の動作は作者の環境では未検証 |
+| アンテナ給電(BS/CS の LNB 電源)の回路とみられる部分 | RF 入力の右の区画に、16ピンの小さな QFN(刻印は読み切れず、`P217` と読める)・ヒューズ(基板リファレンス F1)・470µF/25V の電解コンデンサ・銅箔のパッド | **推測**(刻印が読めない)。docs/08 の「BS給電の制御箇所は未特定」の手がかり |
 | DRAM | Samsung K4B1G1646G-BCH9 ×4 | DDR3 1Gbit ×4 = **512MB**(513MHz) |
 | ブートフラッシュ | **Spansion S25FL128P**(SPI NOR、16MB、基板リファレンス U44) | U-Boot・カーネル・miniroot・設定を格納 |
 | Ethernet PHY | Realtek RTL8211EG | ギガビットEthernet |
-| MCU | 型番未確認(基板上のマイコン) | 電源・ウォッチドッグ(I2C)。[docs/06](06_mcu_watchdog.md) |
+| MCU | 型番未確認(基板上のマイコン。復調IC・RFチューナーIC・SoC は上の行) | 電源・ウォッチドッグ(I2C)。[docs/06](06_mcu_watchdog.md) |
 | B-CASスロット | フルサイズのB-CASカード | 放送のデスクランブル用カード |
 
 > 初代nasneの分解記事(日経テクノロジー)にも、復調ICとして TC90532XBG、SoCとしてViXS製とある。

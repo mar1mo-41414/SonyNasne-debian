@@ -127,6 +127,8 @@ nasneに挿して電源を入れ、**約2分後にREC・LANが高速点滅した
 
 ## 困ったとき
 
+**LEDの状態と、公式・Debian 直起動を含む全体の症状表は [docs/21](21_troubleshooting.md) にまとめています**(ここでは、この手順に関するものだけ)。
+
 | 症状 | 考えられる原因 |
 |---|---|
 | 手順2で、2〜3分たってもREC/LANが高速点滅にならない | initの検査に失敗している(`ChipID ERROR`/`DLM date ERROR`/`CRC ERROR`)。区画ラベル(`sys1`/`sys2`)・ext3か確認 |
