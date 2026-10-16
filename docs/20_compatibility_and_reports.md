@@ -42,7 +42,7 @@
 | 起動失敗時の自動フォールバック | ❓ 実機では失敗が起きなかった | [docs/05](05_kernel_and_direct_boot.md) |
 | 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
-| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**このリポジトリのコードにはまだ取り込んでいない**ので、標準の `nasne-recpt1` では BS の既定スロット以外は受信できません。CS は未確認。作者の環境は BS/CS の信号が来ていない | [docs/08](08_tuner_i2c.md) |
+| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**このリポジトリのコードにはまだ取り込んでいない**ので、標準の `nasne-recpt1` では BS の既定スロット以外は受信できません。**CS110 も受信できたとの報告**。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は BS/CS の信号が来ていない | [docs/08](08_tuner_i2c.md) |
 | 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
 | 数日の連続運用 | ❓ | |
 
