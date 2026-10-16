@@ -182,7 +182,7 @@ def build(a):
 次はHDDに入れます(HDDをPCにつなぐ。sdX は lsblk で必ず確認):
   sudo mkdir -p /mnt/nasne_sys1 && sudo mount /dev/sdX1 /mnt/nasne_sys1
   mkdir -p backup && cp /mnt/nasne_sys1/00550066.dlm backup/00550066.dlm.orig        # 元に戻す手段
-  sudo sh {os.path.join(ROOT, 'scripts', 'stage1', 'install_dlm.sh')} /mnt/nasne_sys1 {out} --backup-dir backup
+  sudo bash {os.path.join(ROOT, 'scripts', 'stage1', 'install_dlm.sh')} /mnt/nasne_sys1 {out} --backup-dir backup
   sudo umount /mnt/nasne_sys1
 その後、HDDを nasne に挿して電源を入れ、約5分待ちます(docs/13)。事前に SPI のバックアップ(docs/16)を取っておくことを強くお勧めします。""")
 
