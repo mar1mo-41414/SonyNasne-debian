@@ -47,7 +47,9 @@ if [ -z "$BINS" ]; then
   BINS=$WORK/bin; mkdir -p "$BINS"
   sh "$ROOT/scripts/build_tools.sh" "$BINS"     # ホストの mipsel-linux-gnu-gcc、無ければ Docker(nasne-kcc:gcc432)
 fi
-for b in mcui2c nasne-recpt1 i2cx mtdtool; do
+# --bins に、古いビルド(nasne-ledctl が無い)が渡されたときは、足りないものだけビルドして補う
+[ -s "$BINS/nasne-ledctl" ] || sh "$ROOT/scripts/build_tools.sh" "$BINS" >/dev/null || true
+for b in mcui2c nasne-recpt1 i2cx mtdtool nasne-ledctl; do
   [ -s "$BINS/$b" ] || { echo "$BINS/$b が無い" >&2; exit 1; }
   file "$BINS/$b" | grep -q 'MIPS' || { echo "$BINS/$b はMIPSバイナリではない" >&2; exit 1; }
   $SUDO install -m 755 "$BINS/$b" "$OUT/usr/local/sbin/$b"
@@ -95,6 +97,10 @@ $SUDO chroot "$OUT" update-rc.d nasne-recpt1-server defaults 20
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-statusd" "$OUT/usr/local/sbin/nasne-statusd"
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-status" "$OUT/etc/init.d/nasne-status"
 $SUDO chroot "$OUT" update-rc.d nasne-status defaults 25
+# 前面LED(REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。docs/06。無効にするなら /etc/default/nasne-led に NASNE_LED_ENABLE=0)
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-ledd" "$OUT/usr/local/sbin/nasne-ledd"
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-led" "$OUT/etc/init.d/nasne-led"
+$SUDO chroot "$OUT" update-rc.d nasne-led defaults 26
 # 検証協力用のレポート(docs/20)と、このリポジトリのバージョン
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-report" "$OUT/usr/local/sbin/nasne-report"
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-nvreset" "$OUT/usr/local/sbin/nasne-nvreset"
@@ -108,6 +114,7 @@ $SUDO chroot "$OUT" update-rc.d nasne-powerbtn defaults
 cleanup_mounts
 if mount | grep -q " $OUT/\(proc\|sys\) "; then echo "umountに失敗: $OUT/proc|sys が残っている" >&2; exit 1; fi
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-status || { echo "nasne-status の update-rc.d が効いていない" >&2; exit 1; }
+ls "$OUT"/etc/rc2.d/ | grep -q nasne-led || { echo "nasne-led の update-rc.d が効いていない" >&2; exit 1; }
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-mcu-wd || { echo "update-rc.d が効いていない" >&2; exit 1; }
 
 # ---- 5. 段階1 ----

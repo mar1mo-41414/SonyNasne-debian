@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+# nasne-ledd — 前面の REC・LAN LED を、本体の状態に合わせて点灯する常駐プロセス(Debian側。docs/06)。
+#   REC(赤): チューナー使用中(nasne-recpt1 がセッション中に持つ排他ロックがある間。録画・視聴・番組表の取得を含む)に点灯、それ以外は消灯。
+#   LAN(橙): 起動中は消灯。ネットワークが確立(デフォルトルートができる)したら点灯し、以後ずっと点灯(公式と同じ。点滅しない)。
+# LED の操作は nasne-ledctl(GPIO ポート10 の bit 0x100 / 0x200 だけを触る)。nasne-recpt1 には手を入れていない
+# (/proc/locks を読むだけで、チューナーのロックには干渉しない)。PWR は nasne-mcu-wd、HDD はディスクのアクセスに連動する。
+# 設定: /etc/default/nasne-led の NASNE_LED_ENABLE=0 で無効、NASNE_LED_POLL=秒(既定 0.5)。
+use strict; use warnings;
+# 秒未満の待ちは select(Time::HiRes は、nasne の最小構成の Perl には入っていない)
+sub nap { select(undef, undef, undef, $_[0]); }
+
+my $LEDCTL = $ENV{NASNE_LEDCTL} || '/usr/local/sbin/nasne-ledctl';
+my $LOCK   = $ENV{NASNE_RECPT1_LOCK} || '/tmp/nasne-recpt1.lock';
+my $POLL   = $ENV{NASNE_LED_POLL} || 0.5;
+my $ROUTES = $ENV{NASNE_PROC_ROUTE} || '/proc/net/route';
+my $LOCKS  = $ENV{NASNE_PROC_LOCKS} || '/proc/locks';
+my $ONCE   = (@ARGV && $ARGV[0] eq '--once');      # テスト用: 1回だけ判定して終わる
+
+sub led { my ($which, $state) = @_; system($LEDCTL, $which, $state ? 'on' : 'off'); }
+
+# チューナーのロックを nasne-recpt1 が持っているか(/proc/locks に、ロックファイルの inode の FLOCK がある)
+sub tuner_busy {
+    my @st = stat($LOCK) or return 0;
+    my $ino = $st[1];
+    open(my $h, '<', $LOCKS) or return 0;
+    while (my $l = <$h>) {
+        return 1 if $l =~ /\bFLOCK\b/ && $l =~ /\s[0-9a-f]+:[0-9a-f]+:$ino\s/;
+    }
+    return 0;
+}
+
+# ネットワークが確立したか(デフォルトルートがある=DHCP などで IP とゲートウェイが決まった)
+sub net_up {
+    open(my $h, '<', $ROUTES) or return 0;
+    <$h>;    # ヘッダ
+    while (my $l = <$h>) {
+        my @f = split ' ', $l;
+        # Destination==00000000 && Flags に RTF_UP(1)・RTF_GATEWAY(2)
+        return 1 if @f >= 4 && $f[1] eq '00000000' && ($f[3] =~ /^[0-9A-Fa-f]+$/) && (hex($f[3]) & 3) == 3;
+    }
+    return 0;
+}
+
+my ($rec, $lan) = (-1, -1);     # いまの LED の状態(-1=未設定)
+$SIG{TERM} = $SIG{INT} = sub { led('rec', 0); exit 0; };
+
+led('rec', 0); $rec = 0;
+led('lan', 0); $lan = 0;
+
+while (1) {
+    my $b = tuner_busy() ? 1 : 0;
+    if ($b != $rec) { led('rec', $b); $rec = $b; }
+    if (!$lan && net_up()) { led('lan', 1); $lan = 1; }      # ラッチ: 一度点灯したら消さない
+    last if $ONCE;
+    nap($POLL);
+}
+print "rec=$rec lan=$lan\n" if $ONCE;

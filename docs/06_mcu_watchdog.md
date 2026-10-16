@@ -157,6 +157,17 @@ MCUのステータス読み出し(6バイト)の末尾2バイトは、**最後�
 - REC と LAN の割り当ては、LEDの並び(左から PWR・REC・LAN・HDD)と色(赤・橙)からの判断。取り違えがないかは、公式のAPI(`/config/LEDControl`)で確認できる。
 - GPIOポートNのレジスタは `0xFC04 + 0x10×(N-4)`(`init` / `procmng` のコードより)。
 
+#### Debian での点灯(`nasne-ledd`、既定で組み込み)
+
+公式と同じ動きにしてある:
+
+- **REC(赤)**: **チューナー使用中**(録画・視聴・番組表の取得を含む)に点灯、それ以外は消灯。判定は、`nasne-recpt1` がセッション中だけ持つ排他ロック(`/tmp/nasne-recpt1.lock`)が `/proc/locks` にあるかどうか(**読むだけで、チューナーのロックには干渉しない**。`nasne-recpt1` は変更していない)。
+- **LAN(橙)**: 起動中は消灯。**デフォルトルートができたら点灯し、以後ずっと点灯**(点滅しない)。
+- 仕組み: `nasne-ledctl`(`rec|lan on|off`、`status`。libc 不使用の小さな静的バイナリ。GPIO ポート10 の bit `0x100`・`0x200` だけを読んで・変えて・書き、他のビットは保持。`flock` で排他)と、`nasne-ledd`(Perl の常駐。0.5秒ごとに判定し、**変わったときだけ** `nasne-ledctl` を呼ぶ)。`/etc/init.d/nasne-led`(`update-rc.d` で登録)。
+- 無効にするなら `/etc/default/nasne-led` に `NASNE_LED_ENABLE=0`、判定の間隔は `NASNE_LED_POLL`(秒)。
+- **すでにイメージに入っている Debian には、dlm を差し替えるだけでは入らない**(イメージは再展開されない)。`nasne-ledctl` `nasne-ledd` `nasne-led`(init)を `/usr/local/sbin/` と `/etc/init.d/` に置き、`update-rc.d nasne-led defaults 26`。
+- 実機で、受信中の REC の点灯と、受信後の消灯、LAN の点灯をカメラで確認した。Debian の最小構成の Perl には `Time::HiRes` が入っていないので、秒未満の待ちは `select` を使っている。
+
 ## 参考: 純正が時間制限を起こす原因の切り分け
 
 カーネルの再起動処理 `viper_machine_restart` は、クロック/電源ゲート系レジスタを順にゼロにしてGPIOを落とすだけの構造で、ウォッチドッグ自体は触らない。

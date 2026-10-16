@@ -12,6 +12,7 @@
 | HDDの紐付けの生成 | `00110022.dlm`(個体IDのマネージャ)をオフラインで生成。HDD全損機の復旧、他の本体への移植 | [docs/03](03_firmware_format.md)、[docs/04](04_hdd_recovery_guide.md) |
 | ウォッチドッグ停止 | MCUへ I2C で `[0x20, 0x01]`。起動時サービスで自動化 | [docs/06](06_mcu_watchdog.md) |
 | **PWR LEDの点灯** | MCUの表示コード(レジスタ `0x10`)へ `0x32` を書く(点滅 → 点灯)。起動時サービスで自動化。Webカメラで確認 | [docs/06](06_mcu_watchdog.md) |
+| **前面LED(REC・LAN)** | **REC(赤)はチューナー使用中に点灯、LAN(橙)はネットワークが確立したら点灯のまま**(公式と同じ。点滅しない)。REC は SoC の GPIO ポート10 の bit `0x100`、LAN は `0x200`。`nasne-ledd`(常駐。`nasne-recpt1` のロックを `/proc/locks` で読むだけ)が、`nasne-ledctl` で切り替える。HDD LED はディスクのアクセスに連動(ソフトの操作ではない)。Webカメラで確認 | [docs/06](06_mcu_watchdog.md) |
 | ブートチェーンの解読 | U-Boot 1.1.3 / 4段目ブート / `.dlm` 暗号 / SPIの地図。署名検証なし | [docs/02](02_boot_chain.md)、[docs/03](03_firmware_format.md) |
 | チューナーの選局 | 地デジ(UHF 13〜62)を復調IC/RFチューナーICのI2C操作で選局し、ロック・C/Nを読む | [docs/08](08_tuner_i2c.md) |
 | **地デジの受信・復号・配信** | **B-CASカードで復号した元画質(MPEG-2 HD)のTS**を、`recpt1`互換コマンドとHTTPで取り出す。SI(番組表の元データ)も混ぜる。連続2分(約230MB)で同期エラー・スクランブル残りなし | [docs/11](11_tv_streaming.md)、[docs/12](12_ts_and_bcas_decrypt.md) |

@@ -23,7 +23,7 @@ else
     echo "  docker build -t nasne-kcc:gcc432 scripts/kernel_build   (docs/05)" >&2
     exit 1
 fi
-for t in mcui2c:mcui2c.c nasne-recpt1:nasne_recpt1.c i2cx:i2cx.c mtdtool:mtdtool.c; do
+for t in mcui2c:mcui2c.c nasne-recpt1:nasne_recpt1.c i2cx:i2cx.c mtdtool:mtdtool.c nasne-ledctl:nasne_ledctl.c; do
     bin=${t%%:*}; src=$(find_src "${t##*:}")
     if [ $MODE = host ]; then
         ( cd "$(dirname "$src")" && $CC $FLAGS -o "$OUT/$bin" "$(basename "$src")" )
