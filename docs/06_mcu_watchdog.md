@@ -176,10 +176,11 @@ MCUのステータス読み出し(6バイト)の末尾2バイトは、**最後�
 
 #### Debian での点灯(`nasne-ledd`、既定で組み込み)
 
-公式と同じ動きにしてある:
+REC・LAN は公式と同じ動き、PWR は Debian 独自の「異常表示」:
 
 - **REC(赤)**: **チューナー使用中**(録画・視聴・番組表の取得を含む)に点灯、それ以外は消灯。判定は、`nasne-recpt1` がセッション中だけ持つ排他ロック(`/tmp/nasne-recpt1.lock`)が `/proc/locks` にあるかどうか(**読むだけで、チューナーのロックには干渉しない**。`nasne-recpt1` は変更していない)。
 - **LAN(橙)**: 起動中は消灯。**デフォルトルートができたら点灯し、以後ずっと点灯**(点滅しない)。
+- **PWR**: 通常は緑(`nasne-mcu-wd` が点灯させる)。**状態ページ(`nasne-statusd`)が異常(`warnings` あり)を報告している間だけ、赤の点灯(表示コード `0x31`)**にし、異常が消えたら緑(`0x32`)に戻す。`nasne-ledd` が `127.0.0.1:8302/status.json` を30秒ごとに見て、2回続けて同じ結果になったら切り替える(ばたつき防止)。状態ページに繋がらないとき(無効・起動前)は PWR に触らない。無効にするなら `NASNE_LED_PWR_WARN=0`、間隔は `NASNE_LED_WARN_POLL`(秒)。実機で、異常→赤、正常→緑の切り替えをカメラで確認した。
 - 仕組み: `nasne-ledctl`(`rec|lan on|off`、`status`。libc 不使用の小さな静的バイナリ。GPIO ポート10 の bit `0x100`・`0x200` だけを読んで・変えて・書き、他のビットは保持。`flock` で排他)と、`nasne-ledd`(Perl の常駐。0.5秒ごとに判定し、**変わったときだけ** `nasne-ledctl` を呼ぶ)。`/etc/init.d/nasne-led`(`update-rc.d` で登録)。
 - 無効にするなら `/etc/default/nasne-led` に `NASNE_LED_ENABLE=0`、判定の間隔は `NASNE_LED_POLL`(秒)。
 - **すでにイメージに入っている Debian には、dlm を差し替えるだけでは入らない**(イメージは再展開されない)。`nasne-ledctl` `nasne-ledd` `nasne-led`(init)を `/usr/local/sbin/` と `/etc/init.d/` に置き、`update-rc.d nasne-led defaults 26`。

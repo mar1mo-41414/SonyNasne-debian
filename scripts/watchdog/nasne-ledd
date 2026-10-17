@@ -2,10 +2,15 @@
 # nasne-ledd — 前面の REC・LAN LED を、本体の状態に合わせて点灯する常駐プロセス(Debian側。docs/06)。
 #   REC(赤): チューナー使用中(nasne-recpt1 がセッション中に持つ排他ロックがある間。録画・視聴・番組表の取得を含む)に点灯、それ以外は消灯。
 #   LAN(橙): 起動中は消灯。ネットワークが確立(デフォルトルートができる)したら点灯し、以後ずっと点灯(公式と同じ。点滅しない)。
+#   PWR: 通常は緑(nasne-mcu-wd が点灯させる)。状態ページ(nasne-statusd)が異常(warnings あり: HDD の温度・SMART・ディスク使用率・
+#        チューナーの固まり・メモリ不足など)と報告している間だけ赤の点灯(MCU の表示コード 0x31)にし、異常が消えたら緑(0x32)に戻す。
+#        状態ページに繋がらない(無効・起動前)ときは、PWR に触らない。30秒ごとに確認し、2回続けて同じ結果になったら切り替える(ばたつき防止)。
 # LED の操作は nasne-ledctl(GPIO ポート10 の bit 0x100 / 0x200 だけを触る)。nasne-recpt1 には手を入れていない
 # (/proc/locks を読むだけで、チューナーのロックには干渉しない)。PWR は nasne-mcu-wd、HDD はディスクのアクセスに連動する。
-# 設定: /etc/default/nasne-led の NASNE_LED_ENABLE=0 で無効、NASNE_LED_POLL=秒(既定 0.5)。
+# 設定: /etc/default/nasne-led の NASNE_LED_ENABLE=0 で無効、NASNE_LED_POLL=秒(既定 0.5)、
+#       NASNE_LED_PWR_WARN=0 で「異常で PWR 赤」を無効、NASNE_LED_WARN_POLL=秒(既定 30)。
 use strict; use warnings;
+use IO::Socket::INET;
 # 秒未満の待ちは select(Time::HiRes は、nasne の最小構成の Perl には入っていない)
 sub nap { select(undef, undef, undef, $_[0]); }
 
@@ -14,6 +19,11 @@ my $LOCK   = $ENV{NASNE_RECPT1_LOCK} || '/tmp/nasne-recpt1.lock';
 my $POLL   = $ENV{NASNE_LED_POLL} || 0.5;
 my $ROUTES = $ENV{NASNE_PROC_ROUTE} || '/proc/net/route';
 my $LOCKS  = $ENV{NASNE_PROC_LOCKS} || '/proc/locks';
+my $MCUI2C = $ENV{NASNE_MCUI2C} || '/usr/local/sbin/mcui2c';
+my $PWR_WARN = defined $ENV{NASNE_LED_PWR_WARN} && $ENV{NASNE_LED_PWR_WARN} ne '' ? $ENV{NASNE_LED_PWR_WARN} : 1;
+my $WARN_POLL = $ENV{NASNE_LED_WARN_POLL} || 30;
+my $STATUS_PORT = $ENV{NASNE_STATUS_PORT} || 8302;
+my $PWR_GREEN = '32'; my $PWR_RED = '31';    # MCU の表示コード(docs/06): 下位2bit 10=緑、01=赤
 my $ONCE   = (@ARGV && $ARGV[0] eq '--once');      # テスト用: 1回だけ判定して終わる
 
 sub led { my ($which, $state) = @_; system($LEDCTL, $which, $state ? 'on' : 'off'); }
@@ -41,8 +51,29 @@ sub net_up {
     return 0;
 }
 
+# 状態ページの異常の有無: 1=異常あり、0=異常なし、undef=わからない(繋がらない・読めない)
+sub status_abnormal {
+    my $c = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $STATUS_PORT, Timeout => 3) or return undef;
+    my $body = '';
+    my $ok = eval {
+        local $SIG{ALRM} = sub { die "timeout\n" }; alarm 8;
+        print $c "GET /status.json HTTP/1.0\r\nHost: localhost\r\n\r\n";
+        local $/; my $r = <$c>; $body = defined $r ? $r : ''; alarm 0; 1;
+    };
+    close $c;
+    return undef unless $ok && $body =~ /^HTTP\/1\.\d 200 /;
+    return 0 if $body =~ /"ok":true/;
+    return 1 if $body =~ /"ok":false/;
+    return undef;
+}
+
+sub pwr { my $code = shift; return system($MCUI2C, 'w', '20', '10', $code) == 0; }
+
 my ($rec, $lan) = (-1, -1);     # いまの LED の状態(-1=未設定)
-$SIG{TERM} = $SIG{INT} = sub { led('rec', 0); exit 0; };
+my $pwr_red = 0;                  # いま PWR を赤にしているか(自分が書いた状態)
+my ($ab_cnt, $ab_last) = (0, -1); # 異常判定の連続回数(ばたつき防止)
+my $next_warn = 0;
+$SIG{TERM} = $SIG{INT} = sub { led('rec', 0); pwr($PWR_GREEN) if $pwr_red; exit 0; };
 
 led('rec', 0); $rec = 0;
 led('lan', 0); $lan = 0;
@@ -51,7 +82,16 @@ while (1) {
     my $b = tuner_busy() ? 1 : 0;
     if ($b != $rec) { led('rec', $b); $rec = $b; }
     if (!$lan && net_up()) { led('lan', 1); $lan = 1; }      # ラッチ: 一度点灯したら消さない
+    if ($PWR_WARN && time >= $next_warn) {
+        $next_warn = time + $WARN_POLL;
+        my $ab = status_abnormal();
+        if (defined $ab) {
+            if ($ab == $ab_last) { $ab_cnt++ } else { $ab_last = $ab; $ab_cnt = 1; }
+            my $need = $ONCE ? 1 : 2;
+            if ($ab_cnt >= $need && $ab != $pwr_red) { $pwr_red = $ab if pwr($ab ? $PWR_RED : $PWR_GREEN); }
+        }
+    }
     last if $ONCE;
     nap($POLL);
 }
-print "rec=$rec lan=$lan\n" if $ONCE;
+print "rec=$rec lan=$lan pwr=" . ($pwr_red ? "red" : "normal") . "\n" if $ONCE;

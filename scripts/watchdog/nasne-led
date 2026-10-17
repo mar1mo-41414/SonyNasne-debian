@@ -8,12 +8,14 @@
 # Short-Description: nasne の前面LED(REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま)
 ### END INIT INFO
 # REC(赤)はチューナー使用中に点灯、LAN(橙)はネットワークが確立したら点灯のまま(公式と同じ)。docs/06。
-# 無効にするなら /etc/default/nasne-led に NASNE_LED_ENABLE=0。NASNE_LED_POLL=秒(既定 0.5)。
+# PWR は、状態ページ(nasne-statusd)が異常を報告している間だけ赤(docs/06)。
+# 無効にするなら /etc/default/nasne-led に NASNE_LED_ENABLE=0。NASNE_LED_POLL=秒(既定 0.5)、NASNE_LED_PWR_WARN=0 で「異常でPWR赤」だけ無効。
 BIN=/usr/local/sbin/nasne-ledd
 LEDCTL=/usr/local/sbin/nasne-ledctl
 PIDFILE=/var/run/nasne-led.pid
+[ -f /etc/default/nasne-status ] && . /etc/default/nasne-status     # 状態ページのポート(NASNE_STATUS_PORT)を合わせる
 [ -f /etc/default/nasne-led ] && . /etc/default/nasne-led
-export NASNE_LED_POLL
+export NASNE_LED_POLL NASNE_LED_PWR_WARN NASNE_LED_WARN_POLL NASNE_STATUS_PORT
 case "$1" in
   start)
     [ -x $BIN ] && [ -x $LEDCTL ] || exit 0
