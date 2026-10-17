@@ -103,7 +103,16 @@ MCUの読み出しは6バイト(各バイトの意味は未解明。最終バイ
 - なぜ常駐か: `poweroff` の最後はネットワークが落ちたあとで、EPGStation に聞けない。動いているうちに聞いて、書いておく。
 - **時計**: nasne には RTC が無く、起動直後の時計は前回の停止時刻で、NTP(`ntpdate`)で数十秒後に直る。そこで、EPGStation の応答の `Date` ヘッダとの差を使い、「nasne の時計で何時に起こすか」を書く。起動後10分は60秒ごとに聞き直す。
 - 設定: `/etc/default/nasne-wake`(**`NASNE_WAKE_URL=http://<EPGStationのホスト>:8888` が必須**。無ければ何もしない)、`NASNE_WAKE_LEAD`(予約の何秒前に起こすか。既定300。起動に約35秒、Mirakurun がチューナーを使えるまでの余裕)、`NASNE_WAKE_POLL`(既定300)、`NASNE_WAKE_ENABLE=0` で無効。`/etc/init.d/nasne-wake restart` で反映。`perl /usr/local/sbin/nasne-waked --once` で、次の予約と起こす時刻だけ確認できる。
-- 電源を切るのは、今のところ**手動**(電源ボタンの長押し、`poweroff`)。起床タイマで起きたあとの自動の電源オフは未実装(上のステータスの bit1 で、タイマ起床かどうかは判別できる)。EPGStation に予約を**追加したとき**は、次に `nasne-waked` が聞くまで(既定300秒)は反映されない。電源が切れている間に追加した予約は、次に起きるまで反映されない。
+- 電源を切るのは、既定では**手動**(電源ボタンの長押し、`poweroff`)。EPGStation に予約を**追加したとき**は、次に `nasne-waked` が聞くまで(既定300秒)は反映されない。電源が切れている間に追加した予約は、次に起きるまで反映されない。
+- **自動電源オフ(任意。`NASNE_WAKE_AUTOOFF=1`)**: 公式がやるのと同じく、タイマ起床したあと、使われなくなったら自分で `poweroff` する。次の**すべて**を満たしたときだけ切る(手動で電源を入れた・ssh で使っている・視聴/録画中・予約が近い、のどれかなら切らない):
+  1. **タイマ起床で起動した**(MCUステータス2バイト目の bit1。手動の電源投入では立たない)
+  2. 起動から5分以上
+  3. チューナーが使われていない(`nasne-recpt1` のロック。番組表の取得も含む)
+  4. ssh のセッションが無い
+  5. 3・4 の状態が `NASNE_WAKE_IDLE` 秒(既定600)続いた
+  6. EPGStation の予約が最近確認できていて、**次の起床まで `NASNE_WAKE_MIN_OFF` 秒(既定600)以上**ある(予約が無ければ、それも可)
+  切る直前にもう一度 EPGStation に聞いて確かめる。EPGStation に繋がらないときは**切らない**(予約を確認できないため)。判定は uptime で測る(NTP の時刻補正で狂わない)。`perl /usr/local/sbin/nasne-waked --once`(`NASNE_WAKE_AUTOOFF=1` を付けて)で、判定だけ確認できる(実行はしない)。
+  ホスト上の試験(疑似の EPGStation・MCU・poweroff)で、タイマ起床+アイドル+予約が遠い → 切る、手動起動 / ssh 接続あり / 予約が近い / チューナー使用中 → 切らない、予約なし → 切る、を確認した。
 - **実機で確認済み**: 約15分後の予約(2分間)を作る → `nasne-waked` が起こす時刻を書く → `poweroff` → 起こす時刻の約30秒後に ping が戻る → 予約の時刻に録画が始まり、2分間のTS(約230MB)が保存された。
 - すでにイメージに入っている Debian には、dlm を差し替えても入りません。`nasne-waked` `nasne-wake`(init)`a-nasne-poweroff` を置き、`update-rc.d nasne-wake defaults 27`。
 

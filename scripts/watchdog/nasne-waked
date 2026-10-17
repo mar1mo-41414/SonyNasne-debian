@@ -11,7 +11,15 @@
 #   NASNE_WAKE_LEAD=300      予約の開始の何秒前に起こすか(起動に約1〜2分かかる。既定 300)
 #   NASNE_WAKE_POLL=300      EPGStation に聞く間隔(秒。既定 300)
 #   NASNE_WAKE_ENABLE=0      無効
-# 読むだけ(EPGStation の API の GET だけ。何も変更しない)。Perl のコアモジュールだけで動く。--once: 1回聞いて結果を表示して終わる。
+#   NASNE_WAKE_AUTOOFF=1     (任意。既定 0)タイマ起床で起動した nasne を、使われなくなったら自動で poweroff する(下記)
+#   NASNE_WAKE_IDLE=600      自動オフ: チューナーも ssh も使われていない状態が、これだけ続いたら(秒。既定 600)
+#   NASNE_WAKE_MIN_OFF=600   自動オフ: 次の起床まで、これ以上あくときだけ電源を切る(秒。既定 600。近いなら、起きたままにする)
+# EPGStation への問い合わせは GET だけで、何も変更しない。Perl のコアモジュールだけで動く。--once: 1回聞いて結果を表示して終わる(自動オフは判定だけ表示して実行しない)。
+#
+# 自動オフ(NASNE_WAKE_AUTOOFF=1): 公式は、予約録画のためにタイマ起床したあと、録画が終われば自分で電源を切る。同じことをする。
+#   次のすべてを満たしたときだけ poweroff する(手動で電源を入れた・ssh で使っている・視聴中・録画中・予約が近い、のどれかなら、切らない):
+#   (1) タイマ起床で起動した(MCUステータス2バイト目のbit1。手動の電源投入では立たない)  (2) 起動から5分以上  (3) チューナーが使われていない
+#   (4) ssh のセッションが無い  (5) (3)(4)が IDLE 秒続いた  (6) EPGStation の最新の予約が分かっていて、次の起床まで MIN_OFF 秒以上ある(予約が無ければ、それも可)
 use strict; use warnings;
 use IO::Socket::INET;
 use POSIX qw(strftime);
@@ -21,6 +29,15 @@ my $LEAD  = defined $ENV{NASNE_WAKE_LEAD} && $ENV{NASNE_WAKE_LEAD} ne '' ? $ENV{
 my $POLL  = $ENV{NASNE_WAKE_POLL} || 300;
 my $FILE  = $ENV{NASNE_WAKE_FILE} || '/var/lib/nasne-wake/next';
 my $ONCE  = (@ARGV && $ARGV[0] eq '--once');
+my $AUTOOFF = $ENV{NASNE_WAKE_AUTOOFF} ? 1 : 0;
+my $IDLE    = $ENV{NASNE_WAKE_IDLE} || 600;
+my $MIN_OFF = defined $ENV{NASNE_WAKE_MIN_OFF} && $ENV{NASNE_WAKE_MIN_OFF} ne '' ? $ENV{NASNE_WAKE_MIN_OFF} : 600;
+my $MIN_UP  = $ENV{NASNE_WAKE_MIN_UP} || 300;
+my $LOCK    = $ENV{NASNE_RECPT1_LOCK} || '/tmp/nasne-recpt1.lock';
+my $LOCKS   = $ENV{NASNE_PROC_LOCKS} || '/proc/locks';
+my $TCP     = $ENV{NASNE_PROC_TCP} || '/proc/net/tcp';
+my $MCUI2C  = $ENV{NASNE_MCUI2C} || '/usr/local/sbin/mcui2c';
+my $POWEROFF = $ENV{NASNE_WAKE_POWEROFF_CMD} || 'poweroff';
 
 sub logmsg { print STDERR strftime('%F %T', localtime) . " nasne-waked: @_\n"; }
 
@@ -99,21 +116,87 @@ sub poll_once {
 }
 
 if (!$URL) { logmsg("NASNE_WAKE_URL が未設定。何もしない") unless $ONCE; print "NASNE_WAKE_URL 未設定\n" if $ONCE; exit 0; }
+# ---- 自動オフの判定 ----
+sub uptime_s { my $up = 99999; if (open(my $u, '<', '/proc/uptime')) { my $l = <$u>; close $u; $up = $1 if defined $l && $l =~ /^(\d+)/; } return $up; }
+
+# タイマ起床で起動したか(MCUステータス2バイト目のbit1)。読めなければ undef
+sub timer_boot {
+    my $o = `$MCUI2C r 20 6 2>/dev/null`;
+    return undef unless defined $o && $o =~ /data=[0-9a-f]{2} ([0-9a-f]{2}) /i;
+    return (hex($1) & 0x02) ? 1 : 0;
+}
+
+# チューナーの排他ロックを nasne-recpt1 が持っているか(nasne-ledd と同じ判定。/proc/locks を読むだけ)
+sub tuner_busy {
+    my @st = stat($LOCK) or return 0;
+    my $ino = $st[1];
+    open(my $h, '<', $LOCKS) or return 0;
+    while (my $l = <$h>) { return 1 if $l =~ /\bFLOCK\b/ && $l =~ /\s[0-9a-f]+:[0-9a-f]+:$ino\s/; }
+    return 0;
+}
+
+# ssh(ポート22)で繋がっているセッションがあるか(/proc/net/tcp の ESTABLISHED=01、ローカルポート 0016)
+sub ssh_active {
+    open(my $h, '<', $TCP) or return 0;
+    <$h>;
+    while (my $l = <$h>) { my @f = split ' ', $l; return 1 if @f > 3 && $f[1] =~ /:0016$/ && $f[3] eq '01'; }
+    return 0;
+}
+
+# 電源を切ってよいか。返り値: (1/0, 理由)
+sub autooff_decide {
+    my ($timer, $idle_for, $wake, $polled_ago) = @_;
+    return (0, "タイマ起床で起動していない(手動の電源投入)") unless $timer;
+    return (0, "起動から " . uptime_s() . " 秒(${MIN_UP}秒未満)") if uptime_s() < $MIN_UP;
+    return (0, "チューナーを使用中") if tuner_busy();
+    return (0, "ssh のセッションがある") if ssh_active();
+    return (0, "アイドル ${idle_for} 秒(${IDLE}秒未満)") if $idle_for < $IDLE;
+    return (0, "EPGStation の予約が確認できていない") if !defined $polled_ago || $polled_ago > 3 * $POLL + 60;
+    if ($wake) { my $gap = $wake - time; return (0, "次の起床まで ${gap} 秒(${MIN_OFF}秒未満)。起きたままにする") if $gap < $MIN_OFF; }
+    return (1, $wake ? "次の起床 " . strftime('%F %T', localtime $wake) . " まで電源を切る" : "予約なし。電源を切る");
+}
+
 if ($ONCE) {
     my ($wake, $start) = poll_once();
     if (!defined $wake) { print "問い合わせ失敗\n"; exit 1; }
     print $wake ? "次の予約: " . strftime('%F %T', localtime $start) . " / 起こす時刻: " . strftime('%F %T', localtime $wake) . " (nasne の時計で)\n" : "予約なし\n";
+    if ($AUTOOFF) {
+        my $t = timer_boot(); my ($ok, $why) = autooff_decide($t, $IDLE, $wake, 0);
+        print "自動オフ: " . ($ok ? "切る" : "切らない") . " — $why (タイマ起床=" . (defined $t ? $t : '不明') . ")\n";
+    }
     exit 0;
 }
-logmsg("開始 url=$URL lead=${LEAD}s poll=${POLL}s");
+logmsg("開始 url=$URL lead=${LEAD}s poll=${POLL}s autooff=" . ($AUTOOFF ? "on idle=${IDLE}s min_off=${MIN_OFF}s" : "off"));
+
 my $last = '';
+my ($wake, $start, $polled_up) = (0, 0, undef);       # polled_up: 最後に問い合わせが成功したときの uptime
+my $next_poll_up = 0;
+my $timer = undef;                                      # タイマ起床か(読めるまで undef)
+my $idle_since = uptime_s();                            # 使われなくなった時点の uptime(時計がステップしても狂わないよう、uptime で測る)
+my $why_last = '';
 while (1) {
-    my ($wake, $start) = poll_once();
-    if (defined $wake) {
-        my $msg = $wake ? "次の予約 " . strftime('%F %T', localtime $start) . "、起こす時刻 " . strftime('%F %T', localtime $wake) . " (nasne の時計で)" : "予約なし";
-        if ($msg ne $last) { logmsg($msg); $last = $msg; }
+    my $up = uptime_s();
+    if ($up >= $next_poll_up) {
+        my ($w, $st) = poll_once();
+        if (defined $w) {
+            ($wake, $start, $polled_up) = ($w, $st, $up);
+            my $msg = $wake ? "次の予約 " . strftime('%F %T', localtime $start) . "、起こす時刻 " . strftime('%F %T', localtime $wake) . " (nasne の時計で)" : "予約なし";
+            if ($msg ne $last) { logmsg($msg); $last = $msg; }
+        }
+        # 起動直後は時計がまだ直っていない可能性があるので、最初の10分は60秒ごとに聞き直す
+        $next_poll_up = $up + ($up < 600 && $POLL > 60 ? 60 : $POLL);
     }
-    # 起動直後は時計がまだ直っていない可能性があるので、最初の10分は60秒ごとに聞き直す
-    my $up = 99999; if (open(my $u, '<', '/proc/uptime')) { my $l = <$u>; close $u; $up = $1 if defined $l && $l =~ /^(\d+)/; }
-    sleep($up < 600 && $POLL > 60 ? 60 : $POLL);
+    if ($AUTOOFF) {
+        $timer = timer_boot() unless defined $timer;
+        $idle_since = $up if tuner_busy() || ssh_active();
+        my ($ok, $why) = autooff_decide($timer, $up - $idle_since, $wake, defined $polled_up ? $up - $polled_up : undef);
+        if ($why ne $why_last && $why !~ /^アイドル/) { logmsg("自動オフ: " . ($ok ? "切る条件がそろった" : "切らない") . " — $why"); $why_last = $why; }
+        if ($ok) {
+            # 切る直前に、予約をもう一度聞いて確かめる(直前に追加された予約を見逃さない)
+            my ($w, $st) = poll_once();
+            if (defined $w) { ($wake, $start, $polled_up) = ($w, $st, $up); ($ok, $why) = autooff_decide($timer, $up - $idle_since, $wake, 0); }
+            if ($ok) { logmsg("自動オフ: poweroff する ($why)"); system('logger', '-t', 'nasne-waked', "自動オフ: poweroff ($why)"); system($POWEROFF); sleep 120; }
+        }
+    }
+    sleep 10;
 }

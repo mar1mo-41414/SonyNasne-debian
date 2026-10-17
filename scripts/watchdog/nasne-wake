@@ -11,10 +11,11 @@
 # poweroff のとき a-nasne-poweroff がそれを読んで、MCUの起床タイマをセットする(docs/06)。
 # 設定は /etc/default/nasne-wake (NASNE_WAKE_URL=http://<EPGStation>:8888 が必須。無ければ何もしない):
 #   NASNE_WAKE_URL  NASNE_WAKE_LEAD=300(予約の何秒前に起こすか)  NASNE_WAKE_POLL=300(問い合わせ間隔)  NASNE_WAKE_ENABLE=0(無効)
+#   NASNE_WAKE_AUTOOFF=1(タイマ起床で起動したあと、使われなくなったら自動で poweroff。既定は無効)  NASNE_WAKE_IDLE=600  NASNE_WAKE_MIN_OFF=600
 BIN=/usr/local/sbin/nasne-waked
 PIDFILE=/var/run/nasne-wake.pid
 [ -f /etc/default/nasne-wake ] && . /etc/default/nasne-wake
-export NASNE_WAKE_URL NASNE_WAKE_LEAD NASNE_WAKE_POLL
+export NASNE_WAKE_URL NASNE_WAKE_LEAD NASNE_WAKE_POLL NASNE_WAKE_AUTOOFF NASNE_WAKE_IDLE NASNE_WAKE_MIN_OFF
 case "$1" in
   start)
     [ -x $BIN ] || exit 0
