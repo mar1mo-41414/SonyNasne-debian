@@ -36,20 +36,35 @@ nasne上では録画ソフトを動かしません。録画ファイルは Mirak
 - チャンネル設定はサービスごとに1エントリです(nasne は1回に1サービスしか出力しないため)。局が増えた・変わったら `--scan` で作り直してください。
 - BS/CS は、**作者の環境では信号が来ておらず、通しは未検証**です(他の人の報告では nasne で受信できています)。使うときは下の「BS/CS を使う」を見てください。
 
-## BS/CS を使う(任意。作者の環境では未検証)
+## BS/CS を使う(任意)
 
-nasne は**1回に1サービスしか出さない**ので、Mirakurun のチャンネルは「サービスごと」に `?sid=` 付きで書く必要があります。Mirakurun のチャンネルスキャンの結果は、そのままでは合いません
-(BS の既定の名前が `101`〜`256` で、`nasne-recpt1` が受け付けない。`channel` に `?sid=` が付かない。衛星の項目は無効で追加される)。詳しくは [docs/11](../../docs/11_tv_streaming.md)。
+nasne は**1回に1サービスしか出さない**シングルサービスチューナーのため、Mirakurun のチャンネルは「サービスごと」に定義し、`commandVars` 経由で目的の SID を nasne に渡す必要があります(以前のように `channel` に直接 `?sid=` を書くと Mirakurun API や TVTest / BonDriver が 404 や不正フォーマットエラーを起こします)。詳しくは [docs/11](../../docs/11_tv_streaming.md)。
+
+### 方法 A: nasne 実機の自律スキャンから全局一括生成(推奨・最も簡単)
+nasne-recpt1 は地デジ・BS(全スロット)・CS(全トランスポンダ)の全スキャンに対応しています。
 
 ```bash
-# 1. tuners.yml に BS・CS も入れる(channels.yml は地デジだけで書き直されるので、BS/CS のスキャンは、そのあと)
-python3 ../../scripts/nasne_mirakurun_conf.py <nasne> --sat -o mirakurun-conf       # そして Mirakurun を再起動
-# 2. Mirakurun でスキャン。BS は useSubCh=1 で BS01_0 形式の名前にする(値を false にしないこと。Mirakurun は文字列を真と読む)
+# 1. nasne で全スキャンを実行(約90秒)
+curl -s "http://<nasneのIP>:8301/scan?all"
+
+# 2. 地デジ・BS・CS の全局設定(tuners.yml / channels.yml)を一発生成
+python3 ../../scripts/nasne_mirakurun_conf.py <nasneのIP> -o mirakurun-conf
+
+# 3. Mirakurun を再起動
+docker compose restart mirakurun
+```
+
+### 方法 B: Mirakurun 本体のチャンネルスキャンを使う場合
+```bash
+# 1. tuners.yml に BS・CS を含めて設定生成 (最新BS全局+CS主要局のプリセット定義も統合出力されます)
+python3 ../../scripts/nasne_mirakurun_conf.py <nasneのIP> --sat -o mirakurun-conf
+# 2. Mirakurun を再起動後、スキャンを実行
 curl -X PUT "http://localhost:40772/api/config/channels/scan?type=BS&useSubCh=1"
 curl -X PUT "http://localhost:40772/api/config/channels/scan?type=CS"
-# 3. スキャン結果の BS/CS の項目に ?sid=0x<サービスID> を足し、有効にする(元は channels.yml.bak)
+# 3. スキャン結果を nasne 向け(commandVars形式・CSチャンネル分離)に自動補正し、有効化
 python3 ../../scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --enable
 # 4. Mirakurun を再起動
+docker compose restart mirakurun
 ```
 
 ## 予約に合わせて nasne を起こす(任意)

@@ -106,22 +106,24 @@ python3 scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --
 ### HTTP
 
 ```
-GET /tuner/<UHF ch>[?sid=0xNNNN][&sec=N]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了
-GET /<UHF ch>                              同上(短縮形)
-GET /scan                                  サービス一覧(テキスト。約80秒かかる)。サービス名も出し、結果を保存する
-GET /playlist.m3u8                         /scan の保存結果から作ったM3U(VLCなどでそのまま開ける)
-GET /status                                idle または busy
+GET /tuner/<ch>[?sid=0xNNNN][&sec=N]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了
+GET /<ch>                              同上(短縮形)
+GET /scan[?sat|?all]                   サービス一覧(テキスト)。?sat で衛星のみ、?all で地デジ+BS+CS全局。結果を services.tsv に保存
+GET /playlist.m3u8                     /scan の保存結果から作ったM3U(VLCなどでそのまま開ける)
+GET /status                            idle または busy
 ```
 
 使用中は `503 Service Unavailable`、信号なしは `404`。
 
 ```bash
 curl http://<nasne>:8301/tuner/27 | ffplay -
-curl -s http://<nasne>:8301/scan
-# ch=27 freq=557142kHz sid=0x0400(tv) name="局名1" sid=0x0401(tv) name="局名2" sid=0x0408(1seg) name="局名携帯"
+curl -s http://<nasne>:8301/scan?all
+# ch=27 freq=557142kHz sid=0x0400(tv) name="局名1" ...
+# channel=BS01_0 tsid=0x4010 sid=0x0097(tv) name="BS朝日1" ...
+# channel=CS16 tsid=0x7100 sid=0x014d(tv) name="AT-X" ...
 ```
 
-サービス名は SDT(ARIBの8単位符号)をUTF-8に直して出す。`(tv)` が地デジのテレビ、`(1seg)` がワンセグ、`(data)` がデータ放送。
+サービス名は SDT(ARIBの8単位符号)をUTF-8に直して出す。`(tv)` がテレビ放送、`(1seg)` がワンセグ、`(data)` がデータ放送。
 `/scan` は結果を nasne 上の `/var/lib/nasne-recpt1/services.tsv` に保存する(最後まで走ったときだけ置き換える)。
 
 ### 録画ソフトとの連携
@@ -137,34 +139,44 @@ Mirakurun は別のPCで動かす(nasne上ではなく)。**EPGStation も動作
 - name: nasne
   types:
     - GR
-  command: curl -s http://<nasneのIP>:8301/tuner/<channel>
+    - BS
+    - CS
+  command: curl -s http://<nasneのIP>:8301/tuner/<channel><sid_query>
   isDisabled: false
 ```
 
-`channels.yml`(**サービスごとに1エントリ**。`channel` に `?sid=` を付けるのがポイント。nasne は1回に1サービスしか出力しないため):
+`channels.yml`(**サービスごとに1エントリ**。Mirakurun 公式仕様の `commandVars` を使って `<sid_query>` 経由で目的の SID を nasne に渡すのがポイント。`channel` 自体に `?` を直接書くと Mirakurun API や TVTest / BonDriver が 404 や不正フォーマットエラーを起こすため分離します):
 
 ```yaml
 - name: 局名
   type: GR
-  channel: '27?sid=0x0400'      # 27 = UHFチャンネル、0x0400 = サービスID(/scan で調べる)
-  serviceId: 1024              # 0x0400 の10進数
+  channel: '27'
+  serviceId: 1024
+  commandVars:
+    sid_query: "?sid=0x0400"
+    sid: "0x0400"
   isDisabled: false
-- name: 局名2
-  type: GR
-  channel: '27?sid=0x0401'
-  serviceId: 1025
+
+- name: NHK BS
+  type: BS
+  channel: 'BS15_0'
+  serviceId: 101
+  commandVars:
+    sid_query: "?sid=0x0065"
+    sid: "0x0065"
+  isDisabled: false
+
+- name: AT-X
+  type: CS
+  channel: 'CS16_333'           # CSは同一周波数の局集約バグを防ぐため CS{ND}_{SID} 形式で一意化
+  serviceId: 333
+  commandVars:
+    sid_query: "?sid=0x014d"
+    sid: "0x014d"
   isDisabled: false
 ```
 
-サービスIDの調べ方: `curl http://<nasne>:8301/scan`(`sid=0x...(tv)` の一覧)。
-
-確認した結果: Mirakurun が起動時にサービススキャンを行い、サービス名(ARIB文字を含む)・ネットワークID・サービスIDを取得した。
-番組表は約1分の受信で数百件の番組が取れた。`/api/services/<id>/stream` からは、元画質(MPEG-2 1440×1080 + AAC + 字幕)のTSが取得できた。
-Mirakurunのチャンネルスキャン(自動)は、チャンネル全体のTSを前提にするため、**サービスごとのチャンネル設定を手書きするのが確実**。
-
-Mirakurunのデコーダー(`decoder`)設定は不要(nasne が復号済みのTSを出す)。複数サービスの同時視聴は、チューナーが1系統なので不可(同じチャンネルの別サービスも不可)。
-
-`tuners.yml` / `channels.yml` は `python3 scripts/nasne_mirakurun_conf.py <nasneのIP> --scan -o <設定ディレクトリ>` で nasne のサービス一覧から自動で作れます(手で書く必要はありません)。
+`tuners.yml` / `channels.yml` は `python3 scripts/nasne_mirakurun_conf.py <nasneのIP> --sat -o <設定ディレクトリ>` で、nasne のサービス一覧から自動で作れます(手で書く必要はありません)。Mirakurun 本体のチャンネルスキャンを使った場合も、`--fix-sat <channels.yml> --enable` を1回実行するだけで nasne 向けの設定に自動補正されます。
 **公式の Mirakurun の Docker イメージには curl が入っていません**。`curl` を足したイメージが要ります([contrib/epgstation](../contrib/epgstation/README.md))。
 
 #### EPGStation(動作確認済み)
