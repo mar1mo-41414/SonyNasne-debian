@@ -39,7 +39,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **予約に合わせて自動で起床し、録画が終わったら自動で電源オフ**(`nasne-waked`。EPGStationの予約の5分前に起きる。電源オフは任意。[contrib/epgstation](contrib/epgstation/README.md)) |
 | ✅ できる | **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
 | ✅ できる | **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
-| △ 試験中 | **新しいカーネル(Linux 6.12)+ Debian 12** の起動(開発用の kexec 経由で、ネットワーク・SATA・sshd・I2C/MCUまで確認。不安定さの調査中で、SPI単独起動・チューナーは未対応。[docs/19](docs/19_new_kernel_survey.md)) |
+| △ 試験中 | **新しいカーネル(Linux 6.12)+ Debian 12** の起動(開発用の kexec 経由で、ネットワーク・SATA・sshd・I2C/MCU(ウォッチドッグ停止)まで確認。起動直後に落ちる不安定さは、原因(物理メモリ先頭 256KB への SATA DMA)を特定して解決。SPI単独起動・チューナーは未対応。[docs/19](docs/19_new_kernel_survey.md)) |
 | 🟡 他の人の報告 | **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。`/scan?all` で BS/CS も一覧化でき、`nasne_mirakurun_conf.py --sat --scan` で Mirakurun の設定を作れる(PR #5)。Mirakurun で使うときのチャンネル名の決まりは [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
 | △ 未検証 | 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
 | ✅ できる | **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
