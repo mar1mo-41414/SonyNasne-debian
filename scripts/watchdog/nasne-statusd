@@ -6,7 +6,9 @@
 #   http://<nasne>:8302/healthz     "ok"
 # 見るもの: 稼働時間・負荷・メモリ・ディスク使用量・HDDのSMART(温度、健康状態、通電時間、代替・保留セクタ)・MCUの状態・チューナーの使用状況。
 # HDD が待機中(スピンダウン中)なら、起こさずに前回の値を返す(standby:true)。SMARTの取得は最短60秒おき。
-# 設定: /etc/default/nasne-status  (NASNE_STATUS_PORT=8302  NASNE_STATUS_BIND=0.0.0.0  NASNE_STATUS_DEVICE=/dev/sda  NASNE_STATUS_TEMP_WARN=55)
+# HDD の保留・代替・訂正不能セクタは、「ある」だけでは警告にしない(notes に出す)。一定時間(既定24時間)で一定数(既定16個)以上増えたときだけ警告にする。
+# 設定: /etc/default/nasne-status  (NASNE_STATUS_PORT=8302  NASNE_STATUS_BIND=0.0.0.0  NASNE_STATUS_DEVICE=/dev/sda  NASNE_STATUS_TEMP_WARN=55
+#       NASNE_STATUS_SECTOR_JUMP=16  NASNE_STATUS_SECTOR_WINDOW_H=24  NASNE_STATUS_STATE=/var/lib/nasne-status/sectors)
 use strict;
 use warnings;
 use IO::Socket::INET;
@@ -18,6 +20,9 @@ my $PORT = $ENV{NASNE_STATUS_PORT} || 8302;
 my $BIND = $ENV{NASNE_STATUS_BIND} || '0.0.0.0';
 my $DEV  = $ENV{NASNE_STATUS_DEVICE} || '/dev/sda';
 my $TEMP_WARN = $ENV{NASNE_STATUS_TEMP_WARN} || 55;
+my $SECTOR_JUMP = $ENV{NASNE_STATUS_SECTOR_JUMP} || 16;
+my $SECTOR_WIN  = ($ENV{NASNE_STATUS_SECTOR_WINDOW_H} || 24) * 3600;
+my $SECTOR_FILE = $ENV{NASNE_STATUS_STATE} || '/var/lib/nasne-status/sectors';
 my $RECPT1 = $ENV{NASNE_RECPT1_PORT} || 8301;
 
 sub slurp { my ($f) = @_; open(my $h, '<', $f) or return ''; local $/; my $s = <$h>; close $h; return defined $s ? $s : ''; }
@@ -143,6 +148,29 @@ sub disks_info {
     return \@r;
 }
 
+# セクタ数の履歴(エポック秒 保留 代替 訂正不能 の行)。値が変わったとき、または1時間ごとに追記し、7日分だけ残す。
+# 戻り値: 窓(SECTOR_WIN)の始めの時点との差 { pending=>, reallocated=>, uncorrectable=> }。履歴が窓より短いときは、いちばん古い記録との差。
+sub sector_deltas {
+    my ($h) = @_;
+    return {} unless defined $h->{pending_sectors} || defined $h->{reallocated_sectors} || defined $h->{uncorrectable};
+    my $t = time;
+    my @cur = map { defined $_ ? $_ : 0 } @{$h}{qw(pending_sectors reallocated_sectors uncorrectable)};
+    my @rec;
+    if (open(my $f, '<', $SECTOR_FILE)) { while (my $l = <$f>) { my @x = split ' ', $l; push @rec, [@x] if @x == 4 && $x[0] =~ /^\d+$/; } close $f; }
+    my $last = $rec[-1];
+    if (!$last || $t - $last->[0] >= 3600 || "@{$last}[1..3]" ne "@cur") {
+        push @rec, [$t, @cur];
+        @rec = grep { $t - $_->[0] <= 7 * 86400 } @rec;
+        my $dir = $SECTOR_FILE; $dir =~ s{/[^/]*$}{};
+        mkdir $dir if length $dir && !-d $dir;
+        if (open(my $o, '>', "$SECTOR_FILE.tmp")) { print $o join(' ', @$_), "\n" for @rec; close $o; rename "$SECTOR_FILE.tmp", $SECTOR_FILE; }
+    }
+    # 窓の始め以前でいちばん新しい記録(なければ、いちばん古い記録)
+    my $ref = $rec[0];
+    for my $r (@rec) { $ref = $r if $r->[0] <= $t - $SECTOR_WIN; }
+    return { pending => $cur[0] - $ref->[1], reallocated => $cur[1] - $ref->[2], uncorrectable => $cur[2] - $ref->[3] };
+}
+
 sub gather {
     my %st;
     my ($up) = slurp('/proc/uptime') =~ /^([\d.]+)/;
@@ -162,9 +190,16 @@ sub gather {
     my $h = $st{hdd};
     push @w, "HDD の温度が高い (" . $h->{temperature_c} . "℃)" if defined $h->{temperature_c} && $h->{temperature_c} >= $TEMP_WARN;
     push @w, "HDD の SMART 健康状態が PASSED ではない (" . $h->{health} . ")" if defined $h->{health} && $h->{health} ne 'PASSED';
-    push @w, "HDD の保留セクタがある (" . $h->{pending_sectors} . ")" if $h->{pending_sectors};
-    push @w, "HDD の代替セクタがある (" . $h->{reallocated_sectors} . ")" if $h->{reallocated_sectors};
-    push @w, "HDD の訂正不能セクタがある (" . $h->{uncorrectable} . ")" if $h->{uncorrectable};
+    my $sd = sector_deltas($h);
+    my $win_h = $SECTOR_WIN / 3600;
+    my @n;
+    for my $x (['pending', '保留', 'pending_sectors'], ['reallocated', '代替', 'reallocated_sectors'], ['uncorrectable', '訂正不能', 'uncorrectable']) {
+        my ($k, $jp, $f) = @$x;
+        next unless $h->{$f};
+        if (defined $sd->{$k} && $sd->{$k} >= $SECTOR_JUMP) { push @w, "HDD の${jp}セクタが急に増えた ($h->{$f} 個、${win_h}時間で +$sd->{$k})"; }
+        else { push @n, "HDD に${jp}セクタがある ($h->{$f} 個)。${win_h}時間で $SECTOR_JUMP 個以上増えたら警告にする"; }
+    }
+    $st{notes} = \@n;
     for my $d (@{ $st{disks} }) { push @w, "ディスク $d->{mount} の使用率が高い ($d->{used_percent}%)" if $d->{used_percent} >= 95 && $d->{mount} ne '/boot'; }
     push @w, "チューナーのプロセスが固まっている(D状態)。電源の入れ直しが必要" if $st{tuner} && $st{tuner}{stuck} && ${ $st{tuner}{stuck} };
     push @w, "メモリの空きが少ない" if $st{memory} && $st{memory}{available_kb} < 15000;
@@ -212,7 +247,7 @@ function row(a,b){return '<tr><td>'+a+'</td><td>'+b+'</td></tr>'}
 function card(t,rows){return '<div class="card"><h2>'+t+'</h2><table>'+rows.join('')+'</table></div>'}
 function load(){fetch('status.json').then(r=>r.json()).then(s=>{
  var b=document.getElementById('b');b.textContent=s.ok?'正常':'注意';b.style.background=s.ok?'var(--ok)':'var(--ng)';
- document.getElementById('w').innerHTML=s.warnings.map(x=>'<div class="card warn">⚠ '+x+'</div>').join('');
+ document.getElementById('w').innerHTML=s.warnings.map(x=>'<div class="card warn">⚠ '+x+'</div>').join('')+(s.notes||[]).map(x=>'<div class="card" style="color:var(--mut)">ℹ '+x+'</div>').join('');
  var h=s.hdd,m=s.memory,c=[];
  c.push(card('システム',[row('稼働時間',dur(s.uptime_s)),row('負荷 (1/5/15分)',(s.load||[]).join(' / ')),row('メモリ',m?mb(m.available_kb)+' 空き / '+mb(m.total_kb):'—'),row('カーネル',s.kernel)]));
  c.push(card('HDD',[row('機種',f(h.model)),row('温度',h.temperature_c!=null?h.temperature_c+' ℃':'—'),row('SMART',f(h.health)+(h.standby?'(待機中・前回値)':'')),row('通電時間',h.power_on_hours!=null?h.power_on_hours+' 時間':'—'),row('代替 / 保留セクタ',f(h.reallocated_sectors)+' / '+f(h.pending_sectors))]));

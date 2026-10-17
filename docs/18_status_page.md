@@ -23,7 +23,7 @@ http://<nasne>:8302/healthz      ok
 | HDD の温度・SMART 健康状態・通電時間・電源投入回数・代替/保留/訂正不能セクタ | `smartctl`(smartmontools) | **待機中(スピンダウン中)は起こさず**、前回の値を返す(`standby: true`)。SMART の再取得は最短60秒おき |
 | MCU の状態(ウォッチドッグ停止中か、電源ボタンの長押しラッチ、タイマー起動か) | `mcui2c r 20 6` | [docs/06](06_mcu_watchdog.md) |
 | チューナーの使用状況 | `nasne-recpt1` の `/status`(8301番) | 録画・視聴中は `busy` |
-| 警告 | 上の値から判定 | HDD温度55℃以上、SMART が PASSED でない、保留/代替/訂正不能セクタがある、ディスク使用率95%以上、メモリの空きが15MB未満、**チューナーのプロセスが固まっている**(`nasne-recpt1` が D 状態のまま、CPU時間が30秒以上まったく進まない。**D 状態だけでは判定しない**(正常な受信中も、ドライバの中で待つのでほとんど D 状態になる)。電源の入れ直しが必要。[docs/11](11_tv_streaming.md)) |
+| 警告 | 上の値から判定 | HDD温度55℃以上、SMART が PASSED でない、保留/代替/訂正不能セクタが**急に増えた**(既定: 24時間で16個以上。あるだけなら警告にせず `notes` に出す)、ディスク使用率95%以上、メモリの空きが15MB未満、**チューナーのプロセスが固まっている**(`nasne-recpt1` が D 状態のまま、CPU時間が30秒以上まったく進まない。**D 状態だけでは判定しない**(正常な受信中も、ドライバの中で待つのでほとんど D 状態になる)。電源の入れ直しが必要。[docs/11](11_tv_streaming.md)) |
 
 SoC(MIPS)の温度センサーは、カーネルに hwmon/thermal が無く、取れません。HDD の温度(SMART)が、この機体で取れる唯一の温度です。
 
@@ -33,7 +33,7 @@ SoC(MIPS)の温度センサーは、カーネルに hwmon/thermal が無く、�
 {"hdd":{"device":"/dev/sda","health":"PASSED","power_on_hours":624,"temperature_c":38,"pending_sectors":1,"standby":false, ...},
  "mcu":{"available":true,"watchdog_disabled":true,"power_button_latch":false,"timer_wake_boot":false,"raw":"13 80 00 02 4c 6f"},
  "tuner":{"available":true,"busy":false,"status":"idle"},
- "warnings":["HDD の保留セクタがある (1)"], "ok":false, ...}
+ "warnings":["HDD の保留セクタが急に増えた (48 個、24時間で +20)"], "ok":false, ...}
 ```
 
 ## 設定・無効化
@@ -47,6 +47,8 @@ SoC(MIPS)の温度センサーは、カーネルに hwmon/thermal が無く、�
 | `NASNE_STATUS_BIND` | 0.0.0.0 | 待ち受けアドレス。**認証がない**ので、LAN の外に出さないこと。自分だけなら `127.0.0.1`(その場合、他のPCからは見えない) |
 | `NASNE_STATUS_DEVICE` | /dev/sda | SMART を読むデバイス |
 | `NASNE_STATUS_TEMP_WARN` | 55 | 温度警告のしきい値(℃) |
+| `NASNE_STATUS_SECTOR_JUMP` | 16 | 保留・代替・訂正不能セクタが、窓の間にこの個数以上増えたら警告 |
+| `NASNE_STATUS_SECTOR_WINDOW_H` | 24 | 上の「窓」(時間)。履歴は `/var/lib/nasne-status/sectors`(`NASNE_STATUS_STATE`)に7日分。履歴が窓より短いときは、いちばん古い記録との差 |
 
 `/etc/init.d/nasne-status restart` で反映します。
 
@@ -58,7 +60,7 @@ SoC(MIPS)の温度センサーは、カーネルに hwmon/thermal が無く、�
 ## 確認したこと
 
 - 実機で、`/` `/status.json` `/metrics` `/healthz`、404、HEAD が期待どおり返る。ブラウザ(狭い画面・ダークモード)でも崩れない。
-- SMART の取得結果が `smartctl` と一致(温度・通電時間・セクタ)。この機体の古い320GB HDDは保留セクタが1つあり、実際に警告として出た。
+- SMART の取得結果が `smartctl` と一致(温度・通電時間・セクタ)。この機体の古い320GB HDDは保留セクタが1つあり、(当時は)実際に警告として出た。今は「あるだけ」では警告にせず、急増したときだけ警告にする(`notes` に「ある」ことは出る)。
 - 待機中の分岐は、実機ではHDD自身が頻繁に使われて確認できていない(コードは `hdparm -C` の結果で判定)。
 
 ## Home Assistant
