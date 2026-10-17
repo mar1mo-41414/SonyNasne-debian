@@ -28,6 +28,7 @@
 #define SYS_read   4003
 #define SYS_nanosleep 4166
 #define SYS_creat  4008
+#define SYS_lseek  4019
 #define SYS_fork   4002
 #define SYS_waitpid 4007
 #define SYS_execve 4011
@@ -665,6 +666,19 @@ static long lockfd = -1;
 static int acquire_tuner(int is_sat) {
     lockfd = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
     if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中 */
+
+    /* 前回のクローズ時刻からの経過時間を検証し、300ms 未満の連射時のみ差分だけ待機する動的クールダウン。
+     * 通常視聴時は待機時間0msを保ちつつ、Mirakurun等のミリ秒単位の連続選局時にViXS SoC内部DMAや復調ICのセトリング時間を確保し、バスロック(D状態固まり)を確実に防止する。 */
+    {
+        unsigned long last_close = 0;
+        sys3(SYS_lseek, lockfd, 0, 0);
+        if (sys3(SYS_read, lockfd, (long)&last_close, sizeof(last_close)) == sizeof(last_close)) {
+            unsigned long now = now_ms();
+            if (now >= last_close && (now - last_close) < 300) {
+                msleep(300 - (now - last_close));
+            }
+        }
+    }
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
     if (!fw_alive()) reload_driver();
@@ -675,7 +689,12 @@ static int acquire_tuner(int is_sat) {
 static void release_tuner(void) {
     if (fd >= 0) sys3(SYS_close, fd, 0, 0);
     fd = -1;
-    if (lockfd >= 0) sys3(SYS_close, lockfd, 0, 0);       /* flock も解放される */
+    if (lockfd >= 0) {
+        unsigned long t = now_ms();
+        sys3(SYS_lseek, lockfd, 0, 0);
+        sys3(SYS_write, lockfd, (long)&t, sizeof(t)); /* 次のセッションのために終了時刻を記録 */
+        sys3(SYS_close, lockfd, 0, 0);                 /* flock も解放される */
+    }
     lockfd = -1;
 }
 
@@ -888,44 +907,146 @@ static const char *sdt_name(unsigned long sid) { int k; for (k = 0; k < nsdt; k+
 static long cache_fd = -1;
 
 /* チャンネルスキャン: UHF 13〜62 を順に選局し、ロックしたものについてサービス一覧を出力 */
-static int scan(int ofd) {
+/* BSスキャン用トランスポンダ・スロット一覧 */
+static const struct { unsigned char ch; unsigned char slot; } BS_SCAN_TP[] = {
+    { 1, 0 }, { 1, 1 }, { 1, 2 },
+    { 3, 0 }, { 3, 1 }, { 3, 2 },
+    { 5, 0 }, { 5, 1 },
+    { 9, 0 }, { 9, 1 }, { 9, 2 },
+    { 11, 0 }, { 11, 1 }, { 11, 2 },
+    { 13, 0 }, { 13, 1 }, { 13, 2 },
+    { 15, 0 }, { 15, 1 }, { 15, 2 },
+    { 19, 0 }, { 19, 1 }, { 19, 2 }, { 19, 3 },
+    { 21, 0 }, { 21, 1 }, { 21, 2 },
+    { 23, 0 }, { 23, 1 }, { 23, 2 }, { 23, 3 },
+};
+
+/* チャンネルスキャン: mode 0=地デジのみ, 1=衛星(BS/CS)のみ, 2=全チャンネル(地デジ+BS/CS) */
+static int scan(int ofd, int mode) {
     unsigned long ch; int rc;
     out_fd = ofd; stop_flag = 0;
-    rc = acquire_tuner(0);
-    if (rc) { err("チューナーを確保できない\n"); return rc; }
     sys3(SYS_mkdir, (long)"/var/lib", 0755, 0); sys3(SYS_mkdir, (long)CACHE_DIR, 0755, 0);
     cache_fd = sys3(SYS_open, (long)CACHE_TMP, 0x100 | 0x200 | 0x1 /* O_CREAT|O_TRUNC|O_WRONLY(MIPS) */, 0644);
-    for (ch = 13; ch <= 62 && !stop_flag; ch++) {
-        unsigned long hz = uhf_hz(ch), t0; int i, n;
-        unsigned char r = 0xff; static const unsigned char on[] = { 0x01, 0x01 };
-        (void)on;
-        /* 短時間でロック判定(fe_tune は最大4秒待つので、ここでは信号なしを早く見切る) */
-        if (!fe_tune_quick(hz)) continue;
-        clr(ob_pt, 0x484 / 4 + 2);
-        ob_pt[0xac / 4] = 0x800000; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
-        if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) continue;
-        h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4]; prev_pt = 0xff;
-        discover(0, 5000);
-        collect_sdt(3000);
-        close_streams();
-        outs("ch="); outdec(ch); outs(" freq="); outdec(hz / 1000); outs("kHz");
-        (void)t0; (void)r; (void)n;
-        for (i = 0; i < nsvc; i++) if (svcs[i].ok) {
-            const char *nm = sdt_name(svcs[i].pn); int tv = svcs[i].vpid != 0 && !svcs[i].seg1;
-            outs(" sid=0x"); hexw(svcs[i].pn); outs(tv ? "(tv)" : svcs[i].seg1 ? "(1seg)" : "(data)");
-            if (nm && *nm) { outs(" name=\""); { const char *q; for (q = nm; *q; q++) { char c[2]; c[0] = *q == '"' ? '\'' : *q; c[1] = 0; outs(c); } } outs("\""); }
-            if (tv && cache_fd >= 0) {
-                int w; char tmp[12]; unsigned long v = ch; int ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
-                sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
-                v = svcs[i].pn; ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
-                sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
-                if (nm && *nm) sys3(SYS_write, cache_fd, (long)nm, slen(nm));
-                sys3(SYS_write, cache_fd, (long)"\n", 1); (void)w;
+
+    /* 1. 地デジスキャン (mode 0 または 2) */
+    if ((mode == 0 || mode == 2) && !stop_flag) {
+        rc = acquire_tuner(0);
+        if (rc) { err("地デジチューナーを確保できない\n"); if (cache_fd >= 0) sys3(SYS_close, cache_fd, 0, 0); return rc; }
+        for (ch = 13; ch <= 62 && !stop_flag; ch++) {
+            unsigned long hz = uhf_hz(ch); int i;
+            if (!fe_tune_quick(hz)) continue;
+            clr(ob_pt, 0x484 / 4 + 2);
+            ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = 0; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
+            if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) continue;
+            h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4]; prev_pt = 0xff;
+            discover(0, 4000);
+            collect_sdt(2500);
+            close_streams();
+            outs("ch="); outdec(ch); outs(" freq="); outdec(hz / 1000); outs("kHz");
+            for (i = 0; i < nsvc; i++) if (svcs[i].ok) {
+                const char *nm = sdt_name(svcs[i].pn); int tv = svcs[i].vpid != 0 && !svcs[i].seg1;
+                outs(" sid=0x"); hexw(svcs[i].pn); outs(tv ? "(tv)" : svcs[i].seg1 ? "(1seg)" : "(data)");
+                if (nm && *nm) { outs(" name=\""); { const char *q; for (q = nm; *q; q++) { char c[2]; c[0] = *q == '"' ? '\'' : *q; c[1] = 0; outs(c); } } outs("\""); }
+                if (tv && cache_fd >= 0) {
+                    char tmp[12]; unsigned long v = ch; int ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                    sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    v = svcs[i].pn; ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                    sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    if (nm && *nm) sys3(SYS_write, cache_fd, (long)nm, slen(nm));
+                    sys3(SYS_write, cache_fd, (long)"\n", 1);
+                }
             }
+            outs("\n");
         }
-        outs("\n");
+        release_tuner();
     }
-    release_tuner();
+
+    /* 2. 衛星 (BS/CS) スキャン (mode 1 または 2) */
+    if ((mode == 1 || mode == 2) && !stop_flag) {
+        int idx;
+        rc = acquire_tuner(1);
+        if (rc) { err("衛星チューナーを確保できない\n"); if (cache_fd >= 0) sys3(SYS_close, cache_fd, 0, 0); return rc; }
+
+        /* BSスキャン */
+        for (idx = 0; idx < (int)(sizeof(BS_SCAN_TP) / sizeof(BS_SCAN_TP[0])) && !stop_flag; idx++) {
+            unsigned long bsch = BS_SCAN_TP[idx].ch;
+            unsigned long slot = BS_SCAN_TP[idx].slot;
+            unsigned long ts_id = get_bs_tsid(bsch, slot);
+            unsigned long if_khz = (11727480UL + ((bsch - 1) / 2) * 38360UL) - LO_KHZ;
+            int i;
+            char ch_name[16]; int cni = 0;
+
+            ch_name[cni++] = 'B'; ch_name[cni++] = 'S';
+            ch_name[cni++] = '0' + (bsch / 10); ch_name[cni++] = '0' + (bsch % 10);
+            ch_name[cni++] = '_'; ch_name[cni++] = '0' + slot; ch_name[cni] = 0;
+
+            if (!fe_tune_s(if_khz, ts_id)) continue;
+            clr(ob_pt, 0x484 / 4 + 2);
+            ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = 1; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
+            if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) continue;
+            h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4]; prev_pt = 0xff;
+            discover(0, 3500);
+            collect_sdt(2000);
+            close_streams();
+
+            outs("channel="); outs(ch_name); outs(" tsid=0x"); hexw(ts_id);
+            for (i = 0; i < nsvc; i++) if (svcs[i].ok) {
+                const char *nm = sdt_name(svcs[i].pn); int tv = svcs[i].vpid != 0 && !svcs[i].seg1;
+                outs(" sid=0x"); hexw(svcs[i].pn); outs(tv ? "(tv)" : svcs[i].seg1 ? "(1seg)" : "(data)");
+                if (nm && *nm) { outs(" name=\""); { const char *q; for (q = nm; *q; q++) { char c[2]; c[0] = *q == '"' ? '\'' : *q; c[1] = 0; outs(c); } } outs("\""); }
+                if (tv && cache_fd >= 0) {
+                    char tmp[12]; unsigned long v = svcs[i].pn; int ti = 11;
+                    sys3(SYS_write, cache_fd, (long)ch_name, slen(ch_name)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                    sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    if (nm && *nm) sys3(SYS_write, cache_fd, (long)nm, slen(nm));
+                    sys3(SYS_write, cache_fd, (long)"\n", 1);
+                }
+            }
+            outs("\n");
+        }
+
+        /* CSスキャン (ND2〜ND24 偶数) */
+        for (ch = 2; ch <= 24 && !stop_flag; ch += 2) {
+            unsigned long ts_id = get_cs_tsid(ch);
+            unsigned long if_khz = (12291000UL + ((ch - 2) / 2) * 40000UL) - LO_KHZ;
+            int i;
+            if (!fe_tune_s(if_khz, ts_id)) continue;
+            clr(ob_pt, 0x484 / 4 + 2);
+            ob_pt[0xac / 4] = 0x800000; ob_pt[0xbc / 4] = 1; ob_pt[0xc8 / 4] = 0xffff; ob_pt[0xd0 / 4] = 0x10000;
+            if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) continue;
+            h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4]; prev_pt = 0xff;
+            discover(0, 3500);
+            collect_sdt(2000);
+            close_streams();
+
+            outs("channel=CS"); outdec(ch); outs(" tsid=0x"); hexw(ts_id);
+            for (i = 0; i < nsvc; i++) if (svcs[i].ok) {
+                const char *nm = sdt_name(svcs[i].pn); int tv = svcs[i].vpid != 0 && !svcs[i].seg1;
+                outs(" sid=0x"); hexw(svcs[i].pn); outs(tv ? "(tv)" : svcs[i].seg1 ? "(1seg)" : "(data)");
+                if (nm && *nm) { outs(" name=\""); { const char *q; for (q = nm; *q; q++) { char c[2]; c[0] = *q == '"' ? '\'' : *q; c[1] = 0; outs(c); } } outs("\""); }
+                if (tv && cache_fd >= 0) {
+                    char ch_name[16]; int cni = 0; char tmp[12]; unsigned long v; int ti;
+                    ch_name[cni++] = 'C'; ch_name[cni++] = 'S';
+                    if (ch >= 10) { ch_name[cni++] = '0' + (ch / 10); ch_name[cni++] = '0' + (ch % 10); }
+                    else { ch_name[cni++] = '0' + ch; }
+                    ch_name[cni++] = '_';
+                    v = svcs[i].pn; ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                    while (tmp[ti]) ch_name[cni++] = tmp[ti++];
+                    ch_name[cni] = 0;
+
+                    sys3(SYS_write, cache_fd, (long)ch_name, slen(ch_name)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    v = svcs[i].pn; ti = 11; tmp[ti] = 0; do { tmp[--ti] = '0' + v % 10; v /= 10; } while (v);
+                    sys3(SYS_write, cache_fd, (long)(tmp + ti), slen(tmp + ti)); sys3(SYS_write, cache_fd, (long)"\t", 1);
+                    if (nm && *nm) sys3(SYS_write, cache_fd, (long)nm, slen(nm));
+                    sys3(SYS_write, cache_fd, (long)"\n", 1);
+                }
+            }
+            outs("\n");
+        }
+        release_tuner();
+    }
+
     if (cache_fd >= 0) {
         sys3(SYS_close, cache_fd, 0, 0); cache_fd = -1;
         if (!stop_flag) sys3(SYS_rename, (long)CACHE_TMP, (long)CACHE_FILE, 0);      /* 最後まで走ったときだけ置き換える */
@@ -949,7 +1070,7 @@ static void send_playlist(int sock, const char *req) {
     static char buf[16384]; char host[128]; long f, r, total = 0; int hl = get_host(req, host, sizeof(host)), i, start;
     static char out[24576]; int on = 0;
     f = sys3(SYS_open, (long)CACHE_FILE, 0, 0);
-    if (f < 0) { http_status(sock, "HTTP/1.0 404 Not Found", "サービス一覧のキャッシュがありません。先に /scan を実行してください(約80秒)\n"); return; }
+    if (f < 0) { http_status(sock, "HTTP/1.0 404 Not Found", "サービス一覧のキャッシュがありません。先に /scan を実行してください\n"); return; }
     while ((r = sys3(SYS_read, f, (long)(buf + total), sizeof(buf) - 1 - total)) > 0) total += r;
     sys3(SYS_close, f, 0, 0); buf[total] = 0;
     if (!hl) { host[0] = 0; }
@@ -958,16 +1079,23 @@ static void send_playlist(int sock, const char *req) {
     for (i = 0, start = 0; i <= total; i++) {
         if (i == total || buf[i] == '\n') {
             if (i > start) {
-                char *ln = buf + start; char *t1, *t2; char chs[8], sidd[12], sidh[8]; unsigned long sid = 0; int k;
+                char *ln = buf + start; char *t1, *t2; char chs[16], sidd[12], sidh[8]; unsigned long sid = 0; int k;
                 buf[i] = 0;
                 t1 = ln; while (*t1 && *t1 != '\t') t1++;
                 if (*t1) { *t1++ = 0; t2 = t1; while (*t2 && *t2 != '\t') t2++; if (*t2) *t2++ = 0; else t2 = t1 + slen(t1); }
                 else t2 = t1;
-                for (k = 0; k < 7 && ln[k]; k++) chs[k] = ln[k]; chs[k] = 0;
+                for (k = 0; k < 15 && ln[k]; k++) chs[k] = ln[k]; chs[k] = 0;
                 for (k = 0; k < 11 && t1[k]; k++) sidd[k] = t1[k]; sidd[k] = 0;
                 sid = parse_dec(sidd);
                 for (k = 0; k < 4; k++) { int nb = (sid >> ((3 - k) * 4)) & 0xf; sidh[k] = nb < 10 ? '0' + nb : 'a' + nb - 10; } sidh[4] = 0;
-                OPUT("#EXTINF:-1 group-title=\"UHF"); OPUT(chs); OPUT("\","); if (*t2) OPUT(t2); else { OPUT("UHF"); OPUT(chs); OPUT(" 0x"); OPUT(sidh); }
+                if ((chs[0] | 32) == 'b' && (chs[1] | 32) == 's') {
+                    OPUT("#EXTINF:-1 group-title=\"BS\",");
+                } else if ((chs[0] | 32) == 'c' && (chs[1] | 32) == 's') {
+                    OPUT("#EXTINF:-1 group-title=\"CS\",");
+                } else {
+                    OPUT("#EXTINF:-1 group-title=\"UHF\",");
+                }
+                if (*t2) OPUT(t2); else { OPUT(chs); OPUT(" 0x"); OPUT(sidh); }
                 OPUT("\nhttp://"); OPUT(host); OPUT("/tuner/"); OPUT(chs); OPUT("?sid=0x"); OPUT(sidh); OPUT("\n");
             }
             start = i + 1;
@@ -1014,10 +1142,16 @@ static int listen_port(unsigned long port) {
                 send_playlist(c, req);
                 sys3(SYS_exit, 0, 0, 0);
             }
-            if (starts(p, "scan")) {                                           /* /scan: 全UHFチャンネルのサービス一覧 */
+            if (starts(p, "scan")) {                                           /* /scan: サービス一覧 (既定: 地デジ, ?sat: 衛星のみ, ?all: 全局) */
+                int sat_mode = 0;
+                const char *sp = p + 4;
+                if (*sp == '?' || *sp == '&') {
+                    if (starts(sp + 1, "type=sat") || starts(sp + 1, "sat")) sat_mode = 1;
+                    else if (starts(sp + 1, "type=all") || starts(sp + 1, "all")) sat_mode = 2;
+                }
                 http_status(c, "HTTP/1.0 200 OK", "");
                 set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
-                scan(c);
+                scan(c, sat_mode);
                 sys3(SYS_exit, 0, 0, 0);
             }
             if (starts(p, "tuner/")) p += 6;                                   /* /tuner/<ch>?sid=0xNNNN&sec=N  または /<ch>?... */
@@ -1069,6 +1203,8 @@ int main_c(long *sp) {
         else if (streq(a, "--freq") && ai + 1 < argc) freq_hz = parse_mhz(argv[++ai]);
         else if (streq(a, "--listen") && ai + 1 < argc) port = parse_dec(argv[++ai]);
         else if (streq(a, "--scan")) do_scan = 1;
+        else if (streq(a, "--scan-sat")) do_scan = 2;
+        else if (streq(a, "--scan-all")) do_scan = 3;
         else if (streq(a, "-v")) verbose = 1;
         else if (streq(a, "--device") || streq(a, "--lnb") || streq(a, "--udp") || streq(a, "--port") || streq(a, "--http")) ai++;
         else if (a[0] == '-' && a[1] == '-') { /* --b25 --strip 等の recpt1 オプションは無視 */ }
@@ -1076,8 +1212,8 @@ int main_c(long *sp) {
     }
     if (port) { logv = 1; return listen_port(port); }        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
     set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
-    if (do_scan) return scan(1);
-    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23(奇数。BS15_0 のようにスロット付きも可) | CS2-CS24(偶数) | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }
+    if (do_scan) return scan(1, do_scan == 2 ? 1 : do_scan == 3 ? 2 : 0);
+    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23(奇数。BS15_0 のようにスロット付きも可) | CS2-CS24(偶数) | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan [--scan-sat | --scan-all] | --listen <port>\n"); return 2; }
     {
         const char *chs, *secs, *dst;
         int is_sat = 0; unsigned long freq_val = 0, parsed_tsid = 0;
