@@ -112,6 +112,7 @@ MCUの読み出しは6バイト(各バイトの意味は未解明。最終バイ
   5. 3・4 の状態が `NASNE_WAKE_IDLE` 秒(既定600)続いた
   6. EPGStation の予約が最近確認できていて、**次の起床まで `NASNE_WAKE_MIN_OFF` 秒(既定600)以上**ある(予約が無ければ、それも可)
   切る直前にもう一度 EPGStation に聞いて確かめる。EPGStation に繋がらないときは**切らない**(予約を確認できないため)。判定は uptime で測る(NTP の時刻補正で狂わない)。`perl /usr/local/sbin/nasne-waked --once`(`NASNE_WAKE_AUTOOFF=1` を付けて)で、判定だけ確認できる(実行はしない)。
+  **実機で確認済み**: 約20分後の予約(2分)→ `poweroff` → 起こす時刻の約34秒後に起床 → 予約どおり録画(約230MB)→ チューナーが使われなくなって `NASNE_WAKE_IDLE`(試験は180秒)たった時点で自動で `poweroff`(ログ: `自動オフ: poweroff する (予約なし。電源を切る)`)。**録画が終わってから電源が落ちるまでは、思ったより長い**(試験では約14分): Mirakurun の番組表の取得など、録画以外のチューナー使用も「使用中」として数えるため。短くしたければ Mirakurun 側の番組表取得の間隔を見直す。
   ホスト上の試験(疑似の EPGStation・MCU・poweroff)で、タイマ起床+アイドル+予約が遠い → 切る、手動起動 / ssh 接続あり / 予約が近い / チューナー使用中 → 切らない、予約なし → 切る、を確認した。
 - **実機で確認済み**: 約15分後の予約(2分間)を作る → `nasne-waked` が起こす時刻を書く → `poweroff` → 起こす時刻の約30秒後に ping が戻る → 予約の時刻に録画が始まり、2分間のTS(約230MB)が保存された。
 - すでにイメージに入っている Debian には、dlm を差し替えても入りません。`nasne-waked` `nasne-wake`(init)`a-nasne-poweroff` を置き、`update-rc.d nasne-wake defaults 27`。
