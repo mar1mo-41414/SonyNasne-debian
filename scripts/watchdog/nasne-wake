@@ -11,11 +11,13 @@
 # poweroff のとき a-nasne-poweroff がそれを読んで、MCUの起床タイマをセットする(docs/06)。
 # 設定は /etc/default/nasne-wake (NASNE_WAKE_URL=http://<EPGStation>:8888 が必須。無ければ何もしない):
 #   NASNE_WAKE_URL  NASNE_WAKE_LEAD=300(予約の何秒前に起こすか)  NASNE_WAKE_POLL=300(問い合わせ間隔)  NASNE_WAKE_ENABLE=0(無効)
-#   NASNE_WAKE_AUTOOFF=1(タイマ起床で起動したあと、使われなくなったら自動で poweroff。既定は無効)  NASNE_WAKE_IDLE=600  NASNE_WAKE_MIN_OFF=600
+#   NASNE_WAKE_AUTOOFF=1(タイマ起床で起動したあと、使われなくなったら自動で poweroff。既定は無効)  NASNE_WAKE_IDLE=180  NASNE_WAKE_MIN_OFF=600
+#   NASNE_WAKE_EPG_MAX=600(番組表の取得だけが動いている間、最長でここまで待つ。0なら待たない)  NASNE_WAKE_MIRAKURUN_URL=http://<ホスト>:40772
+# poweroff(runlevel 0)で止めるとき、先に EPGStation へ聞き直して、起こす時刻を最新にする(直前に追加された予約を見逃さない。a-nasne-poweroff が使う)。
 BIN=/usr/local/sbin/nasne-waked
 PIDFILE=/var/run/nasne-wake.pid
 [ -f /etc/default/nasne-wake ] && . /etc/default/nasne-wake
-export NASNE_WAKE_URL NASNE_WAKE_LEAD NASNE_WAKE_POLL NASNE_WAKE_AUTOOFF NASNE_WAKE_IDLE NASNE_WAKE_MIN_OFF
+export NASNE_WAKE_URL NASNE_WAKE_LEAD NASNE_WAKE_POLL NASNE_WAKE_AUTOOFF NASNE_WAKE_IDLE NASNE_WAKE_MIN_OFF NASNE_WAKE_EPG_MAX NASNE_WAKE_MIRAKURUN_URL
 case "$1" in
   start)
     [ -x $BIN ] || exit 0
@@ -26,6 +28,10 @@ case "$1" in
     echo $! > $PIDFILE
     ;;
   stop)
+    # poweroff のときは、ネットワークが落ちる前の、ここで1回聞き直す(rc0 の最後の a-nasne-poweroff では、もう聞けない)
+    case "$(runlevel 2>/dev/null)" in
+        *" 0") [ -x $BIN ] && [ -n "$NASNE_WAKE_URL" ] && [ "${NASNE_WAKE_ENABLE:-1}" != 0 ] && timeout 25 $BIN --once >/dev/null 2>&1 ;;
+    esac
     [ -f $PIDFILE ] && kill $(cat $PIDFILE) 2>/dev/null
     rm -f $PIDFILE
     ;;
