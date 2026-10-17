@@ -15,18 +15,31 @@
 # /etc/rc0.d の K スクリプトとして、ルートが読み取り専用になった(umountroot)あと、halt の前に実行される(insserv の X-Stop-After で順序指定)。
 # MCUコマンドが失敗したときは何もせず戻る(通常のhaltに進む)。
 # 設定: /etc/default/nasne-poweroff の WAKE_SECONDS(0=起床タイマなし。電源ボタンか電源の入れ直しで起動)
+# EPGStation の予約に合わせて起こす場合: nasne-waked(常駐。docs/06)が /var/lib/nasne-wake/next に「起こす時刻」を書いておく。
+#   ここでそれを読み、(起こす時刻 - 今)秒後にタイマをセットする。WAKE_SECONDS も指定してあれば、短いほうにする(予約が無い・追加された
+#   ときのために、たまに起きる、という使い方)。タイマの最大は32ビット(約50日)なので 40日で切る。
 BIN=/usr/local/sbin
 WAKE_SECONDS=0
+WAKE_FILE=/var/lib/nasne-wake/next
 [ -r /etc/default/nasne-poweroff ] && . /etc/default/nasne-poweroff
 case "$1" in
   start|stop)
     $BIN/mcui2c r 20 6 >/dev/null 2>&1 || exit 0                 # MCUに届かないなら何もしない(同時に実行ファイルをキャッシュに載せる)
     hdparm -y /dev/sda >/dev/null 2>&1                            # HDDを止めてから電源を切る(スタンバイ)
+    $BIN/mcui2c w 20 10 51 >/dev/null 2>&1                        # 表示コード0x51(終了。LEDが消える)。先に書く: 起床タイマを書くと、その時点で電源が切れる
+    if [ -r "$WAKE_FILE" ]; then
+        set -- $(cat "$WAKE_FILE" 2>/dev/null)            # 起こす時刻 / 最後に問い合わせた時刻 / 次の予約の開始(epoch)
+        W=${1:-0}; NOW=$(date +%s)
+        if [ "$W" -gt "$NOW" ] 2>/dev/null; then
+            D=$((W - NOW))
+            [ "$D" -gt 3456000 ] && D=3456000                  # 40日
+            if ! [ "${WAKE_SECONDS:-0}" -gt 0 ] 2>/dev/null || [ "$D" -lt "$WAKE_SECONDS" ]; then WAKE_SECONDS=$D; fi
+        fi
+    fi
     if [ "${WAKE_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
         C=$((WAKE_SECONDS * 95))                                   # 1カウント≒10.5ms
         $BIN/mcui2c w 20 02 02 $(printf '%02x %02x %02x %02x' $((C>>24&255)) $((C>>16&255)) $((C>>8&255)) $((C&255))) >/dev/null 2>&1
     fi
-    $BIN/mcui2c w 20 10 51 >/dev/null 2>&1                        # 表示コード0x51(終了。LEDが消える)
     $BIN/mcui2c w 20 02 01 >/dev/null 2>&1 || exit 0              # 電源断
     sleep 30                                                       # MCUが電源を切るのを待つ(切れなければ通常のhaltへ)
     ;;

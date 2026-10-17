@@ -101,6 +101,10 @@ $SUDO chroot "$OUT" update-rc.d nasne-status defaults 25
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-ledd" "$OUT/usr/local/sbin/nasne-ledd"
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-led" "$OUT/etc/init.d/nasne-led"
 $SUDO chroot "$OUT" update-rc.d nasne-led defaults 26
+# 予約に合わせた起床(EPGStation の予約から次の起床時刻を求める。/etc/default/nasne-wake に NASNE_WAKE_URL を書くまで何もしない。docs/06)
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-waked" "$OUT/usr/local/sbin/nasne-waked"
+$SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-wake" "$OUT/etc/init.d/nasne-wake"
+$SUDO chroot "$OUT" update-rc.d nasne-wake defaults 27
 # 検証協力用のレポート(docs/20)と、このリポジトリのバージョン
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-report" "$OUT/usr/local/sbin/nasne-report"
 $SUDO install -m 755 "$ROOT/scripts/watchdog/nasne-nvreset" "$OUT/usr/local/sbin/nasne-nvreset"
@@ -115,6 +119,7 @@ cleanup_mounts
 if mount | grep -q " $OUT/\(proc\|sys\) "; then echo "umountに失敗: $OUT/proc|sys が残っている" >&2; exit 1; fi
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-status || { echo "nasne-status の update-rc.d が効いていない" >&2; exit 1; }
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-led || { echo "nasne-led の update-rc.d が効いていない" >&2; exit 1; }
+ls "$OUT"/etc/rc2.d/ | grep -q nasne-wake || { echo "nasne-wake の update-rc.d が効いていない" >&2; exit 1; }
 ls "$OUT"/etc/rc2.d/ | grep -q nasne-mcu-wd || { echo "update-rc.d が効いていない" >&2; exit 1; }
 
 # ---- 5. 段階1 ----

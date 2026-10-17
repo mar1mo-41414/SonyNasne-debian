@@ -1,0 +1,119 @@
+#!/usr/bin/perl
+# nasne-waked — EPGStation の録画予約から「次に起こす時刻」を求めて、ファイルに書いておく常駐プロセス(Debian側。docs/06)。
+#   nasne を電源オフ(poweroff)するとき、a-nasne-poweroff がこのファイルを読んで MCU の起床タイマを設定し、
+#   次の予約の少し前に自動で電源が入る(公式が予約録画のためにやっているのと同じ)。
+# なぜ常駐か: poweroff の最後(rc0.d)はネットワークが落ちたあとで、EPGStation に問い合わせられない。だから、動いている間に定期的に聞いて書いておく。
+# 出力: /var/lib/nasne-wake/next  (1行: <起こす時刻 epoch(nasne の時計で)> <最後に問い合わせた時刻 epoch> <次の予約の開始 epoch(EPGStation の時計)> <時計のずれ 秒>。予約が無ければ、起こす時刻=0)
+# nasne には RTC が無く、起動直後の時計は古い(NTP で数十秒後に直る)。なので、時刻は EPGStation の応答の Date ヘッダ(正しい時刻)との差で補正して、
+# 「nasne の時計で何時に起こすか」を書く。
+# 設定: /etc/default/nasne-wake
+#   NASNE_WAKE_URL=http://<EPGStationのホスト>:8888   (必須。これが無ければ何もしない)
+#   NASNE_WAKE_LEAD=300      予約の開始の何秒前に起こすか(起動に約1〜2分かかる。既定 300)
+#   NASNE_WAKE_POLL=300      EPGStation に聞く間隔(秒。既定 300)
+#   NASNE_WAKE_ENABLE=0      無効
+# 読むだけ(EPGStation の API の GET だけ。何も変更しない)。Perl のコアモジュールだけで動く。--once: 1回聞いて結果を表示して終わる。
+use strict; use warnings;
+use IO::Socket::INET;
+use POSIX qw(strftime);
+
+my $URL   = $ENV{NASNE_WAKE_URL} || '';
+my $LEAD  = defined $ENV{NASNE_WAKE_LEAD} && $ENV{NASNE_WAKE_LEAD} ne '' ? $ENV{NASNE_WAKE_LEAD} : 300;
+my $POLL  = $ENV{NASNE_WAKE_POLL} || 300;
+my $FILE  = $ENV{NASNE_WAKE_FILE} || '/var/lib/nasne-wake/next';
+my $ONCE  = (@ARGV && $ARGV[0] eq '--once');
+
+sub logmsg { print STDERR strftime('%F %T', localtime) . " nasne-waked: @_\n"; }
+
+# HTTP の Date ヘッダ(例 "Sat, 17 Oct 2026 02:10:11 GMT")を epoch 秒に(モジュール不要)
+sub http_date {
+    my ($d) = @_;
+    my %m = (Jan=>1,Feb=>2,Mar=>3,Apr=>4,May=>5,Jun=>6,Jul=>7,Aug=>8,Sep=>9,Oct=>10,Nov=>11,Dec=>12);
+    $d =~ /(\d+) (\w{3}) (\d{4}) (\d+):(\d+):(\d+)/ or return undef;
+    my ($day, $mon, $y, $H, $M, $S) = ($1, $m{$2}, $3, $4, $5, $6); return undef unless $mon;
+    $y-- if $mon <= 2;
+    my $era = int($y / 400); my $yoe = $y - $era * 400;
+    my $doy = int((153 * ($mon + ($mon > 2 ? -3 : 9)) + 2) / 5) + $day - 1;
+    my $doe = $yoe * 365 + int($yoe / 4) - int($yoe / 100) + $doy;
+    return ($era * 146097 + $doe - 719468) * 86400 + $H * 3600 + $M * 60 + $S;
+}
+
+# EPGStation の /api/reserves を GET して、(本文, 相手の時刻 epoch)を返す(失敗は undef)
+sub http_get {
+    my ($host, $port, $path) = @_;
+    my $s = IO::Socket::INET->new(PeerAddr => $host, PeerPort => $port, Timeout => 10) or return undef;
+    my ($body, $date);
+    my $ok = eval {
+        local $SIG{ALRM} = sub { die "timeout\n" }; alarm 20;
+        print $s "GET $path HTTP/1.0\r\nHost: $host\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
+        local $/; my $r = <$s>; alarm 0;
+        return 0 unless defined $r && $r =~ /^HTTP\/1\.\d 200 /;
+        ($body) = $r =~ /\r\n\r\n(.*)$/s;
+        ($date) = $r =~ /^Date:\s*([^\r\n]+)/mi; 1;
+    };
+    close $s;
+    return undef unless $ok && defined $body;
+    return ($body, defined $date ? http_date($date) : undef);
+}
+
+# 予約の開始時刻(epoch 秒)の一覧。EPGStation の JSON は startAt がミリ秒。JSON モジュールが無いので、startAt を拾う。
+# 返り値: (開始時刻の配列への参照, 相手の現在時刻)。問い合わせ失敗は空リスト(予約が無ければ空配列への参照)
+sub reserve_starts {
+    return () unless $URL =~ m{^https?://([^/:]+)(?::(\d+))?}i;
+    my ($host, $port) = ($1, $2 || 80);
+    my @all; my $offset = 0; my $srv_now;
+    for (1 .. 20) {                                   # 100件ずつ最大2000件
+        my ($b, $dt) = http_get($host, $port, "/api/reserves?isHalfWidth=true&limit=100&offset=$offset");
+        return () unless defined $b && $b =~ /"reserves"\s*:\s*\[/;
+        $srv_now = $dt if defined $dt;
+        my @s = $b =~ /"startAt"\s*:\s*(\d{10,13})/g;
+        push @all, map { $_ > 99999999999 ? int($_ / 1000) : $_ } @s;
+        my ($total) = $b =~ /"total"\s*:\s*(\d+)/;
+        $offset += 100;
+        last if !defined $total || $offset >= $total;
+    }
+    return (\@all, $srv_now);
+}
+
+sub write_next {
+    my ($wake, $polled, $start, $skew) = @_;
+    my $dir = $FILE; $dir =~ s{/[^/]*$}{};
+    mkdir $dir if length $dir && !-d $dir;
+    if (open(my $o, '>', "$FILE.tmp")) { print $o "$wake $polled $start $skew\n"; close $o; rename "$FILE.tmp", $FILE; }
+}
+
+sub poll_once {
+    my ($starts, $srv_now) = reserve_starts();
+    my $now = time;
+    if (!defined $starts) { logmsg("EPGStation に問い合わせできない(前回の値を残す)") unless $ONCE; return (undef, undef); }
+    my $skew = defined $srv_now ? $srv_now - $now : 0;           # 相手の時計 - 自分の時計(正なら nasne の時計が遅れている)
+    my $snow = $now + $skew;                                      # 相手の時計での「いま」
+    my @future = sort { $a <=> $b } grep { $_ > $snow } @$starts; # すでに始まった予約は除く
+    my ($start, $wake) = (0, 0);
+    if (@future) {
+        $start = $future[0];
+        my $w = $start - $LEAD; $w = $snow + 60 if $w < $snow + 60;   # 近すぎるときは60秒後(電源を切って入れ直す余裕)
+        $wake = $w - $skew;                                          # nasne の時計での時刻
+    }
+    write_next($wake, $now, $start, $skew);
+    return ($wake, $start - $skew);
+}
+
+if (!$URL) { logmsg("NASNE_WAKE_URL が未設定。何もしない") unless $ONCE; print "NASNE_WAKE_URL 未設定\n" if $ONCE; exit 0; }
+if ($ONCE) {
+    my ($wake, $start) = poll_once();
+    if (!defined $wake) { print "問い合わせ失敗\n"; exit 1; }
+    print $wake ? "次の予約: " . strftime('%F %T', localtime $start) . " / 起こす時刻: " . strftime('%F %T', localtime $wake) . " (nasne の時計で)\n" : "予約なし\n";
+    exit 0;
+}
+logmsg("開始 url=$URL lead=${LEAD}s poll=${POLL}s");
+my $last = '';
+while (1) {
+    my ($wake, $start) = poll_once();
+    if (defined $wake) {
+        my $msg = $wake ? "次の予約 " . strftime('%F %T', localtime $start) . "、起こす時刻 " . strftime('%F %T', localtime $wake) . " (nasne の時計で)" : "予約なし";
+        if ($msg ne $last) { logmsg($msg); $last = $msg; }
+    }
+    # 起動直後は時計がまだ直っていない可能性があるので、最初の10分は60秒ごとに聞き直す
+    my $up = 99999; if (open(my $u, '<', '/proc/uptime')) { my $l = <$u>; close $u; $up = $1 if defined $l && $l =~ /^(\d+)/; }
+    sleep($up < 600 && $POLL > 60 ? 60 : $POLL);
+}

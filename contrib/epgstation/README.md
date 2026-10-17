@@ -35,3 +35,15 @@ nasne上では録画ソフトを動かしません。録画ファイルは Mirak
 - ワンセグ・データ放送は設定に含めません(`nasne_mirakurun_conf.py` が除外します)。
 - チャンネル設定はサービスごとに1エントリです(nasne は1回に1サービスしか出力しないため)。局が増えた・変わったら `--scan` で作り直してください。
 - BS/CS は未対応です。
+
+## 予約に合わせて nasne を起こす(任意)
+
+nasne を電源オフにしておき、予約の少し前に自動で起こせます([docs/06](../../docs/06_mcu_watchdog.md))。nasne で `/etc/default/nasne-wake` に EPGStation の場所を書き、`/etc/init.d/nasne-wake restart`:
+
+```
+NASNE_WAKE_URL=http://<EPGStationのホスト>:8888
+```
+
+あとは、nasne を `poweroff`(または電源ボタンの長押し)で止めるだけです。次の予約の5分前に起きて、予約どおりに録画されます。
+注意: 電源を切っている間に追加した予約は、次に起きるまで反映されません。たまに起こしたいときは `/etc/default/nasne-poweroff` に `WAKE_SECONDS=<秒>`(予約の起床と短いほうが使われる)。
+
