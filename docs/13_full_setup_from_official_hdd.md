@@ -187,7 +187,7 @@ cat /var/log/nasne-mcu-wd.log         # "MCU watchdog disabled"。5.5分以上�
 | pingは通るが sshが出ない/ネットワークがおかしい | `--telnet early` で `.dlm` を作り直し、`cat /tmp/nasne_stage1_rcs.log`(外側のrcSのログ)と、`/mnt/p3/var/log/nasne-stage1.log`(chroot内の段階1のログ)を見る |
 | `ABORT` が出て止まる | ログの理由に従う。`/var/lib/nasne-stage1/` に状態とバックアップがある |
 | 再起動後に pingが通るがsshが出ない | sshdが上がっていない。公式ファームのまま(`uname` の `#1 ... 2013`)なら、自作カーネルが起動していない(SPIが書き換わっていない、またはBKNLに落ちた) |
-| SPIが壊れて起動しない | 実機で「古い設定の混入でKNLが中途半端に消えた」事故の報告がある。4段目ブートのA/Bフォールバックで助かる**とは限らない**(B側のBRFSは別版のminirootで、HDDの内容次第で起動しない)。CH341Aで事前のダンプを書き戻す |
+| SPIが壊れて起動しない | 実機で「古い設定の混入でKNLが中途半端に消えた」事故の報告がある。4段目ブートのA/Bフォールバックで助かる**とは限らない**(KNL の1バイトが壊れて CRC が不一致の場合は、BKNL で起動することを実機で確認した。ヘッダまで消えた場合は助からなかった事例がある)。CH341Aで事前のダンプを書き戻す |
 | 約333秒ごとに再起動する | ウォッチドッグが止まっていない。`/var/log/nasne-mcu-wd.log` を確認([docs/06](06_mcu_watchdog.md)) |
 
 ### 公式アプリを1回だけ起動する / 救出用のtelnet(`nasne-boot-switch`)

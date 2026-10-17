@@ -78,7 +78,9 @@ python3 scripts/build_knl.py build  spi_dump1.bin KNL_new.bin --slot KNL --kerne
 python3 scripts/build_knl.py verify KNL_new.bin
 ```
 
-**A/Bの安全網**: KNL(スロットA)とBKNL(スロットB)があり、4段目ブートはAの読み込み/検証に失敗するとBに切り替える……はずだが、
+**A/Bの安全網**: KNL(スロットA)とBKNL(スロットB)があり、4段目ブートはAの読み込み/検証に失敗するとBに切り替える。
+**実機実験で、「KNL の本体の1バイトだけ壊れて CRC が不一致」の場合は、BKNL に切り替わって起動することを確認した**([docs/02](02_boot_chain.md) の「スロットB」)。カーネルと miniroot は別々に選ばれる。
+ただし、次の事例のように、**ヘッダまで消えた場合は助からなかった**:
 **⚠️ 実機でフォールバックが機能しなかった事例を確認済み**([docs/13](13_full_setup_from_official_hdd.md)の事故)。
 sys1上の古い段階1スクリプトの残骸が、KNL領域を`erase`した後、存在しないファイルの`write`に失敗して中途半端な状態(ほぼ消去されたまま)
 になったケースで、別の(正常起動することが確認済みの)HDDに挿し替えても起動しなかった(=HDDの内容に関係なく、SPI側の問題として
