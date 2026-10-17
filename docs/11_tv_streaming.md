@@ -47,7 +47,7 @@ nasne-recpt1 [--sid <サービスID>] [-v] <UHFチャンネル 13〜62 | --freq 
 nasne-recpt1 27 60 /tmp/a.ts            # UHF 27 を60秒、ファイルへ
 nasne-recpt1 27 - - | ffplay -           # 無期限、標準出力へ(止めるときはSIGTERM/Ctrl-C/パイプを閉じる)
 nasne-recpt1 --sid 0x0401 27 10 -        # サービスを指定
-nasne-recpt1 --scan                      # UHF 13〜62 をスキャンして、ロックしたチャンネルのサービス一覧を表示
+nasne-recpt1 --scan                      # UHF 13〜62 をスキャンして、ロックしたチャンネルのサービス一覧を表示(--scan-sat: BS/CS のみ、--scan-all: 全部。PR #5)
 ```
 
 `--b25` `--strip` `--device` `--lnb` など recpt1 のオプションは受け付けて無視する。
@@ -65,7 +65,7 @@ curl 'http://<nasne>:8301/tuner/CS6?sid=0x....' | ffplay -
 
 - BS の TSID 表は、放送事業者の追加や帯域再編で変わる(`nasne_recpt1.c` の `get_bs_tsid()`)。
 - 1つのトランスポンダに多くのサービスが載るため、PAT/PMT の収集上限を 31 サービスにしてある。
-- **`--scan` と `/scan` は、地デジ(UHF 13〜62)だけ**で、BS/CS はスキャンしない(BS/CS は Mirakurun のスキャンで探す。下記)。
+- **`--scan` と `/scan` は、既定では地デジ(UHF 13〜62)だけ**。BS/CS は `--scan-sat`・`/scan?sat`(衛星のみ)、`--scan-all`・`/scan?all`(全部。BS は全トランスポンダ・全スロット、CS は ND2〜ND24。数分かかる)でスキャンする(PR #5。**作者の環境では信号が無く未検証**。投稿者の環境で、地デジ33・BS45・CS54 の計132サービスを収集して動作確認)。
 - 衛星のときだけ、PSI ストリームから PMT を出力 TS へ混ぜる(地デジは復号済みのストリームに PMT が含まれていて、混ぜると二重になる)。
 
 #### Mirakurun で BS/CS を使う
@@ -104,7 +104,7 @@ python3 scripts/nasne_mirakurun_conf.py <nasne> --sat --scan -o mirakurun-conf
 ```
 GET /tuner/<UHF ch>[?sid=0xNNNN][&sec=N]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了
 GET /<UHF ch>                              同上(短縮形)
-GET /scan                                  サービス一覧(テキスト。約80秒かかる)。サービス名も出し、結果を保存する
+GET /scan[?sat|?all]                        サービス一覧(テキスト。地デジのみ約80秒。?sat=衛星のみ、?all=全部で数分)。サービス名も出し、結果を保存する
 GET /playlist.m3u8                         /scan の保存結果から作ったM3U(VLCなどでそのまま開ける)
 GET /status                                idle または busy
 ```
@@ -118,7 +118,9 @@ curl -s http://<nasne>:8301/scan
 ```
 
 サービス名は SDT(ARIBの8単位符号)をUTF-8に直して出す。`(tv)` が地デジのテレビ、`(1seg)` がワンセグ、`(data)` がデータ放送。
-`/scan` は結果を nasne 上の `/var/lib/nasne-recpt1/services.tsv` に保存する(最後まで走ったときだけ置き換える)。
+`/scan` は結果を nasne 上の `/var/lib/nasne-recpt1/services.tsv` に保存する(最後まで走ったときだけ置き換える。**スキャンした種類だけで置き換わる**)。
+
+**チューナーの連続選局**: `nasne-recpt1` は、前のセッションの終了から 300ms 以内に次のセッションを開くときだけ、差分を待つ(`/tmp/nasne-recpt1.lock` に終了時刻を書く。PR #5)。複数クライアントの頻繁な開閉で SoC(xcodedrv)が D 状態で固まる件の緩和策の、暫定値(`300ms` は仮。効果は作者の試験では評価できていない)。通常の選局は待たない。
 
 ### 録画ソフトとの連携
 
