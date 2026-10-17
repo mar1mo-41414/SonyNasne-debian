@@ -199,6 +199,15 @@ def build(args):
     if args.mode in ("restore", "nvreset"):
         if not args.mtdtool:
             raise SystemExit(f"--mode {args.mode} には --mtdtool <MIPS用mtdtoolのバイナリ> が必要(scripts/tools/mtdtool.c をビルドしたもの)")
+        try:
+            with open(args.mtdtool, "rb") as f:
+                hd = f.read(20)
+        except OSError as e:
+            raise SystemExit(f"--mtdtool を読めません: {e}")
+        # MIPS リトルエンディアンの ELF(\x7fELF、2=LE、e_machine=8)でなければ、nasne では動かない(C のソースを渡す間違いが多い)
+        if not (hd[:4] == b"\x7fELF" and hd[5] == 1 and int.from_bytes(hd[18:20], "little") == 8):
+            raise SystemExit(f"--mtdtool {args.mtdtool} は、MIPS 用にビルドした実行ファイルではありません(ソースの mtdtool.c ではなく、ビルド済みのバイナリを指定します)。\n"
+                             "  ビルド: bash scripts/build_tools.sh (mipsel-linux-gnu-gcc が必要。できあがりは build_tools.sh の出力先の mtdtool)")
         extra_specs.append(f"usr/bin/mtdtool={args.mtdtool}:755")
     for spec in extra_specs:
         tp, _, lp = spec.partition("=")

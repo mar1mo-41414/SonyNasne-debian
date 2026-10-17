@@ -103,14 +103,23 @@ HDDをnasneに挿して電源を入れる。約1分で公式アプリが起動�
 (今のNVは、先にHDDの `/spi_backup/` へ保存されるので、あとで戻せる。作り方は [docs/16](16_spi_backup_dlm.md) の `--mode nvreset`):
 
 ```bash
-# 1. 元の公式 00550066.dlm を控える(あとで戻す)
+# 0. mtdtool(nasne 用の実行ファイル)をビルドする。--mtdtool に渡すのは、C のソース(mtdtool.c)ではなく、ここでできるバイナリ
+sh scripts/build_tools.sh build_tools_out        # → build_tools_out/mtdtool(mipsel-linux-gnu-gcc が要る。docs/09)
+# 1. HDD の sys1 をマウントして、元の 00550066.dlm を控える(あとで戻す)
+sudo mount /dev/sdX1 /mnt/nasne_sys1             # sdX は HDD(lsblk で確認)。sys1 は 1番目の区画
 cp /mnt/nasne_sys1/00550066.dlm 00550066.dlm.orig
-# 2. NVを空にする版を作って、sys1 に置く(mtdtool は docs/09 の build_tools.sh でビルド)
-python3 scripts/stage1/make_stage1_dlm.py build --official 00550066.dlm.orig --out nvreset.dlm --mode nvreset --mtdtool <mtdtool>
-cp nvreset.dlm /mnt/nasne_sys1/00550066.dlm; sync; sudo umount /mnt/nasne_sys1
+# 2. NVを空にする版を作って、sys1 の 00550066.dlm と置き換える
+python3 scripts/stage1/make_stage1_dlm.py build --official 00550066.dlm.orig --out nvreset.dlm --mode nvreset --mtdtool build_tools_out/mtdtool
+sudo cp nvreset.dlm /mnt/nasne_sys1/00550066.dlm; sync; sudo umount /mnt/nasne_sys1
 # 3. HDDをnasneに挿して電源を入れる。NVを保存・消去して自動で再起動し、約3分で公式アプリが起動する(1回だけ実行される)
-# 4. 起動を確認したら、HDDをPCに戻して、元の 00550066.dlm.orig を戻す
+# 4. 起動を確認したら、HDDをPCに戻して、元の 00550066.dlm.orig を 00550066.dlm として戻す
+sudo mount /dev/sdX1 /mnt/nasne_sys1; sudo cp 00550066.dlm.orig /mnt/nasne_sys1/00550066.dlm; sync; sudo umount /mnt/nasne_sys1
 ```
+
+間違えやすい点:
+- `build` でできるのは `nvreset.dlm`(作業用のファイル)。**sys1 の `00550066.dlm` に置き換えない限り、nasne には何も起きません**。
+- 手順2のあとに `nasne_hdd_rebuild.py final` などを実行すると、sys1 の `00550066.dlm` が普通の公式版に書き直されて、NVリセット版が消えます。
+- `--official` に渡すのは sys1 の `00550066.dlm`(公式の v2.60 など)。p3 の中にはありません。sys1 をマウントしてから指定します。
 
 ## (参考)v1.00 の `00550066.dlm` が手元にある場合
 
