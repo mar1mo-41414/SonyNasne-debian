@@ -22,7 +22,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | | 内容 |
 |---|---|
 | ✅ できる | Sony経路を通らない **Debian直起動**(ssh、cron、apt など通常のDebianとして常時稼働) |
-| ✅ できる | 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え) |
+| ✅ できる | 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え)。**KNLが壊れて(CRC不一致)も、出荷時カーネルのB側で起動する**ことを実機で確認([docs/02](docs/02_boot_chain.md)) |
 | ✅ できる | **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
 | ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
 | ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
@@ -35,14 +35,15 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
 | ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
 | ✅ できる | **状態ページ**(既定で動く。HDDの温度・SMART、メモリ・ディスク、MCU、チューナー。`http://<nasne>:8302/`、JSON、Prometheus。[docs/18](docs/18_status_page.md))。Home Assistant 連携はオプション([contrib/homeassistant](contrib/homeassistant/README.md)) |
-| ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。[contrib/epgstation](contrib/epgstation/README.md)) |
+| ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。約4日の連続運用で12本録画。[contrib/epgstation](contrib/epgstation/README.md)) |
+| ✅ できる | **予約に合わせて自動で起床し、録画が終わったら自動で電源オフ**(`nasne-waked`。EPGStationの予約の5分前に起きる。電源オフは任意。[contrib/epgstation](contrib/epgstation/README.md)) |
 | ✅ できる | **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
 | ✅ できる | **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
 | △ 試験中 | **新しいカーネル(Linux 6.12)+ Debian 12** の起動(開発用の kexec 経由で、ネットワーク・SATA・sshd・I2C/MCUまで確認。不安定さの調査中で、SPI単独起動・チューナーは未対応。[docs/19](docs/19_new_kernel_survey.md)) |
-| 🟡 他の人の報告 | **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。[docs/11](docs/11_tv_streaming.md)) |
-| △ 未検証 | 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統)、数日の連続運用 |
-| ✅ できる | **PWR LEDを点灯にする**(MCUの表示コードレジスタへ書く。[docs/06](docs/06_mcu_watchdog.md)) |
-| ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。純正も長押しで電源オフできる。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
+| 🟡 他の人の報告 | **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。Mirakurun で使うときのチャンネル名・`?sid=` の決まりと、設定の補助(`nasne_mirakurun_conf.py --sat` / `--fix-sat`)は [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
+| △ 未検証 | 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
+| ✅ できる | **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
+| ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。長押しで電源オフ。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
 | ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
 | 🚫 やらない | DTCP-IPで保護された既存の録画の取り出し・復号(上の「やらないこと」) |
 | ❌ やっていない | ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |

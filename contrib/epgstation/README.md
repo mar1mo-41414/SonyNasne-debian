@@ -34,7 +34,23 @@ nasne上では録画ソフトを動かしません。録画ファイルは Mirak
 - 録画ファイルの先頭に、デコードの警告が数行出ることがあります(番組の途中から受け始めたときの、最初のGOPが揃うまで)。再生は問題ありません。
 - ワンセグ・データ放送は設定に含めません(`nasne_mirakurun_conf.py` が除外します)。
 - チャンネル設定はサービスごとに1エントリです(nasne は1回に1サービスしか出力しないため)。局が増えた・変わったら `--scan` で作り直してください。
-- BS/CS は未対応です。
+- BS/CS は、**作者の環境では信号が来ておらず、通しは未検証**です(他の人の報告では nasne で受信できています)。使うときは下の「BS/CS を使う」を見てください。
+
+## BS/CS を使う(任意。作者の環境では未検証)
+
+nasne は**1回に1サービスしか出さない**ので、Mirakurun のチャンネルは「サービスごと」に `?sid=` 付きで書く必要があります。Mirakurun のチャンネルスキャンの結果は、そのままでは合いません
+(BS の既定の名前が `101`〜`256` で、`nasne-recpt1` が受け付けない。`channel` に `?sid=` が付かない。衛星の項目は無効で追加される)。詳しくは [docs/11](../../docs/11_tv_streaming.md)。
+
+```bash
+# 1. tuners.yml に BS・CS も入れる(channels.yml は地デジだけで書き直されるので、BS/CS のスキャンは、そのあと)
+python3 ../../scripts/nasne_mirakurun_conf.py <nasne> --sat -o mirakurun-conf       # そして Mirakurun を再起動
+# 2. Mirakurun でスキャン。BS は useSubCh=1 で BS01_0 形式の名前にする(値を false にしないこと。Mirakurun は文字列を真と読む)
+curl -X PUT "http://localhost:40772/api/config/channels/scan?type=BS&useSubCh=1"
+curl -X PUT "http://localhost:40772/api/config/channels/scan?type=CS"
+# 3. スキャン結果の BS/CS の項目に ?sid=0x<サービスID> を足し、有効にする(元は channels.yml.bak)
+python3 ../../scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --enable
+# 4. Mirakurun を再起動
+```
 
 ## 予約に合わせて nasne を起こす(任意)
 

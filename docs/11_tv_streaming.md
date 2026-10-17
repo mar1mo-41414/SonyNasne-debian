@@ -65,8 +65,41 @@ curl 'http://<nasne>:8301/tuner/CS6?sid=0x....' | ffplay -
 
 - BS の TSID 表は、放送事業者の追加や帯域再編で変わる(`nasne_recpt1.c` の `get_bs_tsid()`)。
 - 1つのトランスポンダに多くのサービスが載るため、PAT/PMT の収集上限を 31 サービスにしてある。
-- **`--scan` と `/scan` は、地デジ(UHF 13〜62)だけ**で、BS/CS はスキャンしない。
+- **`--scan` と `/scan` は、地デジ(UHF 13〜62)だけ**で、BS/CS はスキャンしない(BS/CS は Mirakurun のスキャンで探す。下記)。
 - 衛星のときだけ、PSI ストリームから PMT を出力 TS へ混ぜる(地デジは復号済みのストリームに PMT が含まれていて、混ぜると二重になる)。
+
+#### Mirakurun で BS/CS を使う(チャンネル指定の決まり)
+
+nasne は **1回に1サービスしか出力しない**ので、Mirakurun のチャンネルは「サービスごと」に1つ要り、**チャンネル文字列に `?sid=0x<サービスID>` を含める**(地デジで `31?sid=0xdc10` としているのと同じ)。
+`sid` を付けないと、`nasne-recpt1` は「映像と音声を持つ最初のサービス」を出すので、同じ周波数(トランスポンダ)の全サービスが同じ番組になる。
+
+| 種類 | `nasne-recpt1` が受け付けるチャンネル | 例 |
+|---|---|---|
+| 地デジ | `13`〜`62` | `31?sid=0xdc10` |
+| BS | `BS<奇数1〜23>` または `BS<奇数>_<スロット>`(先頭の 0 は付けても付けなくてもよい)。**偶数は不可(400)** | `BS15_0?sid=0x0065` |
+| CS110 | `CS<偶数2〜24>`(`CS02` も可。スロットは無視) | `CS2?sid=0x0101` |
+
+**Mirakurun のチャンネルスキャンをそのまま使うと合わない点**(Mirakurun のソースで確認):
+- BS のスキャンの**既定のチャンネル名は `101`〜`256`**(BS の放送サービス番号)。`nasne-recpt1` は受け付けない(400)。**`useSubCh=1`(Web UI では BS のサブチャンネル形式)を指定すると `BS01_0`〜`BS23_3` の形式**になる。CS は既定で `CS2`〜`CS24`。
+- Mirakurun は `useSubCh=false` のような文字列も**真と読む**(値は `1` にするか、付けない)。
+- スキャンが書く項目の `channel` には `?sid=` が付かない。**衛星の項目は、既定で `isDisabled: true`**(無効)で追加される。
+- `tuners.yml` の `types` に **BS と CS が入っていないと**、衛星のチャンネルを使えない(`nasne_mirakurun_conf.py` は、`--sat` を付けると入れる。付けなければ GR だけ)。
+- スキャンは、指定した種類の範囲外の項目を消し、ほかの種類の項目は残す(地デジの項目は残る)。
+
+手順(作者の環境では BS/CS の信号が無く、**一連の通しは未検証**。ここまでの整備は、コードの読み取りと、サンプルの `channels.yml` での変換の確認):
+
+```bash
+# 1. tuners.yml に BS・CS を入れて(--sat)、Mirakurun を再起動
+python3 scripts/nasne_mirakurun_conf.py <nasne> --sat -o mirakurun-conf
+# 2. Mirakurun でスキャン(時間がかかる。チューナーを使うので録画中は避ける)
+curl -X PUT "http://<mirakurun>:40772/api/config/channels/scan?type=BS&useSubCh=1"
+curl -X PUT "http://<mirakurun>:40772/api/config/channels/scan?type=CS"
+# 3. スキャン結果に ?sid= を足して、有効にする(元のファイルは .bak に残る)
+python3 scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --enable
+# 4. Mirakurun を再起動
+```
+
+`nasne_mirakurun_conf.py` は **`channels.yml` を地デジだけで書き直す**(`--sat` の有無にかかわらず、BS/CS の項目は消える)。局が変わって作り直したときは、そのあとで BS/CS のスキャン(手順の 2・3)をやり直すこと。
 
 終了コード: 0 正常 / 1 エラー(ロックしない・サービスが無い・ストリームが開けない) / 2 使い方 / 3 チューナー使用中。
 
@@ -143,7 +176,7 @@ Mirakurun 4.1 + EPGStation 3.0(beta)を Docker で動かし、nasne をチュー
 - これから始まる番組の予約 → 予約時刻の約15秒前にチューナーを開き、時刻どおりにファイルが作られて録画された。
 - 録画中は番組表の取得(EPG収集)が止まり、録画が優先される。チューナーは1系統なので、裏番組の同時録画はできない。
 
-未確認: 長時間の連続運用(数日)、録画後のエンコード、tvheadend。
+確認済み(2026-10): 約4日の連続運用(EPGStation の予約録画12本)、tvheadend。未確認: 録画後のエンコード。
 
 #### VLC(プレイリスト再生)
 

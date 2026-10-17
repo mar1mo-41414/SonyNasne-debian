@@ -13,7 +13,7 @@
 | CECH-ZNR1J ほか、他のモデル | ❓ 基板・チューナー構成・SPIの配置が同じか不明 |
 | 公式ファーム v2.60 | ✅ |
 | 公式ファーム v1.00 | ✅(v1.00 でのHDD作成と、起動) |
-| 公式ファーム v1.51〜v2.5x | ❓ ファイルの構造の解析のみ。実機の通しは未確認 |
+| 公式ファーム v1.51〜v2.5x | ⚠️ 全10パッケージの構造を解析(KNL は3世代、RFS は全バージョン同一)。**v1.51 は実機で通した**(KNL・rootfs とも v1.51 で起動し、公式の更新で v2.60 へ)。v1.52〜v2.5x の途中の状態は、実機では止められない(公式の更新は一度で v2.60 まで上がる)ため未検証 |
 | 本体のSPIが v2.60 より古いファームのまま | ⚠️ **KNL(カーネル)だけ v1.51 世代(2012-08)に戻した本体で、v2.60 の rootfs の公式アプリが起動し、HDD も登録された**(実機1台)。RFS(miniroot)は全バージョンで同一、KNL は v1.51 / v1.52〜v1.71 / v2.00〜v2.60 の3世代だけ(パッケージの比較)。KNL も rootfs も v1.51 の完全な旧世代でも、公式アプリが `0151` で起動し(実機)、**そこから公式の WebUI の更新で v2.60 まで上がった**([docs/02](02_boot_chain.md)) |
 
 ## 2. HDD
@@ -40,10 +40,13 @@
 | Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
 | 公式アプリを1回だけ起動(`official-once`) | ✅ 1TB の `embed`・`image` 構成でも確認(予約 → 公式が `0260` → 電源を入れ直すと Debian に戻り、印は消費)。NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
 | 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
-| 起動失敗時の自動フォールバック | ⚠️ `nasne_init` が Sony の miniroot へ切り替える所までは実機で確認(起動カウンタ `xx`)。**公式アプリは起動せず、ssh で入れる救出用の状態になる**。公式を動かすのは `official-once` | [docs/05](05_kernel_and_direct_boot.md) |
+| 起動失敗時の自動フォールバック | ✅ `nasne_init` が Sony の miniroot へ切り替える(起動カウンタ `xx`。実機で確認)。**公式アプリは起動せず、ssh で入れる救出用の状態になる**。公式を動かすのは `official-once` |
+| SPIの A/B フォールバック(ブートローダ側) | ⚠️ **KNL の本体の1バイトを壊して CRC を不一致にしたら、BKNL で起動して公式ファームが動いた**(実機。A/B はカーネルと miniroot で別々に選ばれる)。復旧は HDD 経由で成功、SPI は実験前と完全一致。**ヘッダまで消えた場合・BRFS で起動する場合は未検証**(KNL がほぼ消去された事故では助からなかった報告がある。[docs/02](02_boot_chain.md)) | [docs/05](05_kernel_and_direct_boot.md) |
 | 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
 | 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
-| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
+| 前面LED(REC・LAN・PWR) | ✅ REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま、PWR=緑(異常を報告している間だけ赤。保留セクタなどは「急増」だけ異常扱い) | [docs/06](06_mcu_watchdog.md) |
+| EPGStation の予約に合わせた起床・自動電源オフ | ✅ 予約の5分前に自動で起床 → 予約どおり録画 → 使われなくなったら自動で電源オフ(任意) | [docs/06](06_mcu_watchdog.md)、[contrib/epgstation](../contrib/epgstation/README.md) |
+| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。**Mirakurun から使うときは、チャンネル名(スキャンの既定の `101`〜`256` は不可。`useSubCh=1` で `BS01_0` 形式)と、チャンネルに `?sid=` が要る点に注意**([docs/11](11_tv_streaming.md)。`nasne_mirakurun_conf.py --sat` / `--fix-sat` で補助)。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
 | 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
 | 数日の連続運用 | ✅ 約4日(EPGStation の予約録画12本、計約45GB)。録画は全部、予約どおりの長さ(30分・35分・約2時間)で、デマックスの最後まで読めた。HDD の温度は28〜47℃。Home Assistant と Prometheus での監視も実機で確認 | [docs/11](11_tv_streaming.md)、[docs/18](18_status_page.md) |
 

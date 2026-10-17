@@ -1042,7 +1042,7 @@ static int listen_port(unsigned long port) {
                     else break;
                 }
                 if (!parse_channel_str(ch_buf, &is_sat, &freq_val, &parsed_ts_id)) {
-                    http_status(c, "HTTP/1.0 400 Bad Request", "channel must be UHF 13-62, BS1-BS23, or CS2-CS24\n");
+                    http_status(c, "HTTP/1.0 400 Bad Request", "channel must be UHF 13-62 (e.g. 31), BS<odd 1-23>[_<slot>] (e.g. BS15_0 or BS1), or CS<even 2-24> (e.g. CS2). Mirakurun BS channel names 101-256 are not supported: scan with useSubCh=1 (BS01_0 style). Add ?sid=0x<serviceId>.\n");
                     sys3(SYS_exit, 0, 0, 0);
                 }
                 if (!ts_id) ts_id = parsed_ts_id;
@@ -1077,7 +1077,7 @@ int main_c(long *sp) {
     if (port) { logv = 1; return listen_port(port); }        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
     set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
     if (do_scan) return scan(1);
-    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23 | CS2-CS24 | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }
+    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23(奇数。BS15_0 のようにスロット付きも可) | CS2-CS24(偶数) | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan | --listen <port>\n"); return 2; }
     {
         const char *chs, *secs, *dst;
         int is_sat = 0; unsigned long freq_val = 0, parsed_tsid = 0;
