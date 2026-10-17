@@ -9,16 +9,31 @@
 ### END INIT INFO
 # 公式では、電源ボタンの長押しをMCUがステータス(mcui2c r 20 6 の6バイト)の2バイト目のbit4(0x10)に立て、procmngがそれを見て終了処理に入る。
 # ここでは1秒ごとにそのビットを読み、「立っていない→立った」の変化を検出したら poweroff する(起動時にすでに立っていた分は無視する)。
+# ラッチは、電源を入れ直すとクリアされるが、reboot ではクリアされない(実機で確認)。そこで、reboot で止めるときに(rc6 の stop で)その時の値を
+# /var/lib/nasne-powerbtn.reboot に残し、起動時に「reboot をまたいで残っているだけの古いラッチ」と「起動中に押された長押し」を区別する。
 # 電源は a-nasne-poweroff が実際に切る(MCUへ [0x02,0x01])。前提: mcui2c と公式ドライバ(nasne-mcu-wd が読み込む)。
 BIN=${NASNE_BIN:-/usr/local/sbin}
 INTERVAL=${NASNE_PWRBTN_INTERVAL:-1}
 POWEROFF=${NASNE_POWEROFF_CMD:-poweroff}
 PIDFILE=/var/run/nasne-powerbtn.pid
+STATE=/var/lib/nasne-powerbtn.reboot
 status_b1() { "$BIN/mcui2c" r 20 6 2>/dev/null | sed -n 's/.*data=[0-9a-f][0-9a-f] \([0-9a-f][0-9a-f]\) .*/\1/p'; }
 run() {
-    prev=0
-    v=$(status_b1); [ -n "$v" ] && prev=$((0x$v))
-    logger -t nasne-powerbtn "監視開始 (status[1]=0x$(printf %02x $prev))"
+    # 起動直後は MCU のドライバがまだ読み込まれていないことがある。最初の読み取りが成功するまで待つ(失敗のまま 0 と見なすと、残っているラッチを新しい長押しと取り違える)
+    v=""; n=0
+    while [ -z "$v" ] && [ $n -lt 90 ]; do v=$(status_b1); [ -n "$v" ] || { n=$((n + 1)); sleep 1; }; done
+    prev=0; [ -n "$v" ] && prev=$((0x$v))
+    saved=-1; [ -f "$STATE" ] && { saved=$(cat "$STATE" 2>/dev/null); rm -f "$STATE"; }
+    logger -t nasne-powerbtn "監視開始 (status[1]=0x$(printf %02x $prev)、reboot前=$saved)"
+    if [ $((prev & 16)) -ne 0 ]; then
+        if [ "$saved" -ge 0 ] 2>/dev/null && [ $((saved & 16)) -ne 0 ]; then
+            logger -t nasne-powerbtn "reboot をまたいで残っている古いラッチ。無視する(電源を入れ直すまで、長押しは検出できない)"
+        else
+            logger -t nasne-powerbtn "起動中に電源ボタンの長押しがあった。poweroff する"
+            $POWEROFF
+            exit 0
+        fi
+    fi
     while :; do
         sleep "$INTERVAL"
         v=$(status_b1); [ -n "$v" ] || continue
@@ -34,7 +49,12 @@ run() {
 case "$1" in
     start)   [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && exit 0
              nohup "$0" run >/dev/null 2>&1 & echo $! > $PIDFILE ;;
-    stop)    [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" 2>/dev/null; rm -f $PIDFILE ;;
+    stop)    # reboot(runlevel 6)で止めるときだけ、いまのラッチの値を残す(poweroff のときは電源が切れるので不要)
+             case "$(runlevel 2>/dev/null)" in
+                 *" 6") v=$(status_b1); [ -n "$v" ] && echo $((0x$v)) > "$STATE" ;;
+                 *)     rm -f "$STATE" ;;
+             esac
+             [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" 2>/dev/null; rm -f $PIDFILE ;;
     run)     run ;;
     status)  [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null && echo running || { echo stopped; exit 3; } ;;
     *)       echo "usage: $0 {start|stop|status}"; exit 1 ;;
