@@ -8,7 +8,7 @@ Mirakurun 公式仕様の `commandVars` に完全準拠し、nasne のシング�
     -o     出力先(既定: カレント)。tuners.yml と channels.yml を書く。Mirakurun の設定ディレクトリ(/app-config など)に置く
     --scan 先に /scan を実行して一覧を作る(約80秒。チューナーを使うので、録画中は避ける)
     --name チューナー名(既定 nasne)
-    --sat  tuners.yml の types に BS・CS を含め、BS全局(新3局含む全27局)+CS主要局のプリセット定義を channels.yml に統合出力
+    --sat  tuners.yml の types に BS・CS を含める (実機スキャンにBS/CSが含まれている場合は自動判別)
 
   nasne_mirakurun_conf.py --fix-sat <Mirakurun の channels.yml> [--enable]
     Mirakurun のチャンネルスキャンで作られた BS/CS の項目を、nasne 用に直す(ファイルをその場で書き換える。元は .bak に残す)。
@@ -24,91 +24,6 @@ import re
 import shutil
 import sys
 import urllib.request
-
-# BS プリセット定義 (局名, channel, serviceId, isDisabled)
-# 2024年秋の帯域再編・新局(BS松竹東急/BSJapanext/BSよしもと)に対応した最新定義
-BS_PRESETS = [
-    ('NHK BS', 'BS15_0', 101, False),
-    ('BS日テレ', 'BS13_0', 141, False),
-    ('BS朝日', 'BS01_0', 151, False),
-    ('BS-TBS', 'BS01_1', 161, False),
-    ('BSテレ東', 'BS01_2', 171, False),
-    ('BSフジ', 'BS13_1', 181, False),
-    ('BS11イレブン', 'BS09_0', 211, False),
-    ('BS12トゥエルビ', 'BS09_2', 222, False),
-    ('放送大学テレビ', 'BS13_2', 231, False),
-    ('WOWOWプライム', 'BS03_0', 191, False),
-    ('WOWOWライブ', 'BS05_0', 192, False),
-    ('WOWOWシネマ', 'BS05_1', 193, False),
-    ('スターチャンネル', 'BS09_1', 200, True),
-    ('放送大学ラジオ', 'BS13_2', 531, True),
-    ('グリーンチャンネル', 'BS21_2', 234, False),
-    ('BSアニマックス', 'BS03_1', 236, False),
-    ('BS釣りビジョン', 'BS11_0', 241, True),
-    ('J SPORTS 1', 'BS19_1', 242, False),
-    ('J SPORTS 2', 'BS19_2', 243, False),
-    ('J SPORTS 3', 'BS19_3', 244, False),
-    ('J SPORTS 4', 'BS19_0', 245, False),
-    ('WOWOWプラス', 'BS21_0', 252, False),
-    ('日本映画専門チャンネル', 'BS21_1', 255, False),
-    ('ディズニー・チャンネル', 'BS23_0', 256, False),
-    ('BS松竹東急', 'BS23_3', 260, False),
-    ('BSJapanext', 'BS23_2', 263, True),
-    ('BSよしもと', 'BS23_1', 265, False),
-]
-
-# CS プリセット定義 (局名, channel, serviceId, isDisabled)
-# nasne のシングルTS制約を回避するため、チャンネル名は CS{ND}_{SID} 形式で一意化
-CS_PRESETS = [
-    ('TBSチャンネル1', 'CS2_296', 296, False),
-    ('テレ朝チャンネル1', 'CS2_298', 298, False),
-    ('テレ朝チャンネル2', 'CS2_299', 299, False),
-    ('ディズニージュニア', 'CS2_339', 339, False),
-    ('スカイA', 'CS4_250', 250, False),
-    ('時代劇専門チャンネル', 'CS4_292', 292, False),
-    ('スカチャン1', 'CS4_301', 301, False),
-    ('MTV', 'CS4_323', 323, False),
-    ('ホームドラマチャンネル', 'CS6_294', 294, False),
-    ('ミュージック・エア', 'CS6_324', 324, False),
-    ('歌謡ポップスチャンネル', 'CS6_329', 329, False),
-    ('カートゥーン ネットワーク', 'CS6_331', 331, False),
-    ('ディスカバリーチャンネル', 'CS6_340', 340, False),
-    ('アニマルプラネット', 'CS6_341', 341, False),
-    ('CNNj', 'CS6_354', 354, False),
-    ('囲碁・将棋チャンネル', 'CS6_363', 363, False),
-    ('ショップチャンネル', 'CS8_55', 55, False),
-    ('東映チャンネル', 'CS8_218', 218, False),
-    ('衛星劇場', 'CS8_318', 318, False),
-    ('映画・チャンネルNECO', 'CS8_349', 349, False),
-    ('スカチャン2', 'CS10_101', 101, True),
-    ('衛星劇場', 'CS10_219', 219, False),
-    ('KBS World', 'CS10_317', 317, False),
-    ('GAORA SPORTS', 'CS12_254', 254, False),
-    ('MUSIC ON! TV', 'CS12_325', 325, False),
-    ('キッズステーション', 'CS12_330', 330, False),
-    ('ナショナル ジオグラフィック', 'CS12_343', 343, False),
-    ('ザ・シネマ', 'CS14_227', 227, False),
-    ('ファミリー劇場', 'CS14_293', 293, False),
-    ('スーパー!ドラマTV', 'CS14_310', 310, False),
-    ('ヒストリーチャンネル', 'CS14_342', 342, False),
-    ('アクションチャンネル', 'CS16_311', 311, False),
-    ('ミステリーチャンネル', 'CS16_316', 316, False),
-    ('ミュージック・グラフィティTV', 'CS16_321', 321, False),
-    ('AT-X', 'CS16_333', 333, False),
-    ('BBCニュース', 'CS16_353', 353, False),
-    ('Dlife', 'CS18_305', 305, False),
-    ('FOX', 'CS18_314', 314, False),
-    ('フジテレビONE', 'CS20_307', 307, False),
-    ('フジテレビTWO', 'CS20_308', 308, False),
-    ('フジテレビNEXT', 'CS20_309', 309, False),
-    ('スペースシャワーTV', 'CS20_322', 322, False),
-    ('映画・チャンネルNECO', 'CS22_297', 297, False),
-    ('TBSチャンネル2', 'CS22_312', 312, False),
-    ('日テレNEWS24', 'CS22_351', 351, False),
-    ('日テレプラス', 'CS24_300', 300, False),
-    ('タカラヅカ・スカイ・ステージ', 'CS24_315', 315, False),
-]
-
 
 def fetch(url, timeout):
     with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -259,7 +174,7 @@ def main():
     ap.add_argument("-o", "--outdir", default=".", help="設定ファイルの出力先ディレクトリ (既定: カレント)")
     ap.add_argument("--scan", action="store_true", help="実行前に nasne で /scan を実行する (約80秒)")
     ap.add_argument("--name", default="nasne", help="チューナー名 (既定: nasne)")
-    ap.add_argument("--sat", action="store_true", help="BS/CS の定義も生成する (最新BS全局+主要CS局のプリセット定義を統合出力)")
+    ap.add_argument("--sat", action="store_true", help="tuners.yml の types に BS・CS を含める (実機スキャンにBS/CSが含まれている場合は自動判別)")
     a = ap.parse_args()
 
     base = f"http://{a.nasne}:8301"
@@ -299,39 +214,10 @@ def main():
                 f"  isDisabled: false\n"
             )
 
-        # 実機スキャンにBS/CSが含まれておらず、--sat が指定された場合はプリセットで補完
-        if a.sat and not has_sat_in_services:
-            for name, ch, sid, dis in BS_PRESETS:
-                sid_hex = f"0x{sid:04x}"
-                dis_str = "true" if dis else "false"
-                f.write(
-                    f"- name: {yq(name)}\n"
-                    f"  type: BS\n"
-                    f"  channel: '{ch}'\n"
-                    f"  serviceId: {sid}\n"
-                    f"  commandVars:\n"
-                    f"    sid_query: \"?sid={sid_hex}\"\n"
-                    f"    sid: \"{sid_hex}\"\n"
-                    f"  isDisabled: {dis_str}\n"
-                )
-            for name, ch, sid, dis in CS_PRESETS:
-                sid_hex = f"0x{sid:04x}"
-                dis_str = "true" if dis else "false"
-                f.write(
-                    f"- name: {yq(name)}\n"
-                    f"  type: CS\n"
-                    f"  channel: '{ch}'\n"
-                    f"  serviceId: {sid}\n"
-                    f"  commandVars:\n"
-                    f"    sid_query: \"?sid={sid_hex}\"\n"
-                    f"    sid: \"{sid_hex}\"\n"
-                    f"  isDisabled: {dis_str}\n"
-                )
-
     gr_count = sum(1 for s in services if s[3] == "GR")
-    bs_count = sum(1 for s in services if s[3] == "BS") + (len(BS_PRESETS) if (a.sat and not has_sat_in_services) else 0)
-    cs_count = sum(1 for s in services if s[3] == "CS") + (len(CS_PRESETS) if (a.sat and not has_sat_in_services) else 0)
-    total_count = gr_count + bs_count + cs_count
+    bs_count = sum(1 for s in services if s[3] == "BS")
+    cs_count = sum(1 for s in services if s[3] == "CS")
+    total_count = len(services)
     print(f"{a.outdir}/tuners.yml と channels.yml を書きました(サービス {total_count} 件: GR {gr_count} 件, BS {bs_count} 件, CS {cs_count} 件)")
 
 

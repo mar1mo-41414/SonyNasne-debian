@@ -36,11 +36,11 @@ nasne上では録画ソフトを動かしません。録画ファイルは Mirak
 - チャンネル設定はサービスごとに1エントリです(nasne は1回に1サービスしか出力しないため)。局が増えた・変わったら `--scan` で作り直してください。
 - BS/CS は、**作者の環境では信号が来ておらず、通しは未検証**です(他の人の報告では nasne で受信できています)。使うときは下の「BS/CS を使う」を見てください。
 
-## BS/CS を使う(任意)
+## BS/CS を使う(任意。作者の環境では未検証)
 
 nasne は**1回に1サービスしか出さない**シングルサービスチューナーのため、Mirakurun のチャンネルは「サービスごと」に定義し、`commandVars` 経由で目的の SID を nasne に渡す必要があります(以前のように `channel` に直接 `?sid=` を書くと Mirakurun API や TVTest / BonDriver が 404 や不正フォーマットエラーを起こします)。詳しくは [docs/11](../../docs/11_tv_streaming.md)。
 
-### 方法 A: nasne 実機の自律スキャンから全局一括生成(推奨・最も簡単)
+### 方法 A: nasne 実機のスキャンから全局一括生成(推奨・最も簡単)
 nasne-recpt1 は地デジ・BS(全スロット)・CS(全トランスポンダ)の全スキャンに対応しています。
 
 ```bash
@@ -56,7 +56,7 @@ docker compose restart mirakurun
 
 ### 方法 B: Mirakurun 本体のチャンネルスキャンを使う場合
 ```bash
-# 1. tuners.yml に BS・CS を含めて設定生成 (最新BS全局+CS主要局のプリセット定義も統合出力されます)
+# 1. tuners.yml の types に BS・CS を含めて生成
 python3 ../../scripts/nasne_mirakurun_conf.py <nasneのIP> --sat -o mirakurun-conf
 # 2. Mirakurun を再起動後、スキャンを実行
 curl -X PUT "http://localhost:40772/api/config/channels/scan?type=BS&useSubCh=1"
