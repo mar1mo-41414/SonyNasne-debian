@@ -72,6 +72,7 @@ python3 scripts/build_knl.py verify  <segment.bin>                              
 ```bash
 python3 scripts/spi_segments.py <spi.bin> [出力dir]                     # BFWF/INFO/INF2/FMAP/KNL/BKNL を復号・抽出
 python3 scripts/spi_boot_decrypt.py <spi.bin> <init(MIPS ELF)> <出力dir>   # U-Boot・4段目ブートの復号(XORパッド復元)
+python3 scripts/spi_ab_info.py <spi.bin> [--extract <出力dir>]            # A/B冗長スロット(KNL/BKNL/RFS/BRFS)の検証・ビルド番号・日時・本体の比較(読むだけ)
 ```
 
 `spi_boot_decrypt.py` のパッド復元には、MIPS命令のバイト分布の参照として、公式ファームのminiroot `init`(MIPS ELF)が必要。
