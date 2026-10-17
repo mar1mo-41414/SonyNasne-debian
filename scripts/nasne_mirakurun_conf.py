@@ -6,7 +6,7 @@ Mirakurun 公式仕様の `commandVars` に完全準拠し、nasne のシング�
 使い方:
   nasne_mirakurun_conf.py <nasneのIPまたはホスト名> [-o 出力ディレクトリ] [--scan] [--name チューナー名] [--sat]
     -o     出力先(既定: カレント)。tuners.yml と channels.yml を書く。Mirakurun の設定ディレクトリ(/app-config など)に置く
-    --scan 先に /scan を実行して一覧を作る(約80秒。チューナーを使うので、録画中は避ける)
+    --scan 先に /scan を実行して一覧を作る(地デジのみ約80秒。--sat と一緒なら /scan?all で BS/CS も、数分。チューナーを使うので録画中は避ける)
     --name チューナー名(既定 nasne)
     --sat  tuners.yml の types に BS・CS を含める (実機スキャンにBS/CSが含まれている場合は自動判別)
 
@@ -58,6 +58,14 @@ def yq(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def unique_channel(ch, sid):
+    """Mirakurun のチャンネル名を、サービスごとに一意にする(末尾に _<サービスID(10進)> を足す。`?` は使わない)。
+    nasne は1回に1サービスしか出さない。同じ周波数のサービスが同じ名前だと、Mirakurun は「同じチャンネル」とみなして、
+    2つ目のサービスの要求を、1つ目のストリームに相当させてしまい、データが来ない(実測)。名前が違えば、チューナーが空くのを待って選局し直す。
+    nasne-recpt1 は、`27_56360`(地デジ)・`BS15_0_101`・`CS16_333` の接尾辞を無視して受け付ける。"""
+    return ch if re.search(r"_%d$" % sid, ch) else f"{ch}_{sid}"
+
+
 def fix_tuners_file(tuners_path):
     """tuners.yml の command に <sid_query> が無ければ追加する"""
     if not os.path.exists(tuners_path):
@@ -96,6 +104,7 @@ def fix_sat(path, enable):
 
         # BS または CS の項目を修正
         if ch_type in ("BS", "CS"):
+            orig_it = it
             m_sid = re.search(r"(?m)^\s+serviceId:\s*(\d+)\s*$", it)
             m_ch = re.search(r"(?m)^(\s+channel:\s*)(['\"]?)([^'\"\n\r]+)\2(\s*)$", it)
 
@@ -107,9 +116,8 @@ def fix_sat(path, enable):
                 # 1. channel から既存の ?sid= などを綺麗に除去
                 clean_ch = raw_ch.split("?")[0].strip()
 
-                # 2. CS の場合、トランスポンダ名のみ(例: CS2)なら CS2_296 のように分離して集約を防ぐ
-                if ch_type == "CS" and not re.search(r"_\d+$", clean_ch):
-                    clean_ch = f"{clean_ch}_{sid_int}"
+                # 2. サービスごとに一意な名前にする(例: CS2 → CS2_296、BS01_0 → BS01_0_101)。同じ名前だと Mirakurun が1つのチャンネルに集約してしまう
+                clean_ch = unique_channel(clean_ch, sid_int)
 
                 # channel 行を更新
                 new_ch_line = f"{m_ch.group(1)}'{clean_ch}'{m_ch.group(4)}"
@@ -121,21 +129,16 @@ def fix_sat(path, enable):
                     f"    sid_query: \"?sid={sid_hex}\"\n"
                     f"    sid: \"{sid_hex}\"\n"
                 )
-                if "commandVars:" in it:
-                    it = re.sub(
-                        r"(?m)^\s+commandVars:.*?(?=^\s*\S|\Z)",
-                        cmd_vars,
-                        it,
-                        flags=re.DOTALL
-                    )
-                else:
-                    it = re.sub(
-                        r"(?m)^(\s+serviceId:\s*\d+.*?\n)",
-                        r"\1" + cmd_vars,
-                        it,
-                        count=1
-                    )
-                fixed += 1
+                # 既存の commandVars ブロック(見出し行と、それより深くインデントされた行)を消してから入れ直す(2回実行しても二重にならない)
+                it = re.sub(r"(?m)^[ \t]+commandVars:[^\n]*\n(?:[ \t]{3,}\S[^\n]*\n)*", "", it)
+                it = re.sub(
+                    r"(?m)^(\s+serviceId:\s*\d+.*?\n)",
+                    lambda m: m.group(1) + cmd_vars,
+                    it,
+                    count=1
+                )
+                if it != orig_it:                      # 実際に変わったものだけ数える(すでに直っていれば、ファイルにも .bak にも触らない)
+                    fixed += 1
 
             if enable and re.search(r"(?m)^\s+isDisabled:\s*true\s*$", it):
                 it = re.sub(r"(?m)^(\s+isDisabled:\s*)true(\s*)$", r"\1false\2", it)
@@ -174,13 +177,20 @@ def main():
     ap.add_argument("-o", "--outdir", default=".", help="設定ファイルの出力先ディレクトリ (既定: カレント)")
     ap.add_argument("--scan", action="store_true", help="実行前に nasne で /scan を実行する (約80秒)")
     ap.add_argument("--name", default="nasne", help="チューナー名 (既定: nasne)")
+    ap.add_argument("--port", type=int, default=8301, help="nasne-recpt1 のHTTPポート(既定 8301)")
+    ap.add_argument("--command", choices=("node", "curl"), default="node",
+                    help="tuners.yml のコマンド。node(既定): Mirakurun のイメージに必ず入っている node で取る。curl: curl を足したイメージ用")
     ap.add_argument("--sat", action="store_true", help="tuners.yml の types に BS・CS を含める (実機スキャンにBS/CSが含まれている場合は自動判別)")
     a = ap.parse_args()
 
-    base = f"http://{a.nasne}:8301"
+    base = f"http://{a.nasne}:{a.port}"
     if a.scan:
-        print("スキャン中(約80秒)...", file=sys.stderr)
-        fetch(base + "/scan", 300)
+        if a.sat:
+            print("スキャン中(地デジ+BS+CS。数分かかる)...", file=sys.stderr)
+            fetch(base + "/scan?all", 1200)
+        else:
+            print("スキャン中(約80秒)...", file=sys.stderr)
+            fetch(base + "/scan", 300)
 
     services = parse_m3u(fetch(base + "/playlist.m3u8", 30))
     if not services:
@@ -192,10 +202,14 @@ def main():
 
     with open(os.path.join(a.outdir, "tuners.yml"), "w", encoding="utf-8") as f:
         types = "    - GR\n    - BS\n    - CS\n" if use_sat else "    - GR\n"
+        if a.command == "node":    # 公式の Mirakurun イメージには curl が無い(node はある)
+            cmd = f"node -e \"require('http').get('{base}/tuner/<channel><sid_query>', res => res.pipe(process.stdout))\""
+        else:
+            cmd = f"curl -s {base}/tuner/<channel><sid_query>"
         f.write(
             f"- name: {a.name}\n"
             f"  types:\n{types}"
-            f"  command: curl -s {base}/tuner/<channel><sid_query>\n"
+            f"  command: {cmd}\n"
             f"  isDisabled: false\n"
         )
 
@@ -206,7 +220,7 @@ def main():
             f.write(
                 f"- name: {yq(name)}\n"
                 f"  type: {ch_type}\n"
-                f"  channel: '{ch}'\n"
+                f"  channel: '{unique_channel(ch, sid)}'\n"
                 f"  serviceId: {sid}\n"
                 f"  commandVars:\n"
                 f"    sid_query: \"?sid={sid_hex}\"\n"

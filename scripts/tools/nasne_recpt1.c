@@ -649,9 +649,10 @@ static int parse_channel_str(const char *s, int *is_sat, unsigned long *val, uns
         }
         return 0;
     }
-    if (is_num(s)) {
-        unsigned long ch = parse_dec(s);
-        if (ch >= 13 && ch <= 62) {
+    {   /* 地デジ: 13〜62。`27_56360` のように、あとに `_<任意>` が付いてもよい(Mirakurun のチャンネル名を、サービスごとに一意にして、`?` を使わないため。接尾辞は無視する) */
+        unsigned long ch = 0; const char *p = s; int nd = 0;
+        while (*p >= '0' && *p <= '9') { ch = ch * 10 + (*p - '0'); p++; nd++; }
+        if (nd && (*p == 0 || *p == '_') && ch >= 13 && ch <= 62) {
             *is_sat = 0;
             *val = uhf_hz(ch);
             *ts_id = 0;

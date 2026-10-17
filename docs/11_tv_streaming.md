@@ -68,38 +68,34 @@ curl 'http://<nasne>:8301/tuner/CS6?sid=0x....' | ffplay -
 - **`--scan` と `/scan` は、地デジ(UHF 13〜62)だけ**で、BS/CS はスキャンしない(BS/CS は Mirakurun のスキャンで探す。下記)。
 - 衛星のときだけ、PSI ストリームから PMT を出力 TS へ混ぜる(地デジは復号済みのストリームに PMT が含まれていて、混ぜると二重になる)。
 
-#### Mirakurun で BS/CS を使う(チャンネル指定の決まり)
+#### Mirakurun で BS/CS を使う
 
-nasne は **1回に1サービスしか出力しない**ので、Mirakurun のチャンネルは「サービスごと」に1つ要り、**チャンネル文字列に `?sid=0x<サービスID>` を含める**(地デジで `31?sid=0xdc10` としているのと同じ)。
-`sid` を付けないと、`nasne-recpt1` は「映像と音声を持つ最初のサービス」を出すので、同じ周波数(トランスポンダ)の全サービスが同じ番組になる。
+nasne は **1回に1サービスしか出力しない**ので、Mirakurun のチャンネルは「サービスごと」に1つ要り、サービスの指定(`?sid=0x…`)をコマンドに渡す必要がある。
+**チャンネル名に `?sid=` を含める方式は、Mirakurun の API や TVTest で 404・不正な形式になる**ので、`commandVars` に分ける(上の `channels.yml` の説明)。`nasne_mirakurun_conf.py` がこの形式を自動で作る。
 
-| 種類 | `nasne-recpt1` が受け付けるチャンネル | 例 |
+| 種類 | `nasne-recpt1` が受け付けるチャンネル | 例(Mirakurun のチャンネル名) |
 |---|---|---|
-| 地デジ | `13`〜`62` | `31?sid=0xdc10` |
-| BS | `BS<奇数1〜23>` または `BS<奇数>_<スロット>`(先頭の 0 は付けても付けなくてもよい)。**偶数は不可(400)** | `BS15_0?sid=0x0065` |
-| CS110 | `CS<偶数2〜24>`(`CS02` も可。スロットは無視) | `CS2?sid=0x0101` |
+| 地デジ | `13`〜`62`(あとに `_<任意>` が付いてもよい) | `27_56360` |
+| BS | `BS<奇数1〜23>` または `BS<奇数>_<スロット>`(先頭の 0 は付けても付けなくてもよい。あとに `_<任意>` が付いてもよい)。**偶数は不可(400)** | `BS15_0_101` |
+| CS110 | `CS<偶数2〜24>`(`CS02` も可。スロット・接尾辞は無視) | `CS2_257` |
 
-**Mirakurun のチャンネルスキャンをそのまま使うと合わない点**(Mirakurun のソースで確認):
-- BS のスキャンの**既定のチャンネル名は `101`〜`256`**(BS の放送サービス番号)。`nasne-recpt1` は受け付けない(400)。**`useSubCh=1`(Web UI では BS のサブチャンネル形式)を指定すると `BS01_0`〜`BS23_3` の形式**になる。CS は既定で `CS2`〜`CS24`。
-- Mirakurun は `useSubCh=false` のような文字列も**真と読む**(値は `1` にするか、付けない)。
-- スキャンが書く項目の `channel` には `?sid=` が付かない。**衛星の項目は、既定で `isDisabled: true`**(無効)で追加される。
-- `tuners.yml` の `types` に **BS と CS が入っていないと**、衛星のチャンネルを使えない(`nasne_mirakurun_conf.py` は、`--sat` を付けると入れる。付けなければ GR だけ)。
-- スキャンは、指定した種類の範囲外の項目を消し、ほかの種類の項目は残す(地デジの項目は残る)。
-
-手順(作者の環境では BS/CS の信号が無く、**一連の通しは未検証**。ここまでの整備は、コードの読み取りと、サンプルの `channels.yml` での変換の確認):
+**いちばん簡単な手順**(nasne 自身がスキャンする。PR #5 で追加。BS/CS の信号が来ている環境):
 
 ```bash
-# 1. tuners.yml に BS・CS を入れて(--sat)、Mirakurun を再起動
-python3 scripts/nasne_mirakurun_conf.py <nasne> --sat -o mirakurun-conf
-# 2. Mirakurun でスキャン(時間がかかる。チューナーを使うので録画中は避ける)
-curl -X PUT "http://<mirakurun>:40772/api/config/channels/scan?type=BS&useSubCh=1"
-curl -X PUT "http://<mirakurun>:40772/api/config/channels/scan?type=CS"
-# 3. スキャン結果に ?sid= を足して、有効にする(元のファイルは .bak に残る)
-python3 scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --enable
-# 4. Mirakurun を再起動
+# nasne に BS/CS を含めてスキャンさせ(数分。チューナーを使うので録画中は避ける)、Mirakurun の設定を作る
+python3 scripts/nasne_mirakurun_conf.py <nasne> --sat --scan -o mirakurun-conf
+# → tuners.yml(types に GR・BS・CS)と channels.yml(サービスごと)ができる。Mirakurun を再起動
 ```
 
-`nasne_mirakurun_conf.py` は **`channels.yml` を地デジだけで書き直す**(`--sat` の有無にかかわらず、BS/CS の項目は消える)。局が変わって作り直したときは、そのあとで BS/CS のスキャン(手順の 2・3)をやり直すこと。
+`/scan`(地デジのみ)、`/scan?sat`(衛星のみ)、`/scan?all`(全部)で、結果は `/playlist.m3u8` に出る(`group-title` は `UHF`・`BS`・`CS`)。**スキャンのたびに一覧(キャッシュ)は、スキャンした種類だけで置き換わる**(地デジだけをスキャンすると、BS/CS の一覧は消える)。
+`tuners.yml` のコマンドは、既定で `node -e "require('http').get(…)"`(Mirakurun の公式イメージには **curl が入っていない**。node は入っている。実測)。curl を足したイメージを使うなら `--command curl`。
+
+**Mirakurun 自身のチャンネルスキャンを使う場合**(代替):
+- BS のスキャンの**既定のチャンネル名は `101`〜`256`** で、`nasne-recpt1` は受け付けない(400)。**`useSubCh=1`(`PUT /api/config/channels/scan?type=BS&useSubCh=1`)で `BS01_0`〜`BS23_3` の形式**になる。CS は既定で `CS2`〜`CS24`。Mirakurun は `useSubCh=false` のような文字列も真と読むので、値は `1` にするか、付けない。
+- スキャンが書く項目は、`commandVars` が無く、チャンネル名が一意でなく、**衛星の項目は既定で `isDisabled: true`**。`python3 scripts/nasne_mirakurun_conf.py --fix-sat mirakurun-conf/channels.yml --enable` で、一意な名前(`BS01_0_101`・`CS2_257`)と `commandVars` に直し、有効にする(元は `.bak`。何度実行しても同じ結果)。同じディレクトリの `tuners.yml` のコマンドにも `<sid_query>` を足す。
+- `tuners.yml` の `types` に BS・CS が入っていること(`--sat`)。
+
+`nasne_mirakurun_conf.py` は **`channels.yml` を書き直す**。局が変わって作り直したら、Mirakurun のスキャンを使っていた場合は、そのあとで `--fix-sat` をやり直すこと。
 
 終了コード: 0 正常 / 1 エラー(ロックしない・サービスが無い・ストリームが開けない) / 2 使い方 / 3 チューナー使用中。
 
@@ -137,24 +133,34 @@ Mirakurun は別のPCで動かす(nasne上ではなく)。**EPGStation も動作
 - name: nasne
   types:
     - GR
-  command: curl -s http://<nasneのIP>:8301/tuner/<channel>
+  command: node -e "require('http').get('http://<nasneのIP>:8301/tuner/<channel><sid_query>', res => res.pipe(process.stdout))"
   isDisabled: false
 ```
 
-`channels.yml`(**サービスごとに1エントリ**。`channel` に `?sid=` を付けるのがポイント。nasne は1回に1サービスしか出力しないため):
+`channels.yml`(**サービスごとに1エントリ**。nasne は1回に1サービスしか出力しないため。`nasne_mirakurun_conf.py` が、これを自動で作る):
 
 ```yaml
 - name: 局名
   type: GR
-  channel: '27?sid=0x0400'      # 27 = UHFチャンネル、0x0400 = サービスID(/scan で調べる)
+  channel: '27_1024'           # 一意な名前(物理チャンネル _ サービスID(10進))。`?` は使わない
   serviceId: 1024              # 0x0400 の10進数
+  commandVars:                 # コマンドの <sid_query> に入る(Mirakurun の commandVars)
+    sid_query: "?sid=0x0400"
+    sid: "0x0400"
   isDisabled: false
 - name: 局名2
   type: GR
-  channel: '27?sid=0x0401'
+  channel: '27_1025'
   serviceId: 1025
+  commandVars:
+    sid_query: "?sid=0x0401"
+    sid: "0x0401"
   isDisabled: false
 ```
+
+- コマンドは `.../tuner/<channel><sid_query>`。`nasne-recpt1` は、`27_1024` の `_` 以降(接尾辞)を無視して、物理チャンネル 27 を選局し、`?sid=` でサービスを選ぶ。
+- **チャンネル名を `27?sid=0x0400` のように `?` を含めると、Mirakurun の API(`/api/channels/GR/27?sid=…`)が 404 になり、TVTest(BonDriver_Mirakurun)などでも不正な形式になる**(実測。PR #5 で報告)。そのため、サービス情報は `commandVars` に分ける。
+- **名前をサービスごとに一意にする**理由: 同じ物理チャンネルのサービスが同じ名前だと、Mirakurun は「同じチャンネル」とみなして、2つ目のサービスの要求を、1つ目のストリームに相乗りさせる。nasne は1サービスしか出さないので、2つ目は**データが来ないまま切れる**(実測: 約15秒後に空で切断)。名前が違えば、チューナーが空くのを待って選局し直す(実測: 1つ目が終わったあと、続けて取得できた)。
 
 サービスIDの調べ方: `curl http://<nasne>:8301/scan`(`sid=0x...(tv)` の一覧)。
 
