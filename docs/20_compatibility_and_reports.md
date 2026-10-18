@@ -13,6 +13,7 @@
 | **CECH-ZNR1J**(250GB の SSD に交換)・公式ファーム v2.60 | 🟡 **Debian 直起動(`nasne_setup.py` の embed)で、地デジの受信・配信が動いた**(Issue #6、VirtualBox 上の Ubuntu でビルド、SSD は USB-SATA で書き込み)。Mirakurun + EPGStation(Windows 上)で iPhone の EPGPlayer から、ライブ視聴・録画予約・録画済みの再生(いずれも無変換)、VLC(PC・Android・iPhone)での直接ストリーミング、VPN 経由の視聴を確認。**BS は受信できた**(`nasne-recpt1 --scan-all` でトランスポンダ BS13_0・BS13_1 などのサービスが見え、iPhone の VLC から `http://<nasne>:8301/tuner/BS13_0` で再生できた。最新版に更新したあとの報告)。CS は未確認。SPI の世代は未確認 |
 | その他のモデル | ❓ 基板・チューナー構成・SPIの配置が同じか不明 |
 | **CUHJ-15004**(1TBモデル)・公式ファーム v2.57 | 🟡 **SPIバックアップ専用 `.dlm`(`--mode backup`)を、その HDD 自身の `00550066.dlm`(v2.57)から作って sys1 に置いたら、公式ファームが正常に起動し、既存の録画も再生できた**(Issue #2、報告者1名。WSL2 でビルド、HDD は USB-SATA)。**SPI バックアップを回収し、`spi_ab_info.py` で解析した結果、KNL/BKNL はビルド 72(本体 md5 `dc6d8085…`)、RFS はビルド 50、BRFS はビルド 8 で、作者の機体と同じ世代**。公式 v2.57 から取った KNL セグメントは、公式 v2.60 パッケージ内のものとセグメント全体でバイナリ一致(報告者による確認)。基板が同じかは未確認。**Debian の直起動に成功**(`--mode embed --p3-mode image`。初回起動で SPI の KNL を書き換えて検証 OK、ウォッチドッグ停止も動作。Debian 7 + 自作カーネル 2.6.29、HDD 内の XFS に置いた 8GB の ext3 イメージ)。**`nasne-boot-switch official-once` で純正に一時復帰 → 純正の設定画面・既存録画の再生・地デジ(複数局)・BS・CS の受信を確認 → 電源の入れ直しで Debian に復帰**まで一巡(Issue #2、WSL2 でビルド)。純正で BS・CS が受信できたので、この個体の基板は BS/CS に対応。**Debian 上でも `nasne-recpt1` で地デジ6局・BS・CS の TS 配信を確認し、Mirakurun(3.9.0-rc.4)に 97 サービスを登録、EPG 19,240 番組を取得**(Issue #2、2026-10-18。映像の実再生・録画・長時間稼働はこれから)。チューナー使用中の `503 tuner busy` は、Mirakurun のスキャン/EPG 取得との競合 |
+| **CUHJ-15004**(1TBモデル)・公式ファーム v2.60・Seagate ST1000LM035 | 🟡 **手順書どおりに、SPIバックアップ(`--mode backup`)・SPI復元(`--mode restore`)・Debian 直起動(`nasne_setup.py` の embed)・地デジの受信と配信・Mirakurun / EPGStation まで動いた**(Issue #7、Ubuntu 26.04 でビルド) |
 | 公式ファーム v2.60 | ✅ |
 | 公式ファーム v1.00 | ✅(v1.00 でのHDD作成と、起動) |
 | 公式ファーム v1.51〜v2.5x | ⚠️ 全10パッケージの構造を解析(KNL は3世代、RFS は全バージョン同一)。**v1.51 は実機で通した**(KNL・rootfs とも v1.51 で起動し、公式の更新で v2.60 へ)。v1.52〜v2.5x の途中の状態は、実機では止められない(公式の更新は一度で v2.60 まで上がる)ため未検証 |
@@ -27,7 +28,7 @@
 | 1TB | ✅ Debian直起動(p3をext3にして直接)/ 🟡 HGST HTS541010B9E380 でも Debian 直起動の報告あり |
 | SSD 256GB(2.5インチSATA) | 🟡 公式で稼働していたHDDを SSD に換装し、`00550066.dlm` を上書きして Debian 直起動に成功したとの報告(USB-SATAでPCにつないで作成) |
 | 2TB 以上 | ❓(XFSの `agcount` は容量で変える。[docs/04](04_hdd_recovery_guide.md)) |
-| 別のメーカー(WD・Seagate・Toshiba など) | ❓ **`.hai`(HDD登録情報)が、型番とシリアルの先頭を使う**。型番の長さや書式が違うと合わない可能性 |
+| 別のメーカー(WD・Seagate・Toshiba など) | 🟡 **Seagate ST1000LM035(1TB)で、Debian 直起動・地デジ・Mirakurun / EPGStation まで動いた報告あり**(Issue #7)。ほかのメーカー・型番は❓: **`.hai`(HDD登録情報)が、型番とシリアルの先頭を使う**ので、型番の長さや書式が違うと合わない可能性 |
 | 500GB(東芝 MQ01ABF050)で、`mkdisk`→`phase1`→(`p3init` が拒否→`mkdisk --p3-only`)→`final`→`p3init`→(NV食い違い→`nvreset`)→公式 v2.60 起動(HDD登録済み) | ✅ 実機の通しで確認(別の人の報告と同じ症状を再現して、手順を修正) |
 | SMR のHDD、USB外付けHDD | ❓ |
 
