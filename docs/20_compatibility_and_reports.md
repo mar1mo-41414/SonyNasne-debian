@@ -37,6 +37,7 @@
 |---|---|---|
 | HDDの復旧(v1.00 なし) | ✅ | [docs/04](04_hdd_recovery_guide.md) |
 | SPIのバックアップ(`.dlm`) | ✅ `--dest sys1` `both` `p3`(`p3` 単独も実機で確認。約82秒、MD5・SHA1が一致、別のバックアップと比べて違いは書き換えたカーネルスロットだけ) | [docs/16](16_spi_backup_dlm.md) |
+| 新しいカーネル(6.12)+ Debian 12(SPI からの単独起動) | ✅(作者の1台。地デジ・LED・電源・USB・スワップ。BS/CS は 6.12 では未確認) | [docs/22](22_new_kernel_612.md) |
 | SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
 | Debian直起動(`embed`・`image`) | ✅ / 🟡 別の人の報告あり(公式で稼働していたHDDの `00550066.dlm` を上書きして成功) | [docs/13](13_full_setup_from_official_hdd.md) |
 | Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |

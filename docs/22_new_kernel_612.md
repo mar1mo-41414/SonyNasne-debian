@@ -20,18 +20,19 @@ nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換�
 | 前面 LED(PWR 緑・異常で赤、REC=チューナー使用中、LAN)、電源ボタン長押しでの停止、`poweroff` と起床タイマ | ✅ |
 | BS/CS | ❓(旧カーネルと同じ `nasne-recpt1` なので、旧カーネルで受信できる環境なら動くはずだが、6.12 では未確認) |
 | EPGStation の予約に合わせた起床(`nasne-waked`)→録画→自動オフ | ✅(予約の約4分前に起床、録画の180秒後に自動オフを、実機で確認) |
-| USB ホスト | ❌ 未対応 |
+| USB ホスト(EHCI+OHCI。USB メモリの ext4/vfat、USB マウス、ホットプラグ) | ✅([§7](#7-usb-ホストehci)) |
+| スワップ(`/data/swapfile`)・SysRq | ✅(RAM が約240MBなので、スワップを有効にしている。[§5](#5-knl-スロットの容量)) |
 
 ## 2. 試す手順(概要)
 
-前提: Linux のホストに、`gcc-mipsel-linux-gnu`(クロスコンパイラ)、`debootstrap`・`qemu-user-static`(rootfs 用)、`python3`、`curl`、`patch`、`unzip`。公式ファームを使った HDD と、**SPI のバックアップ**。
+前提: Linux のホストに、`gcc-mipsel-linux-gnu`(クロスコンパイラ)、`make`・`gcc`・`flex`・`bison`・`bc`(カーネルのビルド)、`debootstrap`・`qemu-user-static`(rootfs 用)、`python3`、`curl`、`patch`、`unzip`。公式ファームを使った HDD と、**SPI のバックアップ**。
 
 1. **カーネル**(ビルドは数分〜20分):
    ```bash
    newkernel/initramfs/mk_root.sh $PWD/newkernel/initramfs/root_boot boot      # 起動用の小さな init(約4KB。busybox なし)
    INITRAMFS=$PWD/newkernel/initramfs/root_boot newkernel/build.sh              # kernel.org から 6.12 を取得してビルド(成果は newkernel/out/new/)
    ```
-   `newkernel/out/new/vmlinux.knl.bin` が、KNL スロットに入れる中身です。ビルドの最後に、gzip 後の大きさと上限(2,621,376)が出ます。**上限に近い(余裕は約9KB)ので、機能を足すなら、何かを外す必要があります**([§5](#5-knl-スロットの容量))。
+   `newkernel/out/new/vmlinux.knl.bin` が、KNL スロットに入れる中身です。ビルドの最後に、gzip 後の大きさと上限(2,621,376)が出ます。余裕は約60KB です(クリーンなビルドで gzip 後 約 2,560,000 バイト)。機能を足すときは、先にこの大きさを確かめてください([§5](#5-knl-スロットの容量)、[docs/23](23_kernel_feature_inventory.md))。
 2. **チューナーのドライバ(xcode4drv.ko)**:
    ```bash
    newkernel/xc4drv/build.sh        # GPL ソース(AVDriver7GSP47.zip)を取得・展開し、パッチを当ててビルド → newkernel/out/xcode4drv.ko
@@ -55,6 +56,8 @@ nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換�
    ```bash
    NASNE_IP=<nasne の IP> scripts/newkernel/install_tv12.sh --now        # xcode4drv.ko・起動時の読み込み・nasne-recpt1 等
    NASNE_IP=<nasne の IP> scripts/newkernel/install_services12.sh --apt  # LED・状態ページ・電源ボタン・電源断と起床・時刻合わせ
+   NASNE_IP=<nasne の IP> scripts/newkernel/install_modules12.sh         # カーネルのモジュール(USB・vfat など)
+   NASNE_IP=<nasne の IP> scripts/newkernel/setup_swap12.sh 512          # スワップファイル(/data/swapfile。RAM が約240MBなので推奨)
    ```
 6. **元に戻す**: スロット A に、元のカーネル(`knl_new.bin` 等。`nasne_setup.py` が作る)を、同じ `mtdtool flash` で書き戻す(6.12 のままでは、`mtdtool` が動く間なら可能)。起動しなくなったら、CH341A で SPI を書き戻す。
 
@@ -75,7 +78,9 @@ nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換�
 
 ## 5. KNL スロットの容量
 
-KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip で展開するため、**gzip 後で 2,621,376 バイト以下**にする必要があります。6.12 は、次を外して収めています(`nasne_defconfig`): `NET_SELFTESTS`・`ETHTOOL_NETLINK`・`PAGE_POISONING`・`MQ_IOSCHED_KYBER`・`BLK_DEV_BSG`・`MTD_SPI_NOR_USE_4K_SECTORS`・`MTD_SPI_NOR_SWP_DISABLE_ON_VOLATILE`・`DEBUG_MISC`・`MIGRATION`・`COMPACTION`・`KEXEC`・`DEBUG_FS`・`INET_DIAG` ほか。現在の余裕は **約9KB**(gzip 後 約 2,611,000 バイト)です。
+KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip で展開するため、**gzip 後で 2,621,376 バイト以下**にする必要があります。**この上限に効くのは、カーネルに組み込む機能(`=y`)と、モジュール用に残すエクスポートシンボルの表だけ**で、モジュール(`=m`。USB・vfat など)は rootfs の `/lib/modules` に置くので影響しません。
+
+`nasne_defconfig` で外している物: `NET_SELFTESTS`・`ETHTOOL_NETLINK`・`PAGE_POISONING`・`MQ_IOSCHED_KYBER`・`BLK_DEV_BSG`・`DEBUG_FS`・`INET_DIAG`・`KEXEC`・`MARVELL_PHY`(PHY は Realtek で Generic PHY ドライバ)・`COMMON_CLK`・`SUSPEND`・`PTP_1588_CLOCK`・`HWMON`・`PPS`・`FW_LOADER` ほか。入れている物: `MAGIC_SYSRQ`・`SWAP`。**現在の余裕は約 60KB**(クリーンなビルドで gzip 後 約 2,560,000 バイト)。詳しい機能一覧と、足せる機能の費用は [docs/23](23_kernel_feature_inventory.md)。
 
 ## 6. SoC・基板の癖(新カーネルで必要だったこと)
 

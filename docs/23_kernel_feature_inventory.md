@@ -44,7 +44,7 @@ nasne の KNL スロットは、gzip 後 2,621,376 バイトまで(`newkernel/bu
 | `MTD_CONCAT`、各種 NOR ベンダーの定義 | 約 5KB | SPI-NOR ドライバの依存(確認が要る) |
 | math-emu(FPU エミュレータ) | 約 25KB | **残す**: 74Kc の FPU が扱わない演算で必要になる。外すと一部のプログラムが SIGILL になる恐れ |
 
-## 4. 追加できそうな機能(余白は 2,621,376 − 2,554,259 ≈ **67KB**)
+## 4. 追加できそうな機能(整理後の余白は 2,621,376 − 2,554,259 ≈ 67KB。そこから `MAGIC_SYSRQ`・`SWAP` を入れて、現在は **約 41〜60KB**(増分のあるビルドで約 41KB、クリーンなビルドで約 61KB))
 
 **まず大事な点**: 多くは**モジュール(`=m`)にできるので、上限に影響しない**(エクスポートシンボルの表が少し増える)。組み込みが必須なのは、ルートをマウントする前に要るものだけ(ext4・XFS・loop・sd・SATA・Ethernet は、すでに組み込み済み)。
 
@@ -80,4 +80,4 @@ nasne の KNL スロットは、gzip 後 2,621,376 バイトまで(`newkernel/bu
 | `RTC`/`WATCHDOG` クラス、`LEDS_CLASS`/`GPIOLIB`/`THERMAL` | 標準のインターフェース(LED・ウォッチドッグの MCU を標準 API で)。本機の LED は `nasne-ledd` が独自に操作している |
 | `HIGH_RES_TIMERS`/`NO_HZ`(現状 `HZ=100`) | タイマの精度・省電力。TV 配信の遅延には影響が小さい |
 
-**おすすめの順番**(必要性と費用): ① `IP_MULTICAST`(DLNA/mDNS)、② `MAGIC_SYSRQ`、③ `SWAP`(+ `zram` モジュール)、④ ACL/xattr、⑤ `SYSVIPC`(`POSIX_MQUEUE` なし)、⑥ `ss` 用 DIAG。これで余白をほぼ使う。IPv6・netfilter・FS 類・USB 機器類は、すべてモジュールで足せる。
+**入れた物**: `MAGIC_SYSRQ` と `SWAP`(2026-10-18)。**残りのおすすめの順番**(必要性と費用): ① `IP_MULTICAST`(DLNA/mDNS)、② `MAGIC_SYSRQ`、③ `SWAP`(+ `zram` モジュール)、④ ACL/xattr、⑤ `SYSVIPC`(`POSIX_MQUEUE` なし)、⑥ `ss` 用 DIAG。これで余白をほぼ使う。IPv6・netfilter・FS 類・USB 機器類は、すべてモジュールで足せる。

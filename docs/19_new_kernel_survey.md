@@ -113,6 +113,8 @@ MIPS アーキテクチャ自体は、メインラインで**保守されてい�
 
 ## 7. 段階的な計画(案)
 
+> 2026-10 時点で、**1〜6 はすべて完了**しました(結果は [docs/22](22_new_kernel_612.md))。USB(EHCI+OHCI)も動いています。以下は当時の計画です。
+
 1. **ビルドの足場**: 6.12 の MIPS32r2 最小構成を、Debian の cross gcc でビルドし、gzip 後 2.5MB に収まるか確かめる(まだ実機で動かさない)。
 2. **プラットフォーム**: `arch/mips/xcode` を新カーネルへ。irqchip・メモリ・引数・restart。**LED と netconsole で、初期化のどこまで進むかを見る**(kexec で)。
 3. **SATA**(`ahci_platform` + 固有処理)→ **initramfs から p3 のルートへ switch_root** ができれば、最小の「起動する新カーネル」。

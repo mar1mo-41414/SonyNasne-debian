@@ -4,6 +4,7 @@
 
 | 項目 | 内容 | 詳細 |
 |---|---|---|
+| **新しいカーネル(Linux 6.12 LTS)+ Debian 12** | SPI からの単独起動、SATA・Ethernet・MTD・MCU、地デジの受信と B-CAS 復号、LED・電源ボタン・電源断と起床タイマ、USB ホスト(EHCI+OHCI)、スワップ。試験中(BS/CS は 6.12 では未確認) | [docs/22](22_new_kernel_612.md)・[docs/23](23_kernel_feature_inventory.md) |
 | Debian直起動 | 自前カーネル + 内蔵initramfs で、p3 の Debian wheezy (mipsel) を `sysvinit` PID 1 として起動。ssh / cron / dhcp など通常運用 | [docs/05](05_kernel_and_direct_boot.md) |
 | カーネル差し替え | SPIの KNL 領域だけを書き換え。U-Boot / 4段目ブートは無改変(A/B の B を純正のまま残して安全網にする)。**B の正体は出荷時カーネル(公式 v2.00〜v2.60 の KNL と同一)。A の KNL を壊す(CRC不一致)と B で起動することを実機で確認**(HDD経由で復旧済み) | [docs/05](05_kernel_and_direct_boot.md) |
 | 自前カーネルのビルド | SIE公開のGPLソース + Docker(GCC 4.3.2)でビルド。純正ドライバ `xcode4drv.ko` もそのままロードできる | [docs/05](05_kernel_and_direct_boot.md) |

@@ -39,7 +39,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | **予約に合わせて自動で起床し、録画が終わったら自動で電源オフ**(`nasne-waked`。EPGStationの予約の5分前に起きる。電源オフは任意。[contrib/epgstation](contrib/epgstation/README.md)) |
 | ✅ できる | **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
 | ✅ できる | **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
-| △ 試験中 | **新しいカーネル(Linux 6.12 LTS)+ Debian 12**(SPI からの単独起動、SATA・Ethernet・MTD・MCU、**地デジの受信と B-CAS 復号(xcode4drv を 6.12 に移植)**、LED・電源ボタン・電源断と起床タイマ・状態ページまで動く。**SPI を書き換えるので、失敗に備えて CH341A を用意**。BS/CS・USB は未確認/未対応。[docs/22](docs/22_new_kernel_612.md)) |
+| △ 試験中 | **新しいカーネル(Linux 6.12 LTS)+ Debian 12**(SPI からの単独起動、SATA・Ethernet・MTD・MCU、**地デジの受信と B-CAS 復号(xcode4drv を 6.12 に移植)**、LED・電源ボタン・電源断と起床タイマ・状態ページ、**USB ホスト(USB メモリの ext4/vfat・ホットプラグ・USB マウス)**、スワップ、SysRq まで動く。**SPI を書き換えるので、失敗に備えて CH341A を用意**。BS/CS は 6.12 では未確認。[docs/22](docs/22_new_kernel_612.md)、カーネルの機能一覧は [docs/23](docs/23_kernel_feature_inventory.md)) |
 | 🟡 他の人の報告 | **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。`/scan?all` で BS/CS も一覧化でき、`nasne_mirakurun_conf.py --sat --scan` で Mirakurun の設定を作れる(PR #5)。Mirakurun で使うときのチャンネル名の決まりは [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
 | △ 未検証 | 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
 | ✅ できる | **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
@@ -100,6 +100,8 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
 | [19_new_kernel_survey](docs/19_new_kernel_survey.md) | 新しいカーネル(6.x)を作るために必要な情報の調査(ベンダーソースの実測、移植の対象、`xcode4drv`、デバッグの進め方) |
 | [20_compatibility_and_reports](docs/20_compatibility_and_reports.md) | **対応状況のマトリクス**(モデル・ファーム・HDD・機能)と、検証結果の報告のしかた(個体情報を出さない `nasne-report`) |
+| [22_new_kernel_612](docs/22_new_kernel_612.md) | **新しいカーネル(Linux 6.12 LTS)+ Debian 12**: ビルドと導入の手順、xcode4drv の移植、SoC の癖、USB、動くもの・動かないもの |
+| [23_kernel_feature_inventory](docs/23_kernel_feature_inventory.md) | 6.12 カーネルの機能一覧、省いたもの、追加できそうなもの(KNL スロットの容量との兼ね合い) |
 | [21_troubleshooting](docs/21_troubleshooting.md) | **トラブルシューティング**: LEDの状態とネットワークの応答から、原因と対処を引く表(HDDの復旧、公式の起動、Debian直起動、フォールバック) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |
@@ -115,7 +117,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 
 ## 必要なもの
 
-- Linux のPC(Python 3.8+、Docker、`debootstrap`、`qemu-user-static`、`flashrom`、`sfdisk`、`mkfs.ext3` など。作業ごとに[docs/09](docs/09_tools.md)に記載)
+- Linux のPC(Python 3.8+、Docker、`debootstrap`、`qemu-user-static`、`flashrom`、`sfdisk`、`mkfs.ext3` など。6.12 カーネルのビルドには、`gcc-mipsel-linux-gnu`・`make`・`gcc`・`flex`・`bison`・`bc`・`curl`・`unzip`・`patch`(クリーンな Debian 13 で確認。[docs/22](docs/22_new_kernel_612.md))。作業ごとに[docs/09](docs/09_tools.md)に記載)
 - SPIフラッシュ書き込みには CH341A 等のSPIライタとSOICクリップ(カーネル差し替えに必要。HDD復旧だけなら不要)
 - 実験用の2.5インチHDD(**Debian開発用と、純正のまま残すHDDは別にしておくこと**を強く推奨)
 
@@ -125,6 +127,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 .
 ├─ README.md
 ├─ docs/                      … 解析結果とやり方(上の表)
+├─ newkernel/                 … Linux 6.12 用: オーバーレイ(プラットフォーム・ドライバ)、パッチ、ビルド、xcode4drv の移植
 └─ scripts/
    ├─ dlm_crypto.py           … .dlm のBlowfish変種(暗号・復号)
    ├─ build_dlm.py            … .dlm の構築(ヘッダ/CRC)
@@ -143,6 +146,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
    ├─ kernel_build/           … 自前カーネルのビルド(Docker)と内蔵initramfs
    ├─ stage1/                 … 公式HDDの00550066.dlm差し替えだけでDebian直起動へ移行するツール一式
    ├─ watchdog/               … MCUウォッチドッグ停止(mcui2c、initサービス)
+   ├─ newkernel/              … 新カーネル(6.12)用の rootfs 作成・導入・サービス(Debian 12)
    ├─ tools/                  … 実機用のツール(`nasne-recpt1`(TS取得・HTTP配信)、I2C、ioctl、/dev/mem、MTD書き込み、B-CAS)
    ├─ nasne_fe.py             … チューナーのI2C操作(PCからssh経由)
    └─ ghidra/                 … Ghidra headless用の補助スクリプト
