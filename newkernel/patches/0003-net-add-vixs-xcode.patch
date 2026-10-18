@@ -1,0 +1,20 @@
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -199,6 +199,7 @@
+ source "drivers/net/ethernet/vertexcom/Kconfig"
+ source "drivers/net/ethernet/via/Kconfig"
+ source "drivers/net/ethernet/wangxun/Kconfig"
++source "drivers/net/ethernet/vixs/Kconfig"
+ source "drivers/net/ethernet/wiznet/Kconfig"
+ source "drivers/net/ethernet/xilinx/Kconfig"
+ source "drivers/net/ethernet/xircom/Kconfig"
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -101,6 +101,7 @@
+ obj-$(CONFIG_NET_VENDOR_VERTEXCOM) += vertexcom/
+ obj-$(CONFIG_NET_VENDOR_VIA) += via/
+ obj-$(CONFIG_NET_VENDOR_WANGXUN) += wangxun/
++obj-$(CONFIG_NET_VENDOR_VIXS) += vixs/
+ obj-$(CONFIG_NET_VENDOR_WIZNET) += wiznet/
+ obj-$(CONFIG_NET_VENDOR_XILINX) += xilinx/
+ obj-$(CONFIG_NET_VENDOR_XIRCOM) += xircom/

@@ -1,0 +1,371 @@
+diff -ruN a b
+--- a/commsdk/include/xcmem.h
++++ b/commsdk/include/xcmem.h
+@@ -48,7 +48,8 @@
+ #include <linux/pci.h>
+ #include <linux/sched.h>
+ #include <linux/vmalloc.h>
+-#include <asm/system.h>
++#include <asm/barrier.h>
++#include <xc_compat.h>
+ #include <linux/interrupt.h>
+ #include <linux/spinlock.h>
+ #include <asm/io.h>
+diff -ruN a b
+--- a/kdrv/drv/Os_Linux_Init.c
++++ b/kdrv/drv/Os_Linux_Init.c
+@@ -144,16 +144,16 @@
+ //DECLARE_WORK (Interrupt_tasklet, Interrupt_TimerDpc_Tasklet);
+ #endif
+ #else
+-DECLARE_TASKLET (Dma_tasklet, Dma_Dpc_Tasklet, 0);
++DECLARE_TASKLET_OLD(Dma_tasklet, Dma_Dpc_Tasklet);
+ 
+-DECLARE_TASKLET (Dma_E_tasklet, Dma_E_Dpc_Tasklet, 0);
+-DECLARE_TASKLET (I2c_tasklet, I2c_Dpc_Tasklet, 0);
+-//DECLARE_TASKLET (Sc_tasklet, Sc_Dpc_Tasklet, 0);
++DECLARE_TASKLET_OLD(Dma_E_tasklet, Dma_E_Dpc_Tasklet);
++DECLARE_TASKLET_OLD(I2c_tasklet, I2c_Dpc_Tasklet);
++//DECLARE_TASKLET_OLD(Sc_tasklet, Sc_Dpc_Tasklet);
+ 
+-DECLARE_TASKLET (Mips_Host_tasklet, Mips_Host_Dpc_Tasklet, 0);
+-DECLARE_TASKLET (Mips_Host_Req_tasklet, Mips_Host_Req_Dpc_Tasklet, 0);
++DECLARE_TASKLET_OLD(Mips_Host_tasklet, Mips_Host_Dpc_Tasklet);
++DECLARE_TASKLET_OLD(Mips_Host_Req_tasklet, Mips_Host_Req_Dpc_Tasklet);
+ 
+-DECLARE_TASKLET (Gpio_tasklet, Gpio_Dpc_Tasklet, 0);
++DECLARE_TASKLET_OLD(Gpio_tasklet, Gpio_Dpc_Tasklet);
+ 
+ char *pConfig_file = NULL;
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 16)
+@@ -989,14 +989,49 @@
+  *  PARAMETERS:    NONE
+  *
+  ***************************************************************************/
++#include <linux/platform_device.h>
++struct device *xc_dma_dev;
++EXPORT_SYMBOL(xc_dma_dev);
++static struct platform_device *xc_pdev;
++
+ int xcode_init_module(void);
+ module_init( xcode_init_module );
++
++/*
++ * 6.12 移植: ファーム(メディアエンジン)が基板の電源を入れる前にバスが Low だったため、I2C ブロック1のマスターが「バスビジー」の状態に張り付いて、
++ * 復調 IC が全く ACK しない(rv=0x0e)ことがある。PPC ブロックのソフトリセット(PPC_SFT_RSTN の bit0 を一度落とす)で、マスターが戻る。
++ * 起動の最後(電源が安定した後)に、ビジーが立っていれば1回だけ行う。元のドライバの PPC_Soft_Reset は、XC_SOC_BUILD では何もしない。
++ */
++static void xc_i2c_unwedge(PXCODEDEV pXcode)
++{
++    uint32 cmd1 = 0, v = 0;
++
++    msleep(500);
++    if (MMR_READ_CHECK(pXcode, &cmd1, XC_I2C1_COMMAND) == RET_NODEVICE)
++        return;
++    if (!(cmd1 & XC_I2C1_COMMAND_BUS_BUSY_MASK))
++        return;
++    printk(KERN_INFO "xcode4drv: I2C1 がバスビジーのまま(0x%08x)。PPC をソフトリセットして復帰させる\n", cmd1);
++    if (MMR_READ_CHECK(pXcode, &v, XC_PPC_SFT_RSTN) == RET_NODEVICE)
++        return;
++    MMR_WRITE_CHECK(pXcode, XC_PPC_SFT_RSTN, v & ~XC_PPC_SFT_RSTN_PPC_SFT_RSTN_MASK);
++    msleep(1);
++    MMR_WRITE_CHECK(pXcode, XC_PPC_SFT_RSTN, v | XC_PPC_SFT_RSTN_PPC_SFT_RSTN_MASK);
++    msleep(100);
++}
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+ int xcode_init_module(void)
+ #else
+ int32 init_module(void)
+ #endif
+ {
++    /* 6.12: DMA API に渡す struct device(元は NULL の pci_dev を渡していた)。platform_device を1つ作って DMA マスクを設定する */
++    xc_pdev = platform_device_register_simple("xcode4drv", -1, NULL, 0);
++    if (IS_ERR(xc_pdev))
++        return PTR_ERR(xc_pdev);
++    dma_set_mask_and_coherent(&xc_pdev->dev, DMA_BIT_MASK(32));
++    xc_dma_dev = &xc_pdev->dev;
++
+     int32 returnVal = 0;
+     PXCODEDEV pXcode = NULL;
+ #ifdef VIXS_USBD
+@@ -1039,6 +1074,7 @@
+             }
+ 
+             InitializeXcode(pXcode);
++            xc_i2c_unwedge(pXcode);
+             devicecount ++;
+ 
+ 			returnVal = OS_SUCCESS;
+@@ -3737,7 +3773,7 @@
+ 	#endif
+ 
+     //if (offset >= &thinsp;_pa(high_memory) || (File->f_flags & O_SYNC))
+-    Vma->vm_flags |= VM_RESERVED;
++    vm_flags_set(Vma, VM_DONTEXPAND | VM_DONTDUMP);
+     //Vma->vm_flags |= VM_LOCKED;
+ 
+     PDEBUG("Inside Boxster_Mmap the physical addr is: %Xh\n", (uint)offset);
+@@ -3745,7 +3781,7 @@
+ 
+     if((offset == pXcode->physfb) || (offset == pXcode->physmmr))
+     {
+-        Vma->vm_flags |= VM_IO;
++        vm_flags_set(Vma, VM_IO);
+ 
+ #if defined (EM8620)
+ 		// No MMU, don't need to remap page range
+diff -ruN a b
+--- a/kdrv/drv/Os_Wrp_Funct.c
++++ b/kdrv/drv/Os_Wrp_Funct.c
+@@ -56,37 +56,15 @@
+ #ifdef LINUX
+ struct page * user_addr_to_page(struct mm_struct *mm, void * user_addr)
+ {
++	/* 6.12: ページテーブルを直接たどる(pte_offset_map は輸出されない)代わりに get_user_pages_fast で引く。
++	 * 元のコードは参照を取らずに返していた(固定は Map_User_To_Kernel 側が済ませている)ので、引いたらすぐ離す */
+ 	unsigned long addr = (unsigned long) user_addr;
+ 	struct page *page = NULL;
+-	pgd_t *pgd = pgd_offset(mm,addr);
+-#ifndef EMMA3_CUSTOMER1_BUILD
+-	pud_t *pud;
+-#endif
+-	pmd_t *pmd;
+-	pte_t *ptep, pte;
+-
+-	if (!pgd_none(*pgd)) {
+-#ifndef EMMA3_CUSTOMER1_BUILD
+-		pud = pud_offset(pgd, addr);
+-		if (!pud_none(*pud)) {
+-			pmd = pmd_offset(pud, addr);
+-#else
+-			pmd = pmd_offset(pgd, addr);
+-#endif
+-			if (!pmd_none(*pmd)) {
+-				ptep = pte_offset_map(pmd, addr);
+-				pte = *ptep;
+-				if (pte_present(pte))
+-					page = pte_page(pte);
+-				pte_unmap(ptep);
+-			}
+-#ifndef EMMA3_CUSTOMER1_BUILD        
+-		}
+-#endif
+-	}
+-	return page;
+-
+ 
++	if (get_user_pages_fast(addr & PAGE_MASK, 1, 0, &page) != 1)
++		return NULL;
++	put_page(page);
++	return page;
+ }
+ #endif
+ 
+@@ -106,12 +84,12 @@
+     uint32 tmp;
+     struct page *tmpPage = NULL;
+ 
+-    if(tmpPage = vmalloc_to_page(virt_addr))
++    if(is_vmalloc_addr(virt_addr) && (tmpPage = vmalloc_to_page(virt_addr)))
+     {
+         PDEBUG("INFO: User Address allocated by vmalloc\n");
+         tmp = (uint32)(virt_to_bus(page_address(tmpPage)) + ((uint32)virt_addr&(PAGE_SIZE -1)));
+     }
+-    else if(tmpPage = user_addr_to_page(current->mm, virt_addr))
++    else if((unsigned long)virt_addr < TASK_SIZE && (tmpPage = user_addr_to_page(current->mm, virt_addr)))
+     {
+         PDEBUG("INFO: User Address allocated by Application\n");        
+         tmp = (uint32)(virt_to_bus(page_address(tmpPage)) + ((uint32)virt_addr & (PAGE_SIZE -1)));
+@@ -821,7 +799,7 @@
+ #else
+ int32 User_Space_Check(pvoid pData, uint32 Size)
+ {
+-    return access_ok(VERIFY_WRITE, pData, Size);
++    return access_ok(pData, Size);
+ 
+ }
+ #endif
+@@ -913,26 +891,14 @@
+ 
+ #else
+ 
+-    down_write((struct rw_semaphore *)&current->mm->mmap_sem);
+-
+-	#ifdef EM8620
+-
+-    virtual_addr = do_mmap( File, 0, NumBytes,
+-                            PROT_READ, MAP_PRIVATE,
+-                            PhysAddr);
+-	#else
+-    
+-    virtual_addr = do_mmap( File, 0, NumBytes,
++    /* 6.12: do_mmap は mmap_lock を呼び出し側が取る内部関数になったので、輸出されている vm_mmap(内部でロックする)を使う */
++    virtual_addr = vm_mmap( File, 0, NumBytes,
+                             PROT_READ|PROT_WRITE, MAP_SHARED,
+                             PhysAddr);
+ 
+-	#endif
+-
+-    up_write((struct rw_semaphore *)&current->mm->mmap_sem);
+-
+     *((puint32)VirtualAddr) = 0;
+ 
+-    if (virtual_addr > -1024UL)
++    if (IS_ERR_VALUE(virtual_addr))
+     {
+         // Real error
+         retval = (int32)virtual_addr;
+@@ -1011,15 +977,15 @@
+     PDEBUG("<1>Boxster in Unmap_Kernel_To_User\n");
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+-	retval = do_munmap( current->mm, (uint32) VirtualAddr, NumBytes);
++	retval = vm_munmap( (unsigned long) VirtualAddr, NumBytes);
+ 
+ #else
+ 
+ #if defined(ABOVE_2_4_20)
+-	retval = do_munmap( current->mm, (uint32) VirtualAddr, NumBytes);
++	retval = vm_munmap( (unsigned long) VirtualAddr, NumBytes);
+ #else
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 4, 20)
+-	retval = do_munmap( current->mm, (uint32) VirtualAddr, NumBytes);
++	retval = vm_munmap( (unsigned long) VirtualAddr, NumBytes);
+ #else
+     // equal or less than 2.4.20
+     retval = do_munmap( current->mm, (uint32) VirtualAddr, NumBytes, 0);
+@@ -1218,17 +1184,14 @@
+         return OS_FAILURE;
+     }
+ 
+-    down_read(&current->mm->mmap_sem);
++    /* 6.12: get_user_pages(start, nr_pages, gup_flags, pages)。mmap_lock は呼び出し側が取る。書き込み可で固定(FOLL_FORCE は元のコードの force=1) */
++    mmap_read_lock(current->mm);
+     res = get_user_pages(
+-            current,
+-            current->mm,
+             UserBuf,
+             iobuf->nr_pages,
+-            1,      /* Enable write */
+-            1,      /* Force it */
+-            iobuf->maplist,
+-            NULL);
+-    up_read(&current->mm->mmap_sem);
++            FOLL_WRITE | FOLL_FORCE,
++            iobuf->maplist);
++    mmap_read_unlock(current->mm);
+ 
+     /* Errors and no page mapped should return here */
+     if (res < iobuf->nr_pages)
+@@ -1808,6 +1771,54 @@
+ }
+ 
+ 
++#ifdef LINUX
++/*
++ * 6.12 のタイマーは、コールバックに struct timer_list * を渡し、data メンバーが無い。元のドライバは (関数, data=pXcode) を渡すので、
++ * タイマーのアドレスから (関数, data) を引く小さな表を持つ(タイマーは pXcode の中に埋め込まれていて、数は少ない)。
++ */
++struct xc_timer_ent {
++    struct timer_list *t;
++    void (*fn)(unsigned long);
++    unsigned long data;
++};
++static struct xc_timer_ent xc_timer_tab[32];
++static DEFINE_SPINLOCK(xc_timer_lock);
++
++static void xc_timer_cb(struct timer_list *t)
++{
++    void (*fn)(unsigned long) = NULL;
++    unsigned long data = 0;
++    unsigned long fl;
++    int i;
++
++    spin_lock_irqsave(&xc_timer_lock, fl);
++    for (i = 0; i < ARRAY_SIZE(xc_timer_tab); i++)
++        if (xc_timer_tab[i].t == t) { fn = xc_timer_tab[i].fn; data = xc_timer_tab[i].data; break; }
++    spin_unlock_irqrestore(&xc_timer_lock, fl);
++    if (fn)
++        fn(data);
++}
++
++void xc_timer_start(struct timer_list *t, void (*fn)(unsigned long), unsigned long data, unsigned long expires)
++{
++    unsigned long fl;
++    int i, free = -1;
++
++    spin_lock_irqsave(&xc_timer_lock, fl);
++    for (i = 0; i < ARRAY_SIZE(xc_timer_tab); i++) {
++        if (xc_timer_tab[i].t == t) { free = i; break; }
++        if (free < 0 && !xc_timer_tab[i].t) free = i;
++    }
++    if (free >= 0) {
++        xc_timer_tab[free].t = t; xc_timer_tab[free].fn = fn; xc_timer_tab[free].data = data;
++    }
++    spin_unlock_irqrestore(&xc_timer_lock, fl);
++    timer_setup(t, xc_timer_cb, 0);
++    t->expires = expires;
++    add_timer(t);
++}
++#endif
++
+ /***************************************************************************
+  *
+  *  FUNCTION:       Submit_Timer_Tasklet()
+@@ -1851,11 +1862,8 @@
+         msecDelay = 1;
+     }
+ 
+-    init_timer((struct timer_list *)Timer);
+-    ((struct timer_list *)Timer)->function = DpcTasklet;
+-    ((struct timer_list *)Timer)->data = (uint) pXcode;
+-    ((struct timer_list *)Timer)->expires = jiffies + msecDelay;
+-    add_timer((struct timer_list *)Timer);
++    /* 6.12: タイマーのコールバックは struct timer_list * を受け取る。元の DpcTasklet(unsigned long data) を、data=pXcode で呼ぶ薄いラッパーを挟む */
++    xc_timer_start((struct timer_list *)Timer, (void (*)(unsigned long))DpcTasklet, (unsigned long) pXcode, jiffies + msecDelay);
+ 
+     //PDEBUG("add timer expire = %d jiffies, HZ=%d\n", msecDelay, HZ);
+ 
+@@ -2381,7 +2389,7 @@
+ 
+     uint32 retval;
+ 
+-    if (access_ok(VERIFY_WRITE, pUser, NumBytes) == 0)
++    if (access_ok(pUser, NumBytes) == 0)
+     {
+         return OS_FAILURE;
+     }
+@@ -2415,7 +2423,7 @@
+ 
+     uint32 retval;
+ 
+-    if (access_ok(VERIFY_WRITE, pUser, NumBytes) == 0)
++    if (access_ok(pUser, NumBytes) == 0)
+     {
+         return OS_FAILURE;
+     }
+diff -ruN a b
+--- a/kdrv/inc/devcontext.h
++++ b/kdrv/inc/devcontext.h
+@@ -75,7 +75,8 @@
+ #include <linux/kthread.h>
+ #endif
+ 
+-#include <asm/system.h>
++#include <asm/barrier.h>
++#include <xc_compat.h>
+ #include <asm/io.h>
+ #include <asm/unistd.h>
+ #include <asm/uaccess.h>
+diff -ruN a b
+--- a/kdrv/inc/devcontext_GPL.h
++++ b/kdrv/inc/devcontext_GPL.h
+@@ -38,7 +38,7 @@
+ #include <linux/pci.h>
+ #include <linux/sched.h>
+ #include <linux/vmalloc.h>
+-#include <asm/system.h>
++#include <asm/barrier.h>
+ #include <linux/interrupt.h>
+ #include <linux/spinlock.h>
+ #include <asm/io.h>

@@ -1,0 +1,29 @@
+#!/bin/sh
+# mcui2c の 6.12 版(互換): MCU(I2C バス0、8ビットアドレス 0x20)の読み書きを、カーネルの nasne-mcu ドライバの sysfs 経由で行う。
+# 公式ドライバ(xcode4drv)の I2C ioctl は使わない(カーネルの I2C ドライバと、同じハードウェアを取り合わないため)。
+# 既存の常駐サービス(nasne-ledd・nasne-powerbtn・nasne-waked・nasne-statusd・a-nasne-poweroff)が呼ぶ形式と出力をそのまま保つ:
+#   mcui2c r 20 <n>              → "mcui2c read  addr8=20 n=06 ioctl=01 return_value=01 (COMPLETE) data=13 80 00 00 27 95 "
+#   mcui2c w 20 <byte>...        → "mcui2c write addr8=20 n=02 ioctl=01 return_value=01 (COMPLETE)"(失敗は非0で終了)
+D=/sys/bus/i2c/devices/0-0010
+[ -d "$D" ] || { echo "mcui2c: $D がありません(カーネルの nasne-mcu ドライバが必要)" >&2; exit 2; }
+case "$1" in
+  r)
+    [ "$2" = 20 ] || { echo "mcui2c: アドレスは 20 のみ" >&2; exit 1; }
+    n=${3:-6}
+    s=$(cat $D/status 2>/dev/null) || exit 1
+    i=0; out=""
+    for b in $s; do [ $i -lt "$n" ] && out="$out$b "; i=$((i + 1)); done
+    printf 'mcui2c read  addr8=20 n=%02x ioctl=01 return_value=01 (COMPLETE) data=%s\n' "$n" "$out"
+    ;;
+  w)
+    [ "$2" = 20 ] || { echo "mcui2c: アドレスは 20 のみ" >&2; exit 1; }
+    shift 2
+    n=$#
+    [ $n -ge 2 ] || { echo "mcui2c: 書くバイトが足りません" >&2; exit 1; }
+    echo "$*" > $D/raw 2>/dev/null || { echo "mcui2c: 書き込みに失敗" >&2; exit 1; }
+    printf 'mcui2c write addr8=20 n=%02x ioctl=01 return_value=01 (COMPLETE)\n' "$n"
+    ;;
+  *)
+    echo "usage: mcui2c w 20 <byte>... | r 20 <nbytes>" >&2; exit 1
+    ;;
+esac

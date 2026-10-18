@@ -1,0 +1,55 @@
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -649,6 +649,25 @@
+ 	select ARCH_HAS_RESET_CONTROLLER
+ 	select RESET_CONTROLLER
+ 
++config MIPS_XCODE
++	bool "ViXS XCode 4210 'Viper' based machines (Sony nasne)"
++	select BOARD_SCACHE
++	select BOOT_RAW
++	select CEVT_R4K
++	select COMMON_CLK
++	select CSRC_R4K
++	select DMA_NONCOHERENT
++	select IRQ_MIPS_CPU
++	select MIPS_AUTO_PFN_OFFSET
++	select SYS_HAS_CPU_MIPS32_R2
++	select SYS_SUPPORTS_32BIT_KERNEL
++	select SYS_SUPPORTS_LITTLE_ENDIAN
++	select SYS_SUPPORTS_MIPS16
++	select USE_OF
++	select BUILTIN_DTB
++	help
++	  Sony nasne (CECH-ZNR2J) の SoC(MIPS 74Kc)。
++
+ config MACH_REALTEK_RTL
+ 	bool "Realtek RTL838x/RTL839x based machines"
+ 	select MIPS_GENERIC
+@@ -1024,6 +1043,7 @@
+ source "arch/mips/mobileye/Kconfig"
+ source "arch/mips/pic32/Kconfig"
+ source "arch/mips/ralink/Kconfig"
++source "arch/mips/xcode/Kconfig"
+ source "arch/mips/sgi-ip27/Kconfig"
+ source "arch/mips/sibyte/Kconfig"
+ source "arch/mips/txx9/Kconfig"
+--- a/arch/mips/Kbuild.platforms
++++ b/arch/mips/Kbuild.platforms
+@@ -32,6 +32,7 @@
+ platform-$(CONFIG_SIBYTE_BCM1x80)	+= sibyte/
+ platform-$(CONFIG_SNI_RM)		+= sni/
+ platform-$(CONFIG_MACH_TX49XX)		+= txx9/
++platform-$(CONFIG_MIPS_XCODE)	+= xcode/
+ 
+ # include the platform specific files
+ include $(patsubst %/, $(srctree)/arch/mips/%/Platform, $(platform-y))
+--- a/arch/mips/boot/dts/Makefile
++++ b/arch/mips/boot/dts/Makefile
+@@ -16,5 +16,6 @@
+ subdir-$(CONFIG_RALINK)			+= ralink
+ subdir-$(CONFIG_MACH_REALTEK_RTL)	+= realtek
+ subdir-$(CONFIG_FIT_IMAGE_FDT_XILFPGA)	+= xilfpga
++subdir-$(CONFIG_MIPS_XCODE)		+= xcode
+ 
+ obj-$(CONFIG_BUILTIN_DTB)	:= $(addsuffix /, $(subdir-y))

@@ -1,0 +1,4 @@
+#!/bin/sh
+# 公式の rc.xcode4 の代わり(6.12 版)。nasne-recpt1 が「ファームが止まっていたらドライバを再読込」で呼ぶ。
+# 6.12 の xcode4drv は、アンロードできない(MODULE_UNLOAD なし)ので、読み込まれていなければ読むだけ。固まっていた場合の復旧は、再起動。
+exec /etc/init.d/nasne-xcode4drv start

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# ViXS XCode 4210 "Viper" (Sony nasne CECH-ZNR2J)
+#
+cflags-$(CONFIG_MIPS_XCODE)	+= -I$(srctree)/arch/mips/include/asm/mach-xcode
+# 4段目ブートは、カーネルを物理 0x10000000 へ展開して 0xB0040000 へ飛ぶ。先頭 0x40000 バイトはゼロ埋め(ベンダーの慣習)。
+load-$(CONFIG_MIPS_XCODE)	+= 0xffffffff90040000

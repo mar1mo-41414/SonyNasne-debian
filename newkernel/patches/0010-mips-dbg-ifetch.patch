@@ -1,0 +1,21 @@
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -1251,6 +1251,8 @@
+ 	return __send_signal_locked(sig, info, t, type, force);
+ }
+ 
++extern void xcode_dbg_ifetch(struct pt_regs *regs);
++
+ static void print_fatal_signal(int signr)
+ {
+ 	struct pt_regs *regs = task_pt_regs(current);
+@@ -1283,6 +1285,9 @@
+ 	preempt_disable();
+ 	show_regs(regs);
+ 	preempt_enable();
++#ifdef CONFIG_MIPS_XCODE
++	xcode_dbg_ifetch(regs);
++#endif
+ }
+ 
+ static int __init setup_print_fatal_signals(char *str)

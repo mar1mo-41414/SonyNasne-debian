@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0
+if MIPS_XCODE
+
+config XCODE_LED_DEBUG
+	bool "前面LED(GPIOポート10)で起動の進み具合を出す(UARTが無い本体のデバッグ用)"
+	default n
+	help
+	  起動の各段階で、前面の LED_A を n 回点滅させる(Webカメラで読む)。
+	  panic したときは LED_B を高速点滅する。起動が遅くなる(約30秒)ので、通常の運用では切ること。
+
+config XCODE_LED_PANIC
+	bool "panic したら前面の LED_B を高速点滅する"
+	default y
+
+config XCODE_LED_HEARTBEAT
+	bool "起動後、前面の LED_B をタイマ割り込みで1秒周期に点滅する(生きている印)"
+	default y
+
+config XCODE_EARLYCON
+	bool "Ethernet 経由の早期コンソール(UDP ブロードキャスト、ポート6666)"
+	default y
+	help
+	  UART の無い基板で、起動ログ・oops・panic を LAN へ流す(受信側: socat -u UDP-RECV:6666 STDOUT)。
+	  GMAC は ポーリングで TX だけ使う。
+
+endif

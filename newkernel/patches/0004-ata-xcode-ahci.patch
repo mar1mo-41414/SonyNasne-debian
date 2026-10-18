@@ -1,0 +1,73 @@
+--- a/drivers/ata/libahci.c
++++ b/drivers/ata/libahci.c
+@@ -33,6 +33,20 @@
+ #include "ahci.h"
+ #include "libata.h"
+ 
++#ifdef CONFIG_SATA_XCODE
++/*
++ * ViXS XCode(Sony nasne): AHCI レジスタは SoC の間接アクセス窓越しでしか触れない。
++ * この翻訳単位(libahci)の readl/writel だけを、窓経由の関数に差し替える(asm/mach-xcode/xcode-ahci.h)。
++ */
++#include <asm/mach-xcode/xcode-ahci.h>
++#undef readl
++#undef writel
++#define readl(a)	xcode_ahci_readl(a)
++#define writel(v, a)	xcode_ahci_writel(v, a)
++#define ata_wait_register	xcode_ata_wait_register	/* libata の ata_wait_register は ioread32 で直接触るので差し替え */
++#define XCODE_AHCI_IRQ_HOOKS
++#endif
++
+ static int ahci_skip_host_reset;
+ int ahci_ignore_sss;
+ EXPORT_SYMBOL_GPL(ahci_ignore_sss);
+@@ -2031,6 +2045,11 @@
+ 	hpriv = host->private_data;
+ 	mmio = hpriv->mmio;
+ 
++#ifdef XCODE_AHCI_IRQ_HOOKS
++	/* 窓越しの読み出しは遅いので、まず SoC 側の割り込み状態を見る(ベンダーのドライバと同じ) */
++	if (!xcode_ahci_irq_pending())
++		return IRQ_NONE;
++#endif
+ 	/* sigh.  0xffffffff is a valid return from h/w */
+ 	irq_stat = readl(mmio + HOST_IRQ_STAT);
+ 	if (!irq_stat)
+@@ -2052,6 +2071,9 @@
+ 	 * pending event on a dummy port might cause screaming IRQ.
+ 	 */
+ 	writel(irq_stat, mmio + HOST_IRQ_STAT);
++#ifdef XCODE_AHCI_IRQ_HOOKS
++	xcode_ahci_irq_ack();		/* SoC 側の SATA 割り込み状態も落とす */
++#endif
+ 
+ 	spin_unlock(&host->lock);
+ 
+--- a/drivers/ata/Kconfig
++++ b/drivers/ata/Kconfig
+@@ -151,6 +151,15 @@
+ 	  Excluding the value 0, higher values represent policies with higher
+ 	  power savings.
+ 
++config SATA_XCODE
++	tristate "ViXS XCode 4210 (Sony nasne) AHCI SATA support"
++	depends on MIPS_XCODE
++	select SATA_HOST
++	select LIBAHCI
++	help
++	  Sony nasne の SoC(ViXS XCode 4210)の SATA。AHCI レジスタが間接アクセス窓越しのため、
++	  libahci の readl/writel を差し替えてビルドする専用ドライバ。
++
+ config SATA_AHCI_PLATFORM
+ 	tristate "Platform AHCI SATA support"
+ 	select SATA_HOST
+--- a/drivers/ata/Makefile
++++ b/drivers/ata/Makefile
+@@ -7,6 +7,7 @@
+ obj-$(CONFIG_SATA_ACARD_AHCI)	+= acard-ahci.o libahci.o
+ obj-$(CONFIG_SATA_AHCI_SEATTLE)	+= ahci_seattle.o libahci.o libahci_platform.o
+ obj-$(CONFIG_SATA_AHCI_PLATFORM) += ahci_platform.o libahci.o libahci_platform.o
++obj-$(CONFIG_SATA_XCODE) += ahci_xcode.o libahci.o
+ obj-$(CONFIG_SATA_FSL)		+= sata_fsl.o
+ obj-$(CONFIG_SATA_GEMINI)	+= sata_gemini.o
+ obj-$(CONFIG_SATA_INIC162X)	+= sata_inic162x.o

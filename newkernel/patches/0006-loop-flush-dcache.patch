@@ -1,0 +1,22 @@
+--- a/drivers/block/loop.c
++++ b/drivers/block/loop.c
+@@ -291,6 +291,19 @@
+ 	struct loop_cmd *cmd = blk_mq_rq_to_pdu(rq);
+ 	blk_status_t ret = BLK_STS_OK;
+ 
++	/*
++	 * 読み出しでは、CPU が bio のページへ書き込んだことになる。D キャッシュにエイリアスのある CPU
++	 * (MIPS など)では、呼び出し側が見る前に flush_dcache_page() が要る(無いと、ページキャッシュを実行したとき
++	 * に I キャッシュの古い命令を実行したり、別エイリアスの古いデータを見たりする)。
++	 */
++	if (req_op(rq) == REQ_OP_READ && cmd->ret > 0) {
++		struct req_iterator iter;
++		struct bio_vec bvec;
++
++		rq_for_each_segment(bvec, rq, iter)
++			flush_dcache_page(bvec.bv_page);
++	}
++
+ 	if (cmd->ret < 0 || cmd->ret == blk_rq_bytes(rq) ||
+ 	    req_op(rq) != REQ_OP_READ) {
+ 		if (cmd->ret < 0)

@@ -1,0 +1,42 @@
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -1253,6 +1253,12 @@
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called i2c-thunderx.
+ 
++config I2C_XCODE
++	tristate "ViXS XCode 4210 (Sony nasne) hardware I2C master"
++	depends on MIPS_XCODE
++	help
++	  Sony nasne の SoC の I2C マスタ(MCU が接続されている)。
++
+ config I2C_XILINX
+ 	tristate "Xilinx I2C Controller"
+ 	depends on HAS_IOMEM
+--- a/drivers/i2c/busses/Makefile
++++ b/drivers/i2c/busses/Makefile
+@@ -160,3 +160,4 @@
+ obj-$(CONFIG_I2C_VIRTIO)	+= i2c-virtio.o
+ 
+ ccflags-$(CONFIG_I2C_DEBUG_BUS) := -DDEBUG
++obj-$(CONFIG_I2C_XCODE)		+= i2c-xcode.o
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -628,4 +628,10 @@
+ source "drivers/misc/pvpanic/Kconfig"
+ source "drivers/misc/mchp_pci1xxxx/Kconfig"
+ source "drivers/misc/keba/Kconfig"
++
++config NASNE_MCU
++	tristate "Sony nasne MCU (watchdog stop, LED, power off)"
++	depends on I2C && MIPS_XCODE
++	help
++	  nasne の MCU。起動時にウォッチドッグを止め、PWR LED を点灯し、電源断を担当する。
+ endmenu
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -72,3 +72,4 @@
+ obj-$(CONFIG_NSM)		+= nsm.o
+ obj-$(CONFIG_MARVELL_CN10K_DPI)	+= mrvl_cn10k_dpi.o
+ obj-y				+= keba/
++obj-$(CONFIG_NASNE_MCU)		+= nasne_mcu.o

@@ -1,0 +1,25 @@
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -1170,6 +1170,12 @@
+ 	  If you have a Cavium ThunderX2 platform say Y here.
+ 	  If unsure, say N.
+ 
++config SPI_XCODE
++	tristate "ViXS XCode 4210 (Sony nasne) SPI master"
++	depends on MIPS_XCODE
++	help
++	  Sony nasne の SoC の SPI マスタ(SPI フラッシュが接続されている。ポーリング)。
++
+ config SPI_XTENSA_XTFPGA
+ 	tristate "Xtensa SPI controller for xtfpga"
+ 	depends on (XTENSA && XTENSA_PLATFORM_XTFPGA) || COMPILE_TEST
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -152,6 +152,7 @@
+ obj-$(CONFIG_SPI_XCOMM)		+= spi-xcomm.o
+ obj-$(CONFIG_SPI_XILINX)		+= spi-xilinx.o
+ obj-$(CONFIG_SPI_XLP)			+= spi-xlp.o
++obj-$(CONFIG_SPI_XCODE)			+= spi-xcode.o
+ obj-$(CONFIG_SPI_XTENSA_XTFPGA)		+= spi-xtensa-xtfpga.o
+ obj-$(CONFIG_SPI_ZYNQ_QSPI)		+= spi-zynq-qspi.o
+ obj-$(CONFIG_SPI_ZYNQMP_GQSPI)		+= spi-zynqmp-gqspi.o

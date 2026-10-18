@@ -1,0 +1,8 @@
+#!/bin/sh
+# ネットワークが上がったら時刻を合わせる(nasne には RTC が無く、起動直後は 1970 年)。/etc/network/if-up.d/nasne-time に置く。
+# (ntpdate コマンドは ntpdig を呼ぶが、カーネルに IPv6 が無いので、-4 で IPv4 に限る)
+# 時刻に依存するもの: nasne-waked(起床時刻)、録画のファイル名、apt の証明、ログ。fake-hwclock は、終了時の時刻を保存して起動時に戻す(1970 年よりまし)。
+[ "$IFACE" = "lo" ] && exit 0
+SERVER=${NASNE_NTP_SERVER:-ntp.nict.jp}
+( for i in 1 2 3; do ntpdig -S -4 "$SERVER" >/var/log/nasne-time.log 2>&1 && break; sleep 5; done ) &
+exit 0

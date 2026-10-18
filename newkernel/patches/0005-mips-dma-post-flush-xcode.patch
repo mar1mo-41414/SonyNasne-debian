@@ -1,0 +1,37 @@
+--- a/arch/mips/mm/dma-noncoherent.c
++++ b/arch/mips/mm/dma-noncoherent.c
+@@ -27,6 +27,13 @@
+  */
+ static inline bool cpu_needs_post_dma_flush(void)
+ {
++	/*
++	 * ViXS XCode(Sony nasne): SoC に CPU の L1 の外の先読みバッファ(PFB)があり、DMA の完了後も古い内容を
++	 * 返すことがある(ベンダーの 2.6.29 は dma_unmap のたびに無効化していた)。DMA 後にも L1 と PFB を無効化する。
++	 */
++	if (IS_ENABLED(CONFIG_MIPS_XCODE))
++		return true;
++
+ 	switch (boot_cpu_type()) {
+ 	case CPU_R10000:
+ 	case CPU_R12000:
+@@ -119,6 +126,20 @@
+ 		page++;
+ 		left -= len;
+ 	} while (left);
++
++	/*
++	 * ViXS XCode(Sony nasne): デバイスが書いたページ(ページキャッシュ)を、あとでユーザー空間へ実行可能に
++	 * マップするときに I キャッシュに古い命令が残らないよう、「D キャッシュ要確認」の印を付ける。
++	 * (印が付いたページは __update_cache() がマップ時に D/I キャッシュを掃除する。DMA で読んだページには、
++	 * 誰も flush_dcache_page() を呼ばないので、この印が無いと古い命令を実行して SIGILL などになる)
++	 */
++	if (IS_ENABLED(CONFIG_MIPS_XCODE) && !for_device && dir != DMA_TO_DEVICE) {
++		unsigned long pfn;
++
++		for (pfn = paddr >> PAGE_SHIFT; pfn <= (paddr + size - 1) >> PAGE_SHIFT; pfn++)
++			if (pfn_valid(pfn))
++				folio_set_dcache_dirty(page_folio(pfn_to_page(pfn)));
++	}
+ }
+ 
+ void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,

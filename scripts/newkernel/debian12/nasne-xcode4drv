@@ -1,0 +1,50 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nasne-xcode4drv
+# Required-Start:    $local_fs udev
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: nasne のメディアエンジン・チューナーのドライバ(xcode4drv.ko)を読み込み、デバイスノードを作る
+### END INIT INFO
+# 6.12 版 xcode4drv(newkernel/xc4drv/build.sh でビルド)を、起動時に読み込む。公式の rc.xcode4 と同じく /dev/vixs/xcodedrv{,2,3,4}(メジャー番号は
+# /proc/devices の boxster)を作る。モジュールのアンロードは無い(CONFIG_MODULE_UNLOAD なし)。MCU のウォッチドッグはカーネルの nasne-mcu ドライバが止める。
+KO=${NASNE_XCODE4DRV_KO:-/usr/local/lib/nasne/xcode4drv.ko}
+LOG=/var/log/nasne-xcode4drv.log
+DIR=/dev/vixs
+
+mknodes() {
+    major=$(awk '$2=="boxster"{print $1}' /proc/devices)
+    [ -n "$major" ] || return 1
+    mkdir -p $DIR
+    i=0
+    for n in xcodedrv xcodedrv2 xcodedrv3 xcodedrv4; do
+        [ -e $DIR/$n ] || mknod $DIR/$n c "$major" $i
+        i=$((i + 1))
+    done
+    chmod 666 $DIR/*
+}
+
+case "$1" in
+  start)
+    echo "== $(date) start" >> $LOG
+    if grep -q '^xcode4drv ' /proc/modules; then
+        echo "すでに読み込み済み" >> $LOG
+    else
+        [ -f "$KO" ] || { echo "$KO が無い" >> $LOG; echo "nasne-xcode4drv: $KO がありません" >&2; exit 1; }
+        insmod "$KO" >> $LOG 2>&1 || { echo "insmod 失敗" >> $LOG; echo "nasne-xcode4drv: 読み込みに失敗(ログ: $LOG)" >&2; exit 1; }
+    fi
+    mknodes || { echo "boxster が /proc/devices に無い" >> $LOG; exit 1; }
+    echo "OK" >> $LOG
+    ;;
+  stop|restart|force-reload)
+    :       # アンロードしない
+    ;;
+  status)
+    if grep -q '^xcode4drv ' /proc/modules && [ -e $DIR/xcodedrv ]; then echo "xcode4drv: loaded"; else echo "xcode4drv: not loaded"; exit 3; fi
+    ;;
+  *)
+    echo "Usage: $0 {start|status}" >&2; exit 1
+    ;;
+esac
+exit 0

@@ -1,0 +1,10 @@
+--- a/arch/mips/kernel/vmlinux.lds.S
++++ b/arch/mips/kernel/vmlinux.lds.S
+@@ -61,6 +61,7 @@
+ 	/* read-only */
+ 	_text = .;	/* Text and read-only data */
+ 	.text : {
++		KEEP(*(.text.xcode_head))	/* ViXS XCode: ブートローダは image 先頭へ飛ぶ(先頭の stub から kernel_entry へ) */
+ 		TEXT_TEXT
+ 		SCHED_TEXT
+ 		LOCK_TEXT

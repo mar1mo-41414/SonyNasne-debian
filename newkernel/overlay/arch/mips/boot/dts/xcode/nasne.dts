@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: GPL-2.0
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "sony,nasne-cech-znr2j", "vixs,xcode4210";
+	model = "Sony nasne CECH-ZNR2J (ViXS XCode 4210)";
+
+	chosen {
+		bootargs = "rdinit=/init print-fatal-signals=1 @EXTRA_BOOTARGS@";
+	};
+
+	memory@10000000 {
+		device_type = "memory";
+		reg = <0x10000000 0x0f800000>;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mips,mips74Kc";
+			reg = <0>;
+		};
+	};
+
+	ethernet@1fff2800 {
+		compatible = "vixs,xcode-gmac";
+		reg = <0x1fff2800 0x30>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <6>;
+		phy-handle = <&phy0>;
+		phy-mode = "gmii";
+
+		mdio {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			phy0: ethernet-phy@0 {
+				reg = <0>;
+			};
+		};
+	};
+
+	sata@1fffd000 {
+		compatible = "vixs,xcode-ahci";
+		reg = <0x1fffd000 0x400>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <6>;
+		vixs,host = <0>;
+	};
+
+	i2c0: i2c@1fff1000 {
+		compatible = "vixs,xcode-i2c";
+		reg = <0x1fff1000 0xa8>;
+		vixs,block = <0>;
+		clock-frequency = <10000>;
+		/* kexec の開発サイクル用の vixs,init-ppc(PPC のクロック設定)は、cold boot では不要で、xcode4drv(メディアエンジンのファーム)の起動を乱す(2026-10-18)ので、付けない */
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		mcu@10 {
+			compatible = "sony,nasne-mcu";
+			reg = <0x10>;
+		};
+	};
+
+	spi0: spi@1fff10ac {
+		compatible = "vixs,xcode-spi";
+		reg = <0x1fff10ac 0x10>;
+		/* kexec の開発サイクル用の vixs,init-ppc(PPC のクロック設定)は、cold boot では不要で、xcode4drv(メディアエンジンのファーム)の起動を乱す(2026-10-18)ので、付けない */
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		flash@0 {
+			compatible = "jedec,spi-nor";	/* Spansion S25FL128P(16MB)。ベンダーのカーネルの platform.c と同じ区画 */
+			reg = <0>;
+			spi-max-frequency = <6750000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partitions {
+				compatible = "fixed-partitions";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				partition@0 {
+					label = "user1";	/* ブートチェーン・KNL/BKNL・RFS/BRFS など */
+					reg = <0x000000 0xd00000>;
+				};
+				partition@d00000 {
+					label = "user2";	/* NV(JFFS2) など */
+					reg = <0xd00000 0x2f0000>;
+				};
+			};
+		};
+	};
+
+	cpuintc: interrupt-controller {
+		#address-cells = <0>;
+		#interrupt-cells = <1>;
+		interrupt-controller;
+		compatible = "mti,cpu-interrupt-controller";
+	};
+};

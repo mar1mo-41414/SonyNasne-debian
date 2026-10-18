@@ -1,0 +1,6 @@
+# xcode4drv(GPL 版 AVDriver)を 6.12 でビルドするための Kbuild。ベンダーの drvbuild/Makefile(XC_SOC_BUILD・BCAS・CUST4 の構成)と同じ定義・同じオブジェクト一式。
+obj-m := xcode4drv.o
+xcode4drv-objs := $(patsubst %.c,%.o,$(sort $(wildcard $(src)/meminit/*.c $(src)/drv/*.c)))
+xcode4drv-objs := $(subst $(src)/,,$(xcode4drv-objs))
+ccflags-y := -I@XC_COMPAT_DIR@ -DLINUX -DBOXSTER_DRIVER -DBCAS -DXC_SOC_BUILD -DCUST4_BUILD -DXC_FW_BUILD -DXCODE3 @XC_EXTRA@ -fvisibility=hidden -Wno-error -Wno-error=implicit-int -Wno-error=incompatible-pointer-types -Wno-error=date-time -Wno-error=int-conversion -Wno-error=return-type -Wno-error=strict-prototypes -Wno-error=missing-prototypes \
+	-I$(src)/../commsdk/include -I$(src)/inc
