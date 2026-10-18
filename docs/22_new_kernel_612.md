@@ -31,7 +31,7 @@ nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換�
    newkernel/initramfs/mk_root.sh $PWD/newkernel/initramfs/root_boot boot      # 起動用の小さな init(約4KB。busybox なし)
    INITRAMFS=$PWD/newkernel/initramfs/root_boot newkernel/build.sh              # kernel.org から 6.12 を取得してビルド(成果は newkernel/out/new/)
    ```
-   `newkernel/out/new/vmlinux.knl.bin` が、KNL スロットに入れる中身です。ビルドの最後に、gzip 後の大きさと上限(2,621,376)が出ます。**上限に近い(余裕は数KB)ので、機能を足すなら、何かを外す必要があります**([§5](#5-knl-スロットの容量))。
+   `newkernel/out/new/vmlinux.knl.bin` が、KNL スロットに入れる中身です。ビルドの最後に、gzip 後の大きさと上限(2,621,376)が出ます。**上限に近い(余裕は約9KB)ので、機能を足すなら、何かを外す必要があります**([§5](#5-knl-スロットの容量))。
 2. **チューナーのドライバ(xcode4drv.ko)**:
    ```bash
    newkernel/xc4drv/build.sh        # GPL ソース(AVDriver7GSP47.zip)を取得・展開し、パッチを当ててビルド → newkernel/out/xcode4drv.ko
@@ -75,7 +75,7 @@ nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換�
 
 ## 5. KNL スロットの容量
 
-KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip で展開するため、**gzip 後で 2,621,376 バイト以下**にする必要があります。6.12 は、次を外して収めています(`nasne_defconfig`): `NET_SELFTESTS`・`ETHTOOL_NETLINK`・`PAGE_POISONING`・`MQ_IOSCHED_KYBER`・`BLK_DEV_BSG`・`MTD_SPI_NOR_USE_4K_SECTORS`・`MTD_SPI_NOR_SWP_DISABLE_ON_VOLATILE`・`DEBUG_MISC`・`MIGRATION`・`COMPACTION`・`KEXEC`・`DEBUG_FS`・`INET_DIAG` ほか。現在の余裕は **5KB 前後**です。
+KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip で展開するため、**gzip 後で 2,621,376 バイト以下**にする必要があります。6.12 は、次を外して収めています(`nasne_defconfig`): `NET_SELFTESTS`・`ETHTOOL_NETLINK`・`PAGE_POISONING`・`MQ_IOSCHED_KYBER`・`BLK_DEV_BSG`・`MTD_SPI_NOR_USE_4K_SECTORS`・`MTD_SPI_NOR_SWP_DISABLE_ON_VOLATILE`・`DEBUG_MISC`・`MIGRATION`・`COMPACTION`・`KEXEC`・`DEBUG_FS`・`INET_DIAG` ほか。現在の余裕は **約9KB**(gzip 後 約 2,611,000 バイト)です。
 
 ## 6. SoC・基板の癖(新カーネルで必要だったこと)
 
