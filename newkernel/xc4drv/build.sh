@@ -20,7 +20,10 @@ if [ ! -d "$W/$SUB/kdrv" ]; then
 fi
 K="$W/$SUB/kdrv"
 sed "s#@XC_COMPAT_DIR@#$HERE/xc4drv#; s#@XC_EXTRA@#${XC_EXTRA:-}#" "$HERE/xc4drv/Kbuild.in" > "$K/Kbuild"
+# モジュールのビルドに要る生成物(scripts/module.lds など)。カーネル本体のビルド(vmlinux)だけでは作られない
+make -C "$KSRC" O="$KOUT" ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- -j"$(nproc)" modules_prepare >/dev/null
 [ -f "$KOUT/Module.symvers" ] || make -C "$KSRC" O="$KOUT" ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- -j"$(nproc)" modules >/dev/null
-make -C "$KSRC" O="$KOUT" M="$K" ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- -j"$(nproc)" modules 2>&1 | grep -E "error|ERROR|LD \[M\]" || true
+make -C "$KSRC" O="$KOUT" M="$K" ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- -j"$(nproc)" modules 2>&1 | grep -E "error|ERROR|LD \[M\]|\*\*\*" || true
+[ -f "$K/xcode4drv.ko" ] || { echo "xcode4drv.ko ができませんでした(上のエラーを見てください)" >&2; exit 1; }
 cp "$K/xcode4drv.ko" "$HERE/out/xcode4drv.ko"
 ls -l "$HERE/out/xcode4drv.ko"

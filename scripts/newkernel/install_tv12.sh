@@ -13,7 +13,11 @@ T=/tmp/xtools_install
 [ -x $T/nasne-recpt1 ] || bash "$ROOT/scripts/build_tools.sh" $T >/dev/null
 ssh "${O[@]}" "root@$IP" 'mkdir -p /usr/local/lib/nasne /usr/local/sbin'
 scp -O "${O[@]}" "$KO" "root@$IP:/usr/local/lib/nasne/xcode4drv.ko" >/dev/null
-scp -O "${O[@]}" $T/nasne-recpt1 $T/mcui2c $T/i2cx "root@$IP:/usr/local/sbin/" >/dev/null
+# 実行中のファイルは上書きできない(Text file busy)ので、いったん別名で送って mv で入れ替える
+scp -O "${O[@]}" $T/nasne-recpt1 $T/mcui2c $T/i2cx "root@$IP:/usr/local/sbin/" >/dev/null 2>&1 || {
+  scp -O "${O[@]}" $T/nasne-recpt1 $T/mcui2c $T/i2cx "root@$IP:/tmp/" >/dev/null
+  ssh "${O[@]}" "root@$IP" 'for f in nasne-recpt1 mcui2c i2cx; do cp -f /tmp/$f /usr/local/sbin/$f.new && mv -f /usr/local/sbin/$f.new /usr/local/sbin/$f; done'
+}
 scp -O "${O[@]}" "$ROOT/scripts/newkernel/debian12/nasne-xcode4drv" "root@$IP:/etc/init.d/nasne-xcode4drv" >/dev/null
 ssh "${O[@]}" "root@$IP" 'chmod +x /etc/init.d/nasne-xcode4drv /usr/local/sbin/*; update-rc.d nasne-xcode4drv defaults 02 >/dev/null; ls /etc/rc2.d | grep xcode4drv'
 if [ "${1:-}" = "--now" ]; then
