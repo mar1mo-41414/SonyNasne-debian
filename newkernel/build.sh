@@ -37,7 +37,8 @@ MK=(make -C "$SRC" O="$OUT" ARCH=mips CROSS_COMPILE="$CC_PREFIX" -j"$JOBS")
 # xcode4drv.ko(モジュール)を使うため MODULES=y。ただし輸出シンボルの表(約90KB gzip)を、xcode4drv が使う分だけに絞る(KNL スロットに収めるため)
 "$SRC/scripts/config" --file "$OUT/.config" -e MODULES -e TRIM_UNUSED_KSYMS --set-str UNUSED_KSYMS_WHITELIST "$HERE/xc4drv/ksyms_whitelist.txt"
 "${MK[@]}" olddefconfig
-"${MK[@]}" vmlinux
+# vmlinux と、モジュール(USB など。TRIM_UNUSED_KSYMS は、同時に作るモジュールが使うシンボルを残す)
+"${MK[@]}" vmlinux modules
 "${CC_PREFIX}objcopy" -O binary -S -R .reginfo -R .note -R .comment -R .mdebug -R .MIPS.abiflags "$OUT/vmlinux" "$OUT/vmlinux.bin"
 ENTRY=$(LC_ALL=C "${CC_PREFIX}readelf" -h "$OUT/vmlinux" | awk '/Entry point/{print $4}')
 echo "エントリ: $ENTRY"

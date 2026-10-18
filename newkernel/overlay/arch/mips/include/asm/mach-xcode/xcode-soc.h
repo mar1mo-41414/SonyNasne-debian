@@ -32,6 +32,10 @@ u32 xcode_soc_irq_status(void);
 /* 4段目ブートが渡した MAC アドレス(ethaddr=)。無ければ false */
 bool xcode_get_boot_ethaddr(u8 *mac);
 
+/* USB ホスト(SDUH)の EHCI/OHCI レジスタへの間接アクセス(arch/mips/xcode/usb.c)。off はコントローラ内のレジスタのオフセット、ohci=0 なら EHCI、1 なら OHCI */
+u32 xcode_sduh_readl(unsigned long off, int ohci);
+void xcode_sduh_writel(u32 val, unsigned long off, int ohci);
+
 /* 前面LED(デバッグ用): bit0x100=LED_A、bit0x200=LED_B */
 void xcode_led_set(u32 mask);
 

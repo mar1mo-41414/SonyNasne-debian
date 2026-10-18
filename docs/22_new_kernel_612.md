@@ -87,7 +87,16 @@ KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip 
 - **2GiB を超える loop の裏ファイル**: 起動用の `init` が `root.img` を開くとき、**`O_LARGEFILE` が必要**(32bit では、これが無いと 2GiB 以降への書き込みが失敗する)。
 - **MCU の操作はカーネル(sysfs)に一本化**: `/sys/bus/i2c/devices/0-0010/{status,raw,display_code}`。xcode4drv の I2C と、カーネルの I2C ドライバが、同じハードウェアを取り合わないため。既存のサービスが呼ぶ `mcui2c` は、sysfs を使う互換版(`scripts/newkernel/debian12/mcui2c`)に差し替える。
 
-## 7. 既知の問題・制限
+## 7. USB ホスト(EHCI)
+
+背面の USB ポートを使えます(ベンダーの 2.6.29 の `ehci-xcode` 相当を、6.12 の EHCI ドライバへ載せ替え)。USB メモリ(MBR/FAT32)が高速(480Mbps)で認識され、`dd` の読み出し・書き込みが正しいことを確認しています。
+
+- **レジスタは間接アクセス**: EHCI/OHCI のレジスタは直接マップされず、SoC の窓(オフセット 0x2000〜0x2014)経由。`newkernel/overlay/arch/mips/xcode/usb.c` の `xcode_sduh_readl/writel`、パッチ `0012-usb-ehci-xcode.patch` が `ehci.h` のレジスタ読み書きを差し替えます。
+- **ドライバ** `newkernel/overlay/drivers/usb/host/ehci-xcode.c`(モジュール `ehci-xcode`): VBUS の GPIO、クロック、リセット、PHY のクロック(内部 PLL・48MHz)、割り込み(IP6 共有)の順に初期化します。
+- カーネルの KNL スロットに余白が無いので、`USB`・`USB_EHCI_HCD`・`USB_EHCI_XCODE`・`USB_STORAGE` は**モジュール**です(`install_modules12.sh` で入れ、`modprobe`/自動読み込み)。
+- **未対応**: OHCI(low/full-speed の機器は EHCI 単体では扱えません)、過電流の検出、FAT のマウント(vfat モジュールは作っていません)。
+
+## 8. 既知の問題・制限
 
 - 4段目ブートの A/B 切り替えに使う、SoC の「システム情報ページ」の `+6` は、**起動のたびに作り直され**、soft reset をまたいで残らない。**カーネル自身が「次は B で」と指示して戻る**ことはできない(CRC 不一致のときだけ B)。
 - 6.12 から 6.12 への `kexec` は、kexec-tools の mips 版が配置できず、使えない(旧カーネルから 6.12 へは、開発用の `kexec` で起動できた)。
@@ -95,3 +104,4 @@ KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip 
 - Debian 12 の mipsel は、セキュリティ更新の対象外です(docs/19)。
 - ウォッチドッグを止めるのはカーネルの MCU ドライバなので、そのドライバが起動しないと、約333秒でリセットが繰り返される。
 - 電源ボタンは**背面**にあり、長押しは**約4秒(3秒以上5秒未満)**で反応する。
+- D キャッシュにエイリアスがあるため(64KB・4-way)、**共有マップ(`MAP_SHARED` の匿名メモリやファイル)のページを `O_DIRECT` の DMA 先にすると、古い内容が見える**ことがあります(MIPS 一般の制限)。通常の `malloc`・`MAP_PRIVATE` のバッファは正常です。

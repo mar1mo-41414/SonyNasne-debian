@@ -1,0 +1,74 @@
+--- a/drivers/usb/host/ehci.h
++++ b/drivers/usb/host/ehci.h
+@@ -754,6 +754,15 @@
+ #define writel_be(val, addr)	__raw_writel(val, (__force unsigned *)addr)
+ #endif
+ 
++#if IS_ENABLED(CONFIG_USB_EHCI_XCODE)
++/* ViXS XCode(Sony nasne): EHCI のレジスタはメモリ空間に見えず、SoC の間接アクセス経由(arch/mips/xcode/usb.c)。regs はコントローラ内のオフセット */
++#include <asm/mach-xcode/xcode-soc.h>
++static inline unsigned int ehci_readl(const struct ehci_hcd *ehci,
++		__u32 __iomem *regs)
++{
++	return xcode_sduh_readl((unsigned long)regs, 0);
++}
++#else
+ static inline unsigned int ehci_readl(const struct ehci_hcd *ehci,
+ 		__u32 __iomem *regs)
+ {
+@@ -765,6 +774,7 @@
+ 	return readl(regs);
+ #endif
+ }
++#endif /* CONFIG_USB_EHCI_XCODE */
+ 
+ #ifdef CONFIG_SOC_IMX28
+ static inline void imx28_ehci_writel(const unsigned int val,
+@@ -778,6 +788,13 @@
+ {
+ }
+ #endif
++#if IS_ENABLED(CONFIG_USB_EHCI_XCODE)
++static inline void ehci_writel(const struct ehci_hcd *ehci,
++		const unsigned int val, __u32 __iomem *regs)
++{
++	xcode_sduh_writel(val, (unsigned long)regs, 0);
++}
++#else
+ static inline void ehci_writel(const struct ehci_hcd *ehci,
+ 		const unsigned int val, __u32 __iomem *regs)
+ {
+@@ -792,6 +809,7 @@
+ 		writel(val, regs);
+ #endif
+ }
++#endif /* CONFIG_USB_EHCI_XCODE */
+ 
+ /*
+  * On certain ppc-44x SoC there is a HW issue, that could only worked around with
+--- a/drivers/usb/host/Kconfig
++++ b/drivers/usb/host/Kconfig
+@@ -207,6 +207,13 @@
+ 		support both high speed and full speed devices, or high speed
+ 		devices only.
+ 
++config USB_EHCI_XCODE
++	tristate "ViXS XCode 4210 (Sony nasne) EHCI USB host"
++	depends on USB_EHCI_HCD && MIPS_XCODE
++	help
++	  Sony nasne の SoC(ViXS XCode 4210)の USB ホスト。EHCI のレジスタは間接アクセス。
++	  これを有効にすると、ehci-hcd は、すべてのレジスタアクセスをその経路で行う。
++
+ config USB_EHCI_FSL
+ 	tristate "Support for Freescale on-chip EHCI USB controller"
+ 	select USB_EHCI_ROOT_HUB_TT
+--- a/drivers/usb/host/Makefile
++++ b/drivers/usb/host/Makefile
+@@ -35,6 +35,7 @@
+ obj-$(CONFIG_USB_PCI)	+= pci-quirks.o
+ 
+ obj-$(CONFIG_USB_EHCI_HCD)	+= ehci-hcd.o
++obj-$(CONFIG_USB_EHCI_XCODE)	+= ehci-xcode.o
+ obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
+ obj-$(CONFIG_USB_EHCI_HCD_PLATFORM)	+= ehci-platform.o
+ obj-$(CONFIG_USB_EHCI_HCD_NPCM7XX)	+= ehci-npcm7xx.o

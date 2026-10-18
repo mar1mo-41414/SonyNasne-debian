@@ -99,6 +99,13 @@
 		};
 	};
 
+	usb0: usb@1fff2000 {
+		compatible = "vixs,xcode-ehci";	/* USB ホスト(SDUH)。EHCI のレジスタは間接アクセス(arch/mips/xcode/usb.c) */
+		reg = <0x1fff2000 0x40>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <6>;
+	};
+
 	cpuintc: interrupt-controller {
 		#address-cells = <0>;
 		#interrupt-cells = <1>;
