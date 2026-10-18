@@ -112,9 +112,11 @@ CONFIG_TRIM_UNUSED_KSYMS=y
 # 手で調整していた分を defconfig に(KNL スロットに収めるため。ゼロの設定から作っても、同じ大きさになる)
 # CONFIG_NVMEM is not set
 # CONFIG_XCODE_LED_HEARTBEAT is not set
-# USB ホスト(EHCI)。モジュール(KNL スロットの余裕を使わない。rootfs の /lib/modules から modprobe)
+# USB ホスト(EHCI+OHCI)。モジュール(KNL スロットの余裕を使わない。rootfs の /lib/modules から modprobe)
 CONFIG_USB=m
 CONFIG_USB_EHCI_HCD=m
 CONFIG_USB_EHCI_XCODE=m
+CONFIG_USB_OHCI_HCD=m
+CONFIG_USB_OHCI_XCODE=m
 CONFIG_USB_STORAGE=m
 

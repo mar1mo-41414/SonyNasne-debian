@@ -1,0 +1,44 @@
+--- a/drivers/usb/host/ohci.h
++++ b/drivers/usb/host/ohci.h
+@@ -582,8 +582,15 @@
+ #endif
+ }
+ 
++#if IS_ENABLED(CONFIG_USB_OHCI_XCODE)
++/* ViXS XCode(Sony nasne): OHCI のレジスタはメモリ空間に見えず、SoC の間接アクセス経由(arch/mips/xcode/usb.c)。regs はコントローラ内のオフセット */
++#include <asm/mach-xcode/xcode-soc.h>
++#define ohci_readl(o,r)		xcode_sduh_readl((unsigned long)(r), 1)
++#define ohci_writel(o,v,r)	xcode_sduh_writel((v), (unsigned long)(r), 1)
++#else
+ #define ohci_readl(o,r)		_ohci_readl(o,r)
+ #define ohci_writel(o,v,r)	_ohci_writel(o,v,r)
++#endif
+ 
+ 
+ /*-------------------------------------------------------------------------*/
+--- a/drivers/usb/host/Kconfig
++++ b/drivers/usb/host/Kconfig
+@@ -422,6 +422,13 @@
+ 
+ if USB_OHCI_HCD
+ 
++config USB_OHCI_XCODE
++	tristate "ViXS XCode 4210 (Sony nasne) OHCI USB host"
++	depends on MIPS_XCODE
++	help
++	  Sony nasne の SoC(ViXS XCode 4210)の USB 1.1 ホスト(EHCI のコンパニオン)。OHCI のレジスタは間接アクセス。
++	  これを有効にすると、ohci-hcd は、すべてのレジスタアクセスをその経路で行う。
++
+ config USB_OHCI_HCD_OMAP1
+ 	tristate "OHCI support for OMAP1/2 chips"
+ 	depends on ARCH_OMAP1
+--- a/drivers/usb/host/Makefile
++++ b/drivers/usb/host/Makefile
+@@ -52,6 +52,7 @@
+ obj-$(CONFIG_USB_ISP1362_HCD)	+= isp1362-hcd.o
+ 
+ obj-$(CONFIG_USB_OHCI_HCD)	+= ohci-hcd.o
++obj-$(CONFIG_USB_OHCI_XCODE)	+= ohci-xcode.o
+ obj-$(CONFIG_USB_OHCI_HCD_PCI)	+= ohci-pci.o
+ obj-$(CONFIG_USB_OHCI_HCD_PLATFORM)	+= ohci-platform.o
+ obj-$(CONFIG_USB_OHCI_EXYNOS)	+= ohci-exynos.o

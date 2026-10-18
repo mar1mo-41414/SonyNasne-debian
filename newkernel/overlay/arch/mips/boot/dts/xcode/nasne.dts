@@ -106,6 +106,13 @@
 		interrupts = <6>;
 	};
 
+	usb1: usb@1fff2040 {
+		compatible = "vixs,xcode-ohci";	/* 同じ SDUH の OHCI(EHCI のコンパニオン。low/full-speed の機器)。レジスタは OOC 経由の間接アクセス */
+		reg = <0x1fff2040 0x40>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <6>;
+	};
+
 	cpuintc: interrupt-controller {
 		#address-cells = <0>;
 		#interrupt-cells = <1>;
