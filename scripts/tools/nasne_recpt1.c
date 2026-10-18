@@ -923,6 +923,16 @@ static const struct { unsigned char ch; unsigned char slot; } BS_SCAN_TP[] = {
 };
 
 /* チャンネルスキャン: mode 0=地デジのみ, 1=衛星(BS/CS)のみ, 2=全チャンネル(地デジ+BS/CS) */
+/* スキャン用のチューナー確保。他(録画・視聴・Mirakurun の番組表の取得)が使っていて(rc==3)も、すぐには諦めず、最大60秒、空くのを待つ */
+static int acquire_for_scan(int is_sat) {
+    int rc = acquire_tuner(is_sat);
+    if (rc == 3) {
+        unsigned long w;
+        err("チューナーが使用中です(録画・視聴・番組表の取得)。空くのを最大60秒待ちます\n");
+        for (w = 0; w < 60000 && rc == 3; w += 100) { msleep(100); rc = acquire_tuner(is_sat); }
+    }
+    return rc;
+}
 static int scan(int ofd, int mode) {
     unsigned long ch; int rc;
     out_fd = ofd; stop_flag = 0;
@@ -931,7 +941,7 @@ static int scan(int ofd, int mode) {
 
     /* 1. 地デジスキャン (mode 0 または 2) */
     if ((mode == 0 || mode == 2) && !stop_flag) {
-        rc = acquire_tuner(0);
+        rc = acquire_for_scan(0);
         if (rc) { err("地デジチューナーを確保できない\n"); if (cache_fd >= 0) sys3(SYS_close, cache_fd, 0, 0); return rc; }
         for (ch = 13; ch <= 62 && !stop_flag; ch++) {
             unsigned long hz = uhf_hz(ch); int i;
@@ -965,8 +975,8 @@ static int scan(int ofd, int mode) {
     /* 2. 衛星 (BS/CS) スキャン (mode 1 または 2) */
     if ((mode == 1 || mode == 2) && !stop_flag) {
         int idx;
-        rc = acquire_tuner(1);
-        if (rc) { err("衛星チューナーを確保できない\n"); if (cache_fd >= 0) sys3(SYS_close, cache_fd, 0, 0); return rc; }
+        rc = acquire_for_scan(1);
+        if (rc) { err(rc == 3 ? "衛星チューナーを確保できない(ずっと使用中)\n" : "衛星チューナーを確保できない\n"); if (cache_fd >= 0) sys3(SYS_close, cache_fd, 0, 0); return rc; }
 
         /* BSスキャン */
         for (idx = 0; idx < (int)(sizeof(BS_SCAN_TP) / sizeof(BS_SCAN_TP[0])) && !stop_flag; idx++) {
