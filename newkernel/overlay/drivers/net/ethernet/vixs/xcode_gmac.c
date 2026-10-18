@@ -283,6 +283,10 @@ static void xg_hw_start(struct xg *g)
 	csr_wr(g, XG_DMA_RX_BASE, g->rx_dma);
 	csr_wr(g, XG_DMA_TX_BASE, g->tx_dma);
 	csr_wr(g, XG_MAC_INT_MASK, 0xffffffff);	/* MAC 側の割り込み(リンク変化・PMT など)は使わない(DMA ステータスの GLI/GMI/GPI が立ち続けて割り込みが止まらなくなる) */
+	/* MMC(統計カウンタ)の割り込みもマスクする。送信バイト数が 2^31 に達すると上がり続けて、IRQ 6 が止まらなくなる(本体が固まる)。ステータスの GMI は書き込みでは消えない */
+	csr_wr(g, XG_MMC_RX_INTR_MASK, 0xffffffff);
+	csr_wr(g, XG_MMC_TX_INTR_MASK, 0xffffffff);
+	csr_wr(g, XG_MMC_RX_IPC_INTR_MASK, 0xffffffff);
 	csr_wr(g, XG_DMA_STATUS, 0xffffffff);
 	csr_wr(g, XG_DMA_INT_EN, XG_IE_NIE | XG_IE_AIE | XG_IE_TI | XG_IE_RI | XG_IE_RU | XG_IE_FBE);
 	csr_wr(g, XG_DMA_OP_MODE, XG_OP_SF | XG_OP_OSF | XG_OP_ST | XG_OP_SR);

@@ -51,6 +51,10 @@
 #define XG_MAC_VERSION		0x0020
 #define XG_MAC_INT_STATUS	0x0038
 #define XG_MAC_INT_MASK		0x003c
+/* MMC(統計カウンタ)。カウンタが半分(0x80000000。送信バイト数なら約2GB)に達すると割り込みを上げ続けて、共有 IRQ 6 が止まらなくなり、本体が固まる。使わないので全部マスク */
+#define XG_MMC_RX_INTR_MASK	0x010c
+#define XG_MMC_TX_INTR_MASK	0x0110
+#define XG_MMC_RX_IPC_INTR_MASK	0x0200
 #define XG_MAC_ADDR0_HI		0x0040
 #define XG_MAC_ADDR0_LO		0x0044
 
