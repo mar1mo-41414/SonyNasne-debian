@@ -95,7 +95,8 @@ KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip 
 - **ドライバ** `newkernel/overlay/drivers/usb/host/ehci-xcode.c`(モジュール `ehci-xcode`): VBUS の GPIO、クロック、リセット、PHY のクロック(内部 PLL・48MHz)、割り込み(IP6 共有)の順に初期化します。
 - カーネルの KNL スロットに余白が無いので、`USB`・`USB_EHCI_HCD`・`USB_EHCI_XCODE`・`USB_STORAGE` は**モジュール**です(`install_modules12.sh` で入れ、`modprobe`/自動読み込み)。
 - **OHCI(コンパニオン)**: low/full-speed の機器(キーボード・マウス・USB 1.1 のハブ)は、EHCI がポートを OHCI へ渡して扱います。`newkernel/overlay/drivers/usb/host/ohci-xcode.c`(モジュール `ohci-xcode`)とパッチ `0013-usb-ohci-xcode.patch`。OHCI のレジスタも間接アクセス(別のアドレスレジスタ)で、電源・クロック・PHY の初期化は EHCI と共有します。USB マウス(full-speed)が OHCI 側で認識され、割り込み転送(マウスのレポート)が約 2400 回、エラーなしで通ることを確認しました(HID ドライバは入れていません)。
-- **未対応**: 過電流の検出、FAT のマウント(vfat モジュールは作っていません)。
+- **USB メモリのマウントと書き込み**: FAT はモジュール(`vfat`、`nls_*`)です(`modprobe vfat; mount -t vfat -o noatime /dev/sdb1 /mnt/usb`)。FAT のモジュールを足すとカーネルのエクスポートシンボル表が増えて KNL スロットに収まらなくなるので、使っていない PTP を切りました。32GB の USB メモリ(FAT32、high-speed)で、1GiB のファイルのコピーと、500 個の小ファイル・長い日本語のファイル名の書き込みを、再マウントしても一致することを確認しました。速度の目安は、書き込み約 12MB/s、読み出し約 21MB/s です。
+- **未対応**: 過電流の検出、`fsck.vfat`、長時間のホットプラグ試験。
 
 ## 8. 既知の問題・制限
 
