@@ -1116,7 +1116,7 @@ static int listen_port(unsigned long port) {
     if (ls < 0) { err("socket失敗\n"); return 1; }
     sys6(4181, ls, 0xffff, 4, (long)&one, 4, 0);                                  /* SOL_SOCKET(MIPS=0xffff), SO_REUSEADDR(=4) */
     for (i = 0; i < 16; i++) sa[i] = 0;
-    sa[1] = 2; sa[2] = (port >> 8) & 0xff; sa[3] = port & 0xff;                  /* AF_INET、ポート(ネットワークバイトオーダー)、0.0.0.0 */
+    sa[0] = 2; sa[2] = (port >> 8) & 0xff; sa[3] = port & 0xff;                  /* AF_INET(リトルエンディアンの16ビットなので先頭バイト。2.6.29 は family を見なかったが、新しいカーネルは見る)、ポート(ネットワークバイトオーダー)、0.0.0.0 */
     if (sys3(4169, ls, (long)sa, 16) < 0) { err("bind失敗\n"); return 1; }
     sys3(4174, ls, 8, 0);
     err("nasne-recpt1: listening on port "); errhex(port); err(" (hex)\n");
