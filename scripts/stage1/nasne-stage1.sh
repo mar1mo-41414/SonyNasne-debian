@@ -39,14 +39,13 @@ SIZE=$(wc -c < "$KNL")
 if [ "$SIZE" -gt "$KNL_MAX" ] || [ "$SIZE" -lt "$KNL_MIN" ]; then
     log "ABORT: $KNL のサイズ($SIZE)が範囲外($KNL_MIN〜$KNL_MAX)"; exit 1
 fi
-if [ -f "$KNL.sha256" ]; then
-    if ! ( cd "$(dirname "$KNL")" && sha256sum -c "$(basename "$KNL").sha256" >/dev/null 2>&1 ); then
-        log "ABORT: $KNL のsha256が一致しない(壊れている/別のファイル)"; exit 1
-    fi
-    log "kernel sha256 OK ($SIZE bytes)"
-else
-    log "WARN: $KNL.sha256 が無い(ハッシュ検査なしで続行)"
+if [ ! -s "$KNL.sha256" ]; then
+    log "ABORT: $KNL.sha256 が無い/空。SPIには書き込まない"; exit 1
 fi
+if ! ( cd "$(dirname "$KNL")" && sha256sum -c "$(basename "$KNL").sha256" >/dev/null 2>&1 ); then
+    log "ABORT: $KNL のsha256が一致しない(壊れている/別のファイル)"; exit 1
+fi
+log "kernel sha256 OK ($SIZE bytes)"
 
 # --- 冪等判定: すでに同じ内容が書かれていれば何もしない ---
 if "$MTDTOOL" verify "$MTD" "$KNL_OFF" "$KNL" >> "$LOG" 2>&1; then
@@ -82,23 +81,55 @@ echo $((TRIES + 1)) > "$STATE/tries"; $SYNC
 
 # --- (b) バックアップ(初回のみ。書き込みより前に必ず取る) ---
 if [ ! -f "$STATE/backup_ok" ]; then
+    # 前回の処理が中断された場合、部分バックアップを上書きしない。
+    if [ -e "$STATE/spi_mtd0_backup.bin" ] || [ -e "$STATE/knl_A_before.bin" ] || [ -e "$STATE/spi_mtd0_backup.sha256" ]; then
+        log "ABORT: 完了印なしのバックアップが残っている。自動で上書きせず手動確認する"; exit 1
+    fi
     log "backing up SPI ($MTD 0..$SPI_DUMP_LEN) to $STATE/spi_mtd0_backup.bin"
     if ! "$MTDTOOL" dump "$MTD" 0 "$SPI_DUMP_LEN" "$STATE/spi_mtd0_backup.bin" >> "$LOG" 2>&1; then
         log "ABORT: バックアップに失敗。SPIには触らない"; exit 1
     fi
-    BSIZE=$(wc -c < "$STATE/spi_mtd0_backup.bin")
+    BSIZE=$(wc -c < "$STATE/spi_mtd0_backup.bin" 2>/dev/null) || exit 1
     if [ "$BSIZE" -ne $((SPI_DUMP_LEN)) ]; then
         log "ABORT: バックアップのサイズ($BSIZE)が想定外。SPIには触らない"; exit 1
     fi
-    # 元のKNLスロットを別ファイルに切り出す(書き戻し用)。先頭が全部0xFFなら、すでに壊れているとみなして中止
-    dd if="$STATE/spi_mtd0_backup.bin" of="$STATE/knl_A_before.bin" bs=65536 skip=16 count=40 2>/dev/null
+    # 復旧用KNLスロット(2.5MiB)を完全に取り出せなければ書き換えない。
+    if ! dd if="$STATE/spi_mtd0_backup.bin" of="$STATE/knl_A_before.bin" bs=65536 skip=16 count=40 2>/dev/null; then
+        log "ABORT: 復旧用KNLの切り出しに失敗"; exit 1
+    fi
+    KSIZE=$(wc -c < "$STATE/knl_A_before.bin" 2>/dev/null) || exit 1
+    if [ "$KSIZE" -ne "$KNL_MAX" ]; then
+        log "ABORT: 復旧用KNLのサイズが不正($KSIZE)"; exit 1
+    fi
     if [ "$(head -c 64 "$STATE/knl_A_before.bin" | tr -d '\377' | wc -c)" -eq 0 ]; then
         log "ABORT: 現在のKNLスロットが空(0xFF)。すでに壊れているため自動では書き込まない"; exit 1
     fi
-    ( cd "$STATE" && sha256sum spi_mtd0_backup.bin > spi_mtd0_backup.sha256 )
+    if ! ( cd "$STATE" && sha256sum spi_mtd0_backup.bin > spi_mtd0_backup.sha256 ); then
+        log "ABORT: バックアップのSHA256作成に失敗"; exit 1
+    fi
     : > "$STATE/backup_ok"; $SYNC
-    log "backup OK"
+    log "backup created"
 fi
+
+# 初回も再試行時も、SPI消去より前に復旧に使うファイルを全検査する。
+if [ ! -s "$STATE/spi_mtd0_backup.bin" ] || [ ! -s "$STATE/spi_mtd0_backup.sha256" ] || [ ! -s "$STATE/knl_A_before.bin" ]; then
+    log "ABORT: 復旧用バックアップのファイルが欠けている"; exit 1
+fi
+BSIZE=$(wc -c < "$STATE/spi_mtd0_backup.bin" 2>/dev/null) || exit 1
+KSIZE=$(wc -c < "$STATE/knl_A_before.bin" 2>/dev/null) || exit 1
+if [ "$BSIZE" -ne $((SPI_DUMP_LEN)) ] || [ "$KSIZE" -ne "$KNL_MAX" ]; then
+    log "ABORT: 復旧用バックアップのサイズが不正 (SPI=$BSIZE KNL=$KSIZE)"; exit 1
+fi
+if ! ( cd "$STATE" && sha256sum -c spi_mtd0_backup.sha256 >/dev/null 2>&1 ); then
+    log "ABORT: 復旧用SPIバックアップのSHA256が不一致"; exit 1
+fi
+if ! dd if="$STATE/spi_mtd0_backup.bin" of="$STATE/knl_A_check.bin" bs=65536 skip=16 count=40 2>/dev/null ||
+   ! cmp -s "$STATE/knl_A_check.bin" "$STATE/knl_A_before.bin"; then
+    rm -f "$STATE/knl_A_check.bin"
+    log "ABORT: 復旧用KNLが元SPIバックアップと一致しない"; exit 1
+fi
+rm -f "$STATE/knl_A_check.bin"
+log "original SPI backup and restore KNL verified"
 
 # --- 書き込み(消去→書き込み→読み戻し検証) ---
 log "flashing KNL ($KNL -> $MTD @ $KNL_OFF)"

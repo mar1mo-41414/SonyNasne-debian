@@ -82,8 +82,17 @@ before=$(sha256sum < "$FLASH"); rc=$(run); [ "$rc" = 1 ] && ok "rc=1" || ng "rc=
 [ "$(sha256sum < "$FLASH")" = "$before" ] && ok "SPIに触っていない" || ng "SPIが変わった"
 
 echo "[9] ウォッチドッグを止められない → SPIに触らない(rc=5)"
-reset; before=$(sha256sum < "$FLASH"); WDFAIL=1 rc=$(WDFAIL=1 run); [ "$rc" = 5 ] && ok "rc=5" || ng "rc=$rc"
+reset; before=$(sha256sum < "$FLASH"); rc=$(WDFAIL=1 run); [ "$rc" = 5 ] && ok "rc=5" || ng "rc=$rc"
 [ "$(sha256sum < "$FLASH")" = "$before" ] && ok "SPIに触っていない" || ng "SPIが変わった"
 [ ! -f "$STATE/tries" ] && ok "試行回数も増やしていない" || ng "tries が増えた"
+
+echo "[10] sha256 ファイルが無い → SPIに触らない(rc=1)"
+reset; rm -f "$W/share/knl_new.bin.sha256"; before=$(sha256sum < "$FLASH"); rc=$(run); [ "$rc" = 1 ] && ok "rc=1" || ng "rc=$rc"
+[ "$(sha256sum < "$FLASH")" = "$before" ] && ok "SPIに触っていない" || ng "SPIが変わった"
+
+echo "[11] 完了印なしの部分バックアップが残っている → 上書きせず中止(rc=1)"
+reset; mkdir -p "$STATE"; echo partial > "$STATE/spi_mtd0_backup.bin"; before=$(sha256sum < "$FLASH"); rc=$(run); [ "$rc" = 1 ] && ok "rc=1" || ng "rc=$rc"
+[ "$(sha256sum < "$FLASH")" = "$before" ] && ok "SPIに触っていない" || ng "SPIが変わった"
+[ "$(cat "$STATE/spi_mtd0_backup.bin")" = partial ] && ok "部分バックアップをそのまま残した" || ng "上書きした"
 
 echo; echo "結果: PASS=$pass FAIL=$fail"; [ "$fail" = 0 ]

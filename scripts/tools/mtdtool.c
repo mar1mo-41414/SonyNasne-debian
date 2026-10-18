@@ -92,7 +92,12 @@ static int do_verify(const char *dev,unsigned long off,const char *file){
     if(syscall(S_lseek,fd,off,0)<0){ws("lseek failed\n");return 5;}
     unsigned long pos=0;
     for(;;){
-        long a=syscall(S_read,ff,(long)buf,sizeof(buf)); if(a<=0) break;
+        long a=syscall(S_read,ff,(long)buf,sizeof(buf));
+        if(a<0){ws("verify file read FAILED\n");return 6;}
+        if(a==0){
+            if(pos==0){ws("REFUSED: empty verify file\n");return 7;}
+            break;
+        }
         long got=0;
         while(got<a){ long r=syscall(S_read,fd,(long)(buf2+got),a-got); if(r<=0){ws("device read FAILED\n");return 6;} got+=r; }
         long i; for(i=0;i<a;i++) if(buf[i]!=buf2[i]){ws("MISMATCH at ");hx(off+pos+i);ws("\n");return 8;}

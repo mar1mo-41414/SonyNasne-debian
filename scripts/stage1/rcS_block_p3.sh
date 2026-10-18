@@ -49,7 +49,10 @@ umount_p3() { umount -d /mnt/p3 2>/dev/null; umount $P3X 2>/dev/null; }
     if [ "$OFFICIAL" != 1 ] && [ "$RESCUE" != 1 ]; then
 @INSTALL_BLOCK@
         if [ "$P3R" = 0 ]; then
-            if [ -x /mnt/p3/usr/local/sbin/nasne-stage1.sh ]; then
+            # 成功印がある、または印導入前のインストール(コピー途中なら残っている nasne-install-mode が無い)を完了済みとみなす
+            if { [ -f /mnt/p3/etc/nasne-install-ok ] || [ ! -e /mnt/p3/etc/nasne-install-mode ]; } &&
+               [ -e /mnt/p3/etc/nasne-direct-boot ] &&
+               [ -x /mnt/p3/usr/local/sbin/nasne-stage1.sh ]; then
                 mount -t proc  none /mnt/p3/proc
                 mount -t sysfs none /mnt/p3/sys
                 mount -o bind /dev     /mnt/p3/dev
@@ -63,7 +66,7 @@ umount_p3() { umount -d /mnt/p3 2>/dev/null; umount $P3X 2>/dev/null; }
                 # Debianを入れた直後で、カーネルがすでに目的のもの(stage1が何もせず終了)なら、ここで再起動してDebianに移る
                 if [ "$INSTALLED" = 1 ] && [ "$S1RC" = 0 ]; then echo "installed: rebooting into Debian"; sync; reboot -f; fi
             else
-                echo "p3 に /usr/local/sbin/nasne-stage1.sh が無い"
+                echo "SPI stage1 blocked: インストール成功印または必須ファイルが無い"
             fi
         else
             echo "Debian の p3 をマウントできなかった (mount_p3 rc=$P3R)。何もしない"
