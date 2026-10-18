@@ -138,3 +138,7 @@ CONFIG_NLS_UTF8=m
 # CONFIG_FW_LOADER is not set
 # CONFIG_SGETMASK_SYSCALL is not set
 CONFIG_PM=y
+
+# 固まったときの遠隔復旧(sysrq-trigger)と、スワップ(RAM が約240MBなので)
+CONFIG_MAGIC_SYSRQ=y
+CONFIG_SWAP=y
