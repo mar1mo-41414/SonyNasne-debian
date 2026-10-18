@@ -1,6 +1,6 @@
 --- a/arch/mips/Kconfig
 +++ b/arch/mips/Kconfig
-@@ -649,6 +649,25 @@
+@@ -649,6 +649,24 @@
  	select ARCH_HAS_RESET_CONTROLLER
  	select RESET_CONTROLLER
  
@@ -9,7 +9,6 @@
 +	select BOARD_SCACHE
 +	select BOOT_RAW
 +	select CEVT_R4K
-+	select COMMON_CLK
 +	select CSRC_R4K
 +	select DMA_NONCOHERENT
 +	select IRQ_MIPS_CPU

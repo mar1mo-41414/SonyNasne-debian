@@ -13,7 +13,7 @@
  	preempt_disable();
  	show_regs(regs);
  	preempt_enable();
-+#ifdef CONFIG_MIPS_XCODE
++#ifdef CONFIG_XCODE_DBG_IFETCH
 +	xcode_dbg_ifetch(regs);
 +#endif
  }

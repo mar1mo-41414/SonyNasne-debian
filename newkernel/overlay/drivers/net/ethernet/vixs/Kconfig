@@ -12,7 +12,6 @@ config XCODE_GMAC
 	tristate "ViXS XCode Ethernet (Synopsys GMAC with CSR window)"
 	depends on MIPS_XCODE
 	select PHYLIB
-	select MARVELL_PHY
 	select OF_MDIO
 	help
 	  XCode 4210 のオンチップ Synopsys GMAC。レジスタが SoC ラッパの CSR 窓越しで、メインラインの stmmac では扱えないため専用ドライバ。

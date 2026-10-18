@@ -23,4 +23,8 @@ config XCODE_EARLYCON
 	  UART の無い基板で、起動ログ・oops・panic を LAN へ流す(受信側: socat -u UDP-RECV:6666 STDOUT)。
 	  GMAC は ポーリングで TX だけ使う。
 
+config XCODE_DBG_IFETCH
+	bool "致命的シグナルのとき、命令フェッチの周辺(キャッシュ・メモリの内容)をダンプする(SIGILL 調査用)"
+	default n
+
 endif
