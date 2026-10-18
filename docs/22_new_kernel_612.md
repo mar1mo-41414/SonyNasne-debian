@@ -94,7 +94,7 @@ KNL スロットは 0x100000〜0x37ffff(約2.5MB)で、4段目ブートが gzip 
 - **レジスタは間接アクセス**: EHCI/OHCI のレジスタは直接マップされず、SoC の窓(オフセット 0x2000〜0x2014)経由。`newkernel/overlay/arch/mips/xcode/usb.c` の `xcode_sduh_readl/writel`、パッチ `0012-usb-ehci-xcode.patch` が `ehci.h` のレジスタ読み書きを差し替えます。
 - **ドライバ** `newkernel/overlay/drivers/usb/host/ehci-xcode.c`(モジュール `ehci-xcode`): VBUS の GPIO、クロック、リセット、PHY のクロック(内部 PLL・48MHz)、割り込み(IP6 共有)の順に初期化します。
 - カーネルの KNL スロットに余白が無いので、`USB`・`USB_EHCI_HCD`・`USB_EHCI_XCODE`・`USB_STORAGE` は**モジュール**です(`install_modules12.sh` で入れ、`modprobe`/自動読み込み)。
-- **OHCI(コンパニオン)**: low/full-speed の機器(キーボード・マウス・USB 1.1 のハブ)は、EHCI がポートを OHCI へ渡して扱います。`newkernel/overlay/drivers/usb/host/ohci-xcode.c`(モジュール `ohci-xcode`)とパッチ `0013-usb-ohci-xcode.patch`。OHCI のレジスタも間接アクセス(別のアドレスレジスタ)で、電源・クロック・PHY の初期化は EHCI と共有します。起動でバスとルートハブ(2 ポート)が登録されるところまで確認済みで、**low/full-speed の実機での動作は未確認**です。
+- **OHCI(コンパニオン)**: low/full-speed の機器(キーボード・マウス・USB 1.1 のハブ)は、EHCI がポートを OHCI へ渡して扱います。`newkernel/overlay/drivers/usb/host/ohci-xcode.c`(モジュール `ohci-xcode`)とパッチ `0013-usb-ohci-xcode.patch`。OHCI のレジスタも間接アクセス(別のアドレスレジスタ)で、電源・クロック・PHY の初期化は EHCI と共有します。USB マウス(full-speed)が OHCI 側で認識され、割り込み転送(マウスのレポート)が約 2400 回、エラーなしで通ることを確認しました(HID ドライバは入れていません)。
 - **未対応**: 過電流の検出、FAT のマウント(vfat モジュールは作っていません)。
 
 ## 8. 既知の問題・制限
