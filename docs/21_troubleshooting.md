@@ -50,6 +50,7 @@ PWR LED は MCU の「表示コード」で決まります([docs/06](06_mcu_watc
 | **約333秒(5.5分)ごとに再起動する** | MCU のウォッチドッグが止まっていない(`nasne-mcu-wd` が動いていない)。公式アプリが動いていない環境では、MCU が本体をリセットする | `/var/log/nasne-mcu-wd.log`。手動で止めるなら `mcui2c w 20 01`([docs/06](06_mcu_watchdog.md)) |
 | 状態ページに「**チューナーのプロセスが固まっている**」と出る | **D 状態のプロセスは、正常な受信中にもほぼ常に現れる**(ドライバの中で待つため)。以前の判定は誤検知していた。今の判定は「D のまま CPU 時間が30秒以上進まない」 | `/proc/<pid>/stat` の `utime+stime` が増えているか確認。増えていれば正常。増えずに30秒以上なら固まっている。**電源の入れ直しで戻る**([docs/11](11_tv_streaming.md)) |
 | **6.12 カーネルで、起動したのか分からない/固まった** | UART が無いので、画面に何も出ない | 早期コンソール(UDP ブロードキャスト、ポート 6666)を `scripts/newkernel/netlog.py` で受ける。固まったときは、`/proc/sysrq-trigger`(`echo m` でメモリの状態、`echo s` で同期)。詳しくは [docs/22](22_new_kernel_612.md) |
+| Mirakurun から見て、チューナーがずっと `busy`(`/status`)で、`503 tuner busy` と `respawning because request has not closed` が約10秒周期で出る | Mirakurun が、サービス検出(`Service.Add.Check`)や番組表の取得を、連続してやっている。**Docker で `/app-data` を永続化していない**と、再起動のたびに全サービスをやり直す | `/app-config` と `/app-data` を永続化する(`contrib/epgstation/docker-compose.yml`)。初回は BS/CS で30分〜1時間かかることがある。ほかの Mirakurun/アプリが同じ nasne を使っていないかも確認。詳しくは [docs/11](11_tv_streaming.md) |
 | ssh が `no matching host key type` などで失敗する | nasne の sshd が古い | `-o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa`、RSA の鍵 |
 | 時計が1970年から始まる、`apt update` が「Release file is not valid yet」 | 基板にRTCが無い | NTP(`ntpdate`)や `fake-hwclock`。Debian イメージには組み込み済み |
 

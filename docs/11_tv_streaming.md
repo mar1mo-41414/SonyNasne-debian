@@ -170,6 +170,8 @@ Mirakurun は別のPCで動かす(nasne上ではなく)。**EPGStation も動作
 番組表は約1分の受信で数百件の番組が取れた。`/api/services/<id>/stream` からは、元画質(MPEG-2 1440×1080 + AAC + 字幕)のTSが取得できた。
 Mirakurunのチャンネルスキャン(自動)は、チャンネル全体のTSを前提にするため、**サービスごとのチャンネル設定を手書きするのが確実**。
 
+**Docker で Mirakurun を動かすときは、`/app-config` と `/app-data` の両方を永続化してください**(`contrib/epgstation/docker-compose.yml` の `volumes` のとおり)。`/app-data` を永続化しないと、Mirakurun を再起動するたびに、全チャンネルのサービス検出(`Service.Add.Check.*` のジョブ)と番組表の取得をやり直します。nasne のチューナーは1系統なので、そのジョブが連続してチューナーを占有し、視聴や録画が `503 tuner busy` / `/status` が `busy` のまま、という状態が長く続きます(BS/CS を足してチャンネル数が増えるほど長くなる。Issue #6)。初回のスキャンは、BS/CS を含めて30分〜1時間かかることがあります。`nasne-recpt1` のストリーム子プロセスが `ps` で `D` 状態に見えるのは、受信中の通常の状態です。
+
 Mirakurunのデコーダー(`decoder`)設定は不要(nasne が復号済みのTSを出す)。複数サービスの同時視聴は、チューナーが1系統なので不可(同じチャンネルの別サービスも不可)。
 
 `tuners.yml` / `channels.yml` は `python3 scripts/nasne_mirakurun_conf.py <nasneのIP> --scan -o <設定ディレクトリ>` で nasne のサービス一覧から自動で作れます(手で書く必要はありません)。
