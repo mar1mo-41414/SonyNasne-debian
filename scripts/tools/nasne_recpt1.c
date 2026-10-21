@@ -471,21 +471,14 @@ static void close_streams(void) {
     if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 
-/* 地デジは復号ストリーム(OPEN_SECUREDTS)にPMTが含まれるため、PSIから混ぜると二重になりCCエラーが生じる。
- * 衛星(is_sat)のセッションでのみ cur_pmt_pid を設定し、PMTをPSIストリームから透過させる。 */
-static unsigned long cur_pmt_pid = 0;
+/* 地デジ・衛星ともに復号ストリーム(OPEN_SECUREDTS)に正規PMT(Version 0, CA記述子除去済み)が含まれるため、
+ * PSIストリームから元PMTを混ぜると二重混入(CCエラーおよび未復号CA記述子による暗号化誤認)が生じる。
+ * PMTはファームウェア(SoC)生成のもののみを通すため、cur_pmt_pidは使用しない。 */
 static unsigned long session_want_sid = 0;
 static int is_si_pid(unsigned long pid) {
-    int i;
     /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)を出力するため、PSIの元PATは除外 */
     if (session_want_sid && pid == 0) return 0;
     if (pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28)) return 1;
-    if (cur_pmt_pid) {
-        if (pid == cur_pmt_pid) return 1;
-        for (i = 0; i < nsvc; i++) {
-            if (svcs[i].pmt == pid) return 1;
-        }
-    }
     return 0;
 }
 static int out_fd = 1;
@@ -716,7 +709,6 @@ static void send_headers(int sock) {
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
-    cur_pmt_pid = 0;
     session_want_sid = want_sid;
     lgx("session start freq", freq_val);
     if (is_sat) lgx("session ts_id", ts_id);
@@ -741,7 +733,6 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
     s = &svcs[sel];
-    if (is_sat) cur_pmt_pid = s->pmt;
     if (verbose) { err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid); err(" audio 0x"); errhex(s->apid); err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n"); }
     lgx("open_streams begin", 0);
     if (open_streams(s, is_sat) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
@@ -775,7 +766,6 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     }
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);
-    cur_pmt_pid = 0;
     session_want_sid = 0;
     close_streams();
     lgx("closed", 0);
