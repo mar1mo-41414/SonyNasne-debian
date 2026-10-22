@@ -12,6 +12,10 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 > (その場合はCH341A等のSPIライタで書き戻します)。対象は自分で所有する実機のみ。
 > このリポジトリには Sony の**ファームウェアやSPIフラッシュの内容は含まれません**。公式ファームはSonyの公開サーバから各自で入手してください。
 
+## どの手順書を読めばいい?
+
+**[docs/00_where_to_start.md](docs/00_where_to_start.md)**: 「何をしたいか」「どのバージョン(カーネル・Debian・本体のモデル)か」「何を入れたいか」「どこまで触るか」から、読む手順書を選べる振り分けリストです。
+
 ## HDDが壊れて、復旧したいだけの方へ
 
 **[docs/04_hdd_recovery_guide.md](docs/04_hdd_recovery_guide.md)** を読んでください。HDDの区画作成とファイルのコピーだけで、
@@ -90,6 +94,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 
 | 文書 | 内容 |
 |---|---|
+| [00_where_to_start](docs/00_where_to_start.md) | **どの手順書を読むか**(目的・バージョン・入れたいもの・触る範囲ごとの振り分けリスト) |
 | [01_hardware](docs/01_hardware.md) | 基板・主要IC・メモリ配分 |
 | [02_boot_chain](docs/02_boot_chain.md) | SPIフラッシュの地図、ブートチェーン、純正の起動フロー |
 | [03_firmware_format](docs/03_firmware_format.md) | `.dlm` の暗号とヘッダ、HDD紐付け(`00110022.dlm`) |

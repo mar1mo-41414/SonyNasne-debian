@@ -143,6 +143,7 @@ mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/ph
 | `tools/bcas` | `bcas status\|activate\|id\|deactivate ...` / `bcas m<hex>`: B-CASカードの実験([docs/07](07_driver_ioctl_bcas.md)) |
 | `tools/mtdtool` | `mtdtool erase\|write\|verify\|flash <dev> <off> <len\|file>` / `dump <dev> <off> <len> <out>`: `/dev/mtd0` の許可範囲(KNL / BKNL / 未使用領域)だけを消去・書き込み・比較。`flash` は消去→書き込み→読み戻し比較を一括([docs/05](05_kernel_and_direct_boot.md)、[docs/13](13_full_setup_from_official_hdd.md)) |
 | `tools/nasne_spitool` | `nasne_spitool id\|read\|verify\|flash`: 6.12 の初期など、MTD ドライバが無いとき、`/dev/mem` から SoC の SPI を直接叩いて読み書き(書けるのは KNL スロット A だけ。[docs/22](22_new_kernel_612.md)) |
+| `tools/ts_analyze.py` | `python3 ts_analyze.py <TSファイル>`: 取得した TS の PAT/PMT(サービス・ES の PID・CA 記述子)と、PID ごとのパケット数・CC エラー・スクランブル・TEI を表示。BS/CS が乱れる/復号されていないかの切り分け用(ホストの Python3 で動く) |
 | `tools/usb_intr_test` | `usb_intr_test /dev/bus/usb/BBB/DDD`: usbfs でインターフェース 0・1 の割り込み IN(0x81/0x82)を25秒間読む。USB マウスなどの転送確認用(OHCI/EHCI の試験) |
 | `tools/usb_hotplug_monitor.sh` | USB ディスクの抜き差しの試験用モニタ: 現れたら ro でマウントして基準ファイルの md5 を照合し、消えたら記録する |
 | `newkernel/` のスクリプト | `scripts/newkernel/` の `build_rootfs12.sh`・`make_rootfs12_image.sh`(Debian 12 の rootfs)、`install_tv12.sh`・`install_services12.sh`・`install_modules12.sh`・`setup_swap12.sh`(実機への導入)。[docs/22](22_new_kernel_612.md) |
