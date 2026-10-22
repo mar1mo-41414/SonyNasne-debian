@@ -350,8 +350,9 @@ static int recv_pt(unsigned long tmo, unsigned char **p, unsigned long *sz) {
 /* PATとPMTを集める。戻り値: 0=成功
  * BS/CSでは1トランスポンダ(PAT)内に8個以上のサービス(マルチ編成・データ・ES等を含む)が存在するため上限を32とする */
 #define MAX_SEC 32
+#define MAX_AUDIO 4
 static unsigned char sec_buf[MAX_SEC][1100]; static unsigned long sec_have[MAX_SEC]; static unsigned long sec_pid[MAX_SEC], sec_nsec;
-struct svc { unsigned long pn, pmt, pcr, ecm, vpid, vst, apid, ast; int ok, seg1; };      /* seg1: ワンセグ(PMTのPIDが0x1FC8)。SECUREDTSを開くとファームが固まるため扱わない */
+struct svc { unsigned long pn, pmt, pcr, ecm, vpid, vst; unsigned long apid[MAX_AUDIO], ast[MAX_AUDIO]; int num_audio; int ok, seg1; };      /* seg1: ワンセグ(PMTのPIDが0x1FC8)。SECUREDTSを開くとファームが固まるため扱わない */
 static struct svc svcs[MAX_SEC]; static int nsvc;
 
 static void feed(const unsigned char *q) {
@@ -403,24 +404,29 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
                 if (svcs[i].ok) continue;
                 if (!sec_complete(i + 1)) { all = 0; continue; }
                 s = sec_buf[i + 1]; ln = (((s[1] & 0xf) << 8) | s[2]) + 3;
-                svcs[i].pcr = ((s[8] & 0x1f) << 8) | s[9]; pil = ((s[10] & 0xf) << 8) | s[11]; svcs[i].ecm = 0; svcs[i].vpid = svcs[i].apid = 0;
+                svcs[i].pcr = ((s[8] & 0x1f) << 8) | s[9]; pil = ((s[10] & 0xf) << 8) | s[11]; svcs[i].ecm = 0; svcs[i].vpid = 0;
+                svcs[i].num_audio = 0;
                 for (e = 12; e + 2 <= 12 + pil; e += 2 + s[e + 1]) if (s[e] == 9 && ((s[e + 2] << 8) | s[e + 3]) == 5) svcs[i].ecm = ((s[e + 4] & 0x1f) << 8) | s[e + 5];
                 for (e = 12 + pil; e + 5 <= ln - 4; e += 5 + (((s[e + 3] & 0xf) << 8) | s[e + 4])) {
                     unsigned long st = s[e], ep = ((s[e + 1] & 0x1f) << 8) | s[e + 2];
                     if ((st == 0x02 || st == 0x1b) && !svcs[i].vpid) { svcs[i].vpid = ep; svcs[i].vst = st; }
-                    if ((st == 0x0f || st == 0x11) && !svcs[i].apid) { svcs[i].apid = ep; svcs[i].ast = st; }
+                    if ((st == 0x0f || st == 0x11) && svcs[i].num_audio < MAX_AUDIO) {
+                        svcs[i].apid[svcs[i].num_audio] = ep;
+                        svcs[i].ast[svcs[i].num_audio] = st;
+                        svcs[i].num_audio++;
+                    }
                 }
                 svcs[i].ok = 1;
-                if (want_sid && svcs[i].pn == want_sid && svcs[i].vpid && svcs[i].apid && !svcs[i].seg1) return (int)i;
+                if (want_sid && svcs[i].pn == want_sid && svcs[i].vpid && svcs[i].num_audio && !svcs[i].seg1) return (int)i;
             }
             if (all) {
-                for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].vpid && svcs[i].apid && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
+                for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].vpid && svcs[i].num_audio && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
                 return -1;
             }
         }
     }
     /* 時間切れ: 取れた範囲で選ぶ */
-    for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].ok && svcs[i].vpid && svcs[i].apid && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
+    for (i = 0; i < (unsigned long)nsvc; i++) if (svcs[i].ok && svcs[i].vpid && svcs[i].num_audio && !svcs[i].seg1 && (!want_sid || svcs[i].pn == want_sid)) return (int)i;
     return -1;
 }
 
@@ -445,18 +451,36 @@ static int open_streams(struct svc *s, int is_sat) {
     }
     if (!i) err("警告: B-CAS活性化イベントを確認できないまま続行\n");
     /* 復号ストリーム: 純正の既定値(映像パススルー設定)+番組ごとのPID */
+    int na = s->num_audio > 0 ? s->num_audio : 1;
+    int a;
+    if (na > MAX_AUDIO) na = MAX_AUDIO;
+    lgx("open_streams na", (unsigned long)na);
+    for (a = 0; a < na; a++) {
+        lgx("open_streams apid", s->apid[a]);
+    }
     clr(ob_sec, 0x9ec / 4 + 2);
     set(0xb4, h_g0); set(0xb8, h_g1); set(0xbc, h_pt0); set(0xc0, h_pt1);
     set(0xac, 0x8204141); set(0xb0, 0x80006); set(0xcc, is_sat ? 1 : 0); set(0xd4, 1);
     set(0xd8, s->vpid); set(0xdc, s->vpid); set(0xe0, 0); set(0xe4, 0x1e8480); set(0xe8, 0x1e); set(0xec, 0x2d0); set(0xf0, 0x1e0);
-    set(0xf4, 1); set(0xf8, is_sat ? 1 : 0); set(0x100, s->apid); set(0x110, s->apid); set(0x120, 0x10000); set(0x12c, 0x2dc6c0);
+    set(0xf4, na); set(0xf8, is_sat ? 1 : 0);
+    for (a = 0; a < na; a++) {
+        set(0x100 + a * 4, s->apid[a]);
+        set(0x110 + a * 4, s->apid[a]);
+    }
+    set(0x120, 0x10000); set(0x12c, 0x2dc6c0);
     set(0x134, 0x300d8); set(0x138, 0x30); set(0x13c, s->pcr); set(0x140, 0x900000); set(0x144, 2); set(0x148, 3);
     set(0x160, s->pn); set(0x178, s->ecm); set(0x184, 1); set(0x194, s->pn); set(0x19c, 0x40);
-    set(0x1a0, 2); set(0x1a4, s->vpid); set(0x1a8, s->apid); set(0x204, s->ecm); set(0x208, s->ecm); set(0x264, s->vst); set(0x268, s->ast);
+    set(0x1a0, 1 + na); set(0x1a4, s->vpid); set(0x204, s->ecm); set(0x264, s->vst);
+    for (a = 0; a < na; a++) {
+        set(0x1a8 + a * 4, s->apid[a]);
+        set(0x208 + a * 4, s->ecm);
+        set(0x268 + a * 4, s->ast[a]);
+    }
     set(0x608, 0x21); set(0x67c, 0x10000); set(0x698, 0x30000); set(0x894, 0xc); set(0x898, 0x5b8d80); set(0x8a8, 0x2ee00); set(0x8ac, 0xbb80);
     set(0x8b0, 2); set(0x8b4, 0x400); set(0x924, 2); set(0x940, 0xf03); set(0x950, 0x1e8480); set(0x954, 2); set(0x958, 3);
     set(0x964, 0x1e8480); set(0x968, 2); set(0x96c, 3); set(0x978, 1); set(0x980, 2);
     rv = ioc(ob_sec, 0x9ec, 0x30, 2000);
+    lgx("open_streams SECUREDTS rv", rv);
     if (rv != 1) { err("復号ストリーム(OPEN_SECUREDTS)を開けない rv="); errhex(rv); err("\n"); return -1; }
     h_sec0 = ob_sec[0xa4 / 4]; h_sec1 = ob_sec[0xa8 / 4];
     return 0;
@@ -471,18 +495,14 @@ static void close_streams(void) {
     if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 
-/* 地デジは復号ストリーム(OPEN_SECUREDTS)にPMTが含まれるため、PSIから混ぜると二重になりCCエラーが生じる。
- * 衛星(is_sat)のセッションでのみ cur_pmt_pid を設定し、PMTをPSIストリームから透過させる。 */
-static unsigned long cur_pmt_pid = 0;
+/* 地デジ・衛星ともに復号ストリーム(OPEN_SECUREDTS)に正規PMT(Version 0, CA記述子除去済み)が含まれるため、
+ * PSIストリームから元PMTを混ぜると二重混入(CCエラーおよび未復号CA記述子による暗号化誤認)が生じる。
+ * PMTはファームウェア(SoC)生成のもののみを通すため、cur_pmt_pidは使用しない。 */
+static unsigned long session_want_sid = 0;
 static int is_si_pid(unsigned long pid) {
-    int i;
+    /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)を出力するため、PSIの元PATは除外 */
+    if (session_want_sid && pid == 0) return 0;
     if (pid == 0 || (pid >= 0x10 && pid <= 0x14) || pid == 0x23 || pid == 0x24 || (pid >= 0x26 && pid <= 0x28)) return 1;
-    if (cur_pmt_pid) {
-        if (pid == cur_pmt_pid) return 1;
-        for (i = 0; i < nsvc; i++) {
-            if (svcs[i].pmt == pid) return 1;
-        }
-    }
     return 0;
 }
 static int out_fd = 1;
@@ -713,7 +733,7 @@ static void send_headers(int sock) {
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
-    cur_pmt_pid = 0;
+    session_want_sid = want_sid;
     lgx("session start freq", freq_val);
     if (is_sat) lgx("session ts_id", ts_id);
     rc = acquire_tuner(is_sat);
@@ -737,8 +757,15 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
     s = &svcs[sel];
-    if (is_sat) cur_pmt_pid = s->pmt;
-    if (verbose) { err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid); err(" audio 0x"); errhex(s->apid); err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n"); }
+    lgx("discover found num_audio", (unsigned long)s->num_audio);
+    if (verbose) {
+        int a;
+        err("サービス 0x"); errhex(s->pn); err(" video 0x"); errhex(s->vpid);
+        for (a = 0; a < s->num_audio; a++) {
+            err(" audio["); errhex(a); err("] 0x"); errhex(s->apid[a]);
+        }
+        err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n");
+    }
     lgx("open_streams begin", 0);
     if (open_streams(s, is_sat) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
     lgx("streaming begin", 0);
@@ -755,7 +782,8 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
             idx = rb[0x13c / 4]; sz = rb[0xbc / 4];
             if (idx < 16 && sz >= 192) {
                 unsigned char *p = (unsigned char *)ob_sec[0x2d4 / 4 + idx];
-                if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (p[k + 5] & 0x1f) + p[k + 6] != 0) put_pkt(p + k + 4);   /* PAT(PID 0)はファームが作り直した1サービス分ではなく、PSIストリームの元のPAT(NITのPIDも載っている)を使う */
+                /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)をそのまま通す */
+                if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) put_pkt(p + k + 4);
                 prev_sec = idx;
             }
         } else if (rv == 6) {
@@ -770,7 +798,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     }
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);
-    cur_pmt_pid = 0;
+    session_want_sid = 0;
     close_streams();
     lgx("closed", 0);
     release_tuner();
