@@ -180,6 +180,8 @@ def main():
     ap.add_argument("--port", type=int, default=8301, help="nasne-recpt1 のHTTPポート(既定 8301)")
     ap.add_argument("--command", choices=("node", "curl"), default="node",
                     help="tuners.yml のコマンド。node(既定): Mirakurun のイメージに必ず入っている node で取る。curl: curl を足したイメージ用")
+    ap.add_argument("--dual", action="store_true",
+                    help="tuners.yml を地デジ用(GR)と衛星用(BS・CS)の2つのチューナーにする(試験的)。nasne 側で NASNE_RECPT1_DUAL=1(--dual-tuner)が必要。地デジと BS/CS を同時に使える")
     ap.add_argument("--sat", action="store_true", help="tuners.yml の types に BS・CS を含める (実機スキャンにBS/CSが含まれている場合は自動判別)")
     a = ap.parse_args()
 
@@ -206,12 +208,25 @@ def main():
             cmd = f"node -e \"require('http').get('{base}/tuner/<channel><sid_query>', res => res.pipe(process.stdout))\""
         else:
             cmd = f"curl -s {base}/tuner/<channel><sid_query>"
-        f.write(
-            f"- name: {a.name}\n"
-            f"  types:\n{types}"
-            f"  command: {cmd}\n"
-            f"  isDisabled: false\n"
-        )
+        if a.dual:
+            # 地デジ用と衛星用の2つ。同じコマンド(nasne-recpt1 が、チャンネル名から地デジか衛星かを判断する)
+            f.write(
+                f"- name: {a.name}-gr\n"
+                f"  types:\n    - GR\n"
+                f"  command: {cmd}\n"
+                f"  isDisabled: false\n"
+                f"- name: {a.name}-sat\n"
+                f"  types:\n    - BS\n    - CS\n"
+                f"  command: {cmd}\n"
+                f"  isDisabled: false\n"
+            )
+        else:
+            f.write(
+                f"- name: {a.name}\n"
+                f"  types:\n{types}"
+                f"  command: {cmd}\n"
+                f"  isDisabled: false\n"
+            )
 
     with open(os.path.join(a.outdir, "channels.yml"), "w", encoding="utf-8") as f:
         # 実機サービス一覧から書き出し

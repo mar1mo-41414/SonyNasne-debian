@@ -59,7 +59,7 @@
 | VLC などで見る | [docs/11](11_tv_streaming.md)(`/playlist.m3u8`) | ワンセグは対象外 |
 | Mirakurun + EPGStation で予約録画 | [contrib/epgstation](../contrib/epgstation/README.md) | Docker。Mirakurun の `/app-config` と `/app-data` は**両方**永続化([docs/11](11_tv_streaming.md)) |
 | tvheadend で予約録画 | [contrib/tvheadend](../contrib/tvheadend/README.md) | IPTV(M3U)で登録 |
-| BS/CS を使う | [docs/11](11_tv_streaming.md)(`--scan-all`/`/scan?all`、`nasne_mirakurun_conf.py --sat`) | 受信できる環境の報告あり([docs/20](20_compatibility_and_reports.md))。**チューナーは 1 系統**(同時視聴は不可) |
+| BS/CS を使う | [docs/11](11_tv_streaming.md)(`--scan-all`/`/scan?all`、`nasne_mirakurun_conf.py --sat`) | 受信できる環境の報告あり([docs/20](20_compatibility_and_reports.md))。既定は**チューナー 1 系統**(同時視聴は不可)。地デジ+BS/CS の同時受信は試験的に可能([docs/11](11_tv_streaming.md) の `--dual-tuner`) |
 | KonomiTV など別のアプリで見る | [docs/11](11_tv_streaming.md)・[docs/20](20_compatibility_and_reports.md) | 実視聴の報告あり |
 | B-CAS・TS のしくみ | [docs/12](12_ts_and_bcas_decrypt.md)・[docs/07](07_driver_ioctl_bcas.md) | 読み物 |
 | 受信がおかしい(busy・503・映像が乱れる) | [docs/21](21_troubleshooting.md)・[docs/11](11_tv_streaming.md)「トラブルシュート」 | TS の中身の検査は `scripts/tools/ts_analyze.py`([docs/09](09_tools.md))で、PAT/PMT・PID ごとの CC エラー・スクランブル・TEI を見る |

@@ -13,7 +13,10 @@
  *   4. B-CASストリームを開いて活性化し、純正と同じ OPEN_SECUREDTS(映像パススルー=元のMPEG-2のまま、B-CASで復号)を開く。
  *   5. 復号済みTS(元画質)を出力。PSIストリームから PAT(元のもの。NITのPIDを含む)と NIT/SDT/EIT/TOT 等のSI(PID 0x10-0x14,0x23,0x24,0x26-0x28)を混ぜる(番組表用)。
  *   6. 終了時(秒数経過・シグナル・出力切断)に必ずストリームをCLOSEしてから終了する(開いたまま終わるとnasneが固まることがある)。
- * 排他: /tmp/nasne-recpt1.lock を flock(チューナーは1系統のみ)。
+ * 排他: 既定は /tmp/nasne-recpt1.lock を flock(チューナーは1系統のみ。地デジも衛星も同じロック)。
+ *   --dual-tuner(試験的): 地デジ用 /tmp/nasne-recpt1-T.lock と衛星用 -S.lock に分け、地デジと衛星を同時に使えるようにする。
+ *   このとき、使用中のセッションは従来のロック(/tmp/nasne-recpt1.lock)を共有ロック(LOCK_SH)で持つので、
+ *   nasne-ledd・nasne-waked・/status が「どれかが使用中」を従来どおり排他ロックの失敗で検知できる。
  * 終了コード: 0=正常、1=エラー(ロック失敗/ストリームが開けない等)、2=使い方、3=チューナー使用中。
  *
  * ビルド: mipsel-linux-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -O2 -e __start -o nasne-recpt1 nasne_recpt1.c
@@ -684,9 +687,29 @@ static int parse_channel_str(const char *s, int *is_sat, unsigned long *val, uns
 
 #define BUSY_WAIT_MS 10000
 static long lockfd = -1;
+#define LOCK_LEGACY	"/tmp/nasne-recpt1.lock"
+#define LOCK_T		"/tmp/nasne-recpt1-T.lock"
+#define LOCK_S		"/tmp/nasne-recpt1-S.lock"
+static int dual_mode;			/* --dual-tuner: 地デジと衛星を別々のロックにして、同時に使えるようにする(試験的) */
+static int legacyfd = -1;		/* dual_mode のとき、従来のロックを共有ロック(LOCK_SH)で持つ */
+/* もう一方の系統が使用中か(dual_mode 用) */
+static int other_band_busy(int is_sat) {
+    long f = sys3(SYS_open, (long)(is_sat ? LOCK_T : LOCK_S), 0x100 | 2, 0644);
+    int busy;
+    if (f < 0) return 0;
+    busy = sys3(SYS_flock, f, 2 | 4, 0) < 0;
+    sys3(SYS_close, f, 0, 0);
+    return busy;
+}
 static int acquire_tuner(int is_sat) {
-    lockfd = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
+    lockfd = sys3(SYS_open, (long)(dual_mode ? (is_sat ? LOCK_S : LOCK_T) : LOCK_LEGACY), 0x100 | 2, 0644);     /* O_CREAT(MIPSは0x100)|O_RDWR */
     if (sys3(SYS_flock, lockfd, 2 | 4, 0) < 0) { sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3; }   /* LOCK_EX|LOCK_NB: 使用中 */
+    if (dual_mode) {
+        legacyfd = sys3(SYS_open, (long)LOCK_LEGACY, 0x100 | 2, 0644);
+        if (legacyfd >= 0 && sys3(SYS_flock, legacyfd, 1 | 4, 0) < 0) {     /* 従来のロックを排他で持つ別プロセス(--dual-tuner なしの起動)がいる */
+            sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; sys3(SYS_close, lockfd, 0, 0); lockfd = -1; return 3;
+        }
+    }
 
     /* 前回のクローズ時刻からの経過時間を検証し、300ms 未満の連射時のみ差分だけ待機する動的クールダウン。
      * 通常視聴時は待機時間0msを保ちつつ、Mirakurun等のミリ秒単位の連続選局時にViXS SoC内部DMAや復調ICのセトリング時間を確保し、バスロック(D状態固まり)を確実に防止する。 */
@@ -702,7 +725,13 @@ static int acquire_tuner(int is_sat) {
     }
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
-    if (!fw_alive()) reload_driver();
+    if (!fw_alive()) {
+        if (dual_mode && other_band_busy(is_sat)) {   /* ドライバを再読み込みすると、もう一方の系統の配信が切れる */
+            err("ファームが動いていないが、もう一方のチューナーが使用中なので、ドライバを再読み込みしない\n");
+            return 1;
+        }
+        reload_driver();
+    }
     if (fd < 0 || !fw_alive()) { err("ファームが動いていない\n"); return 1; }
     if (is_sat) fe_init_s(); else fe_init();
     return 0;
@@ -710,6 +739,7 @@ static int acquire_tuner(int is_sat) {
 static void release_tuner(void) {
     if (fd >= 0) sys3(SYS_close, fd, 0, 0);
     fd = -1;
+    if (legacyfd >= 0) { sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; }
     if (lockfd >= 0) {
         unsigned long t = now_ms();
         sys3(SYS_lseek, lockfd, 0, 0);
@@ -1171,10 +1201,16 @@ static int listen_port(unsigned long port) {
             if (!(req[0] == 'G' && req[1] == 'E' && req[2] == 'T' && req[3] == ' ')) { http_status(c, "HTTP/1.0 400 Bad Request", "GET only\n"); sys3(SYS_exit, 0, 0, 0); }
             p = req + 4;
             if (*p == '/') p++;
-            if (starts(p, "status")) {                                         /* /status: tuner idle|busy */
-                long l2 = sys3(SYS_open, (long)"/tmp/nasne-recpt1.lock", 0x100 | 2, 0644);
-                int busy = sys3(SYS_flock, l2, 2 | 4, 0) < 0;
-                http_status(c, "HTTP/1.0 200 OK", busy ? "busy\n" : "idle\n");
+            if (starts(p, "status")) {                                         /* /status: tuner idle|busy(どれかが使用中なら busy)。/status?detail: 系統ごと */
+                if (dual_mode && (p[6] == '?') && starts(p + 7, "detail")) {
+                    long lt = sys3(SYS_open, (long)LOCK_T, 0x100 | 2, 0644), ls2 = sys3(SYS_open, (long)LOCK_S, 0x100 | 2, 0644);
+                    int bt = sys3(SYS_flock, lt, 2 | 4, 0) < 0, bs = sys3(SYS_flock, ls2, 2 | 4, 0) < 0;
+                    http_status(c, "HTTP/1.0 200 OK", bt ? (bs ? "terrestrial=busy satellite=busy\n" : "terrestrial=busy satellite=idle\n") : (bs ? "terrestrial=idle satellite=busy\n" : "terrestrial=idle satellite=idle\n"));
+                } else {
+                    long l2 = sys3(SYS_open, (long)LOCK_LEGACY, 0x100 | 2, 0644);
+                    int busy = sys3(SYS_flock, l2, 2 | 4, 0) < 0;
+                    http_status(c, "HTTP/1.0 200 OK", busy ? "busy\n" : "idle\n");
+                }
                 sys3(SYS_exit, 0, 0, 0);
             }
             if (starts(p, "playlist")) {                                       /* /playlist.m3u8: /scan のキャッシュからVLC等向けのM3Uを作る */
@@ -1245,6 +1281,7 @@ int main_c(long *sp) {
         else if (streq(a, "--scan-sat")) do_scan = 2;
         else if (streq(a, "--scan-all")) do_scan = 3;
         else if (streq(a, "-v")) verbose = 1;
+        else if (streq(a, "--dual-tuner")) dual_mode = 1;       /* 地デジと衛星を同時に使う(試験的)。既定は従来どおり1系統 */
         else if (streq(a, "--device") || streq(a, "--lnb") || streq(a, "--udp") || streq(a, "--port") || streq(a, "--http")) ai++;
         else if (a[0] == '-' && a[1] == '-') { /* --b25 --strip 等の recpt1 オプションは無視 */ }
         else if (npos < 3) pos[npos++] = a;
@@ -1252,7 +1289,7 @@ int main_c(long *sp) {
     if (port) { logv = 1; return listen_port(port); }        /* 待ち受け(親)は既定のシグナル動作のまま。各子プロセスがハンドラを設定する */
     set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
     if (do_scan) return scan(1, do_scan == 2 ? 1 : do_scan == 3 ? 2 : 0);
-    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] <ch 13-62 | BS1-BS23(奇数。BS15_0 のようにスロット付きも可) | CS2-CS24(偶数) | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan [--scan-sat | --scan-all] | --listen <port>\n"); return 2; }
+    if (npos < 3 - (freq_hz ? 1 : 0)) { err("usage: nasne-recpt1 [--sid N] [--tsid N] [-v] [--dual-tuner] <ch 13-62 | BS1-BS23(奇数。BS15_0 のようにスロット付きも可) | CS2-CS24(偶数) | --freq MHz> <秒数|-> <出力|->\n       nasne-recpt1 --scan [--scan-sat | --scan-all] | --listen <port>\n"); return 2; }
     {
         const char *chs, *secs, *dst;
         int is_sat = 0; unsigned long freq_val = 0, parsed_tsid = 0;

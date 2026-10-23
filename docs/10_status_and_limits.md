@@ -32,7 +32,7 @@
 | 項目 | 理由 |
 |---|---|
 | 一部の録画ソフトとの連携 | Mirakurun・EPGStation・tvheadend は動作確認済み(スキャン・番組表・録画。[contrib/epgstation](../contrib/epgstation/README.md)、[contrib/tvheadend](../contrib/tvheadend/README.md))。Jellyfin はチャンネルの取り込みまで(ライブ視聴は未確認)、Kodi は未確認 |
-| 同時に複数の番組・チャンネル | チューナーは1系統・1サービスずつ。2つ目のチューナーの有無や使い方は未調査 |
+| 同時に複数の番組・チャンネル | 既定は1系統・1サービスずつ。**地デジ1+BS/CS1 の同時受信は、`--dual-tuner`(試験的)で有効にできる**(電波のある環境での確認は未実施。[docs/11](11_tv_streaming.md)) |
 | BS/CSの受信 | 作者の環境にはBS/CSの信号が来ておらず(建物に配信が無いことを確認)、**作者の実機では未検証**。ほかの人の実機で、スロット(TSID)選択を足して BS全局・CS110 が受信できたとの報告をもとに `nasne-recpt1` に取り込んだ([docs/08](08_tuner_i2c.md)、[docs/11](11_tv_streaming.md)) |
 | B-CASカードIDの取得 | `CARD_ID_ACQUIRE` / `BCASMSG` の応答が返らない(復号には不要) |
 | RTC(ハードウェア時計) | カーネルの `vixs-rtc` は評価ボードのDS1339(I2C `0xD0`)用で、この基板には無く読めない(`unable to read the hardware clock`)。時計は1970年から始まるので、`fake-hwclock`(最後に保存した時刻から再開)+ `ntpdate`(ネットワーク起動時に補正)で対処(`prepare_tree.sh` が標準で入れる) |

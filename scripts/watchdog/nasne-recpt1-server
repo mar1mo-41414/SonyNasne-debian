@@ -11,16 +11,19 @@
 #   http://<nasne>:8301/tuner/<UHF ch>[?sid=0xNNNN&sec=N]   復号済みのTS(元画質)を配信
 #   http://<nasne>:8301/scan                                全UHFチャンネルのサービス一覧(約80秒。サービス名も出し、/var/lib/nasne-recpt1/services.tsv に保存)
 #   http://<nasne>:8301/playlist.m3u8                       /scan の結果から作ったM3U(VLC等でそのまま開ける。先に /scan を1回実行しておく)
-#   http://<nasne>:8301/status                              tuner idle|busy
+#   http://<nasne>:8301/status                              tuner idle|busy(どれかが使用中なら busy。--dual-tuner のときは /status?detail で系統ごと)
 # 前提: /usr/local/sbin に nasne-recpt1、xcode4drv.ko、rc.xcode4(公式ドライバ)。
 BIN=/usr/local/sbin/nasne-recpt1
+[ -r /etc/default/nasne-recpt1 ] && . /etc/default/nasne-recpt1
 PORT=${NASNE_RECPT1_PORT:-8301}
+# 地デジと衛星(BS/CS)を同時に使う(試験的。既定は従来どおり1系統)には、/etc/default/nasne-recpt1 に NASNE_RECPT1_DUAL=1 と書いて restart
+OPTS=""; [ "$NASNE_RECPT1_DUAL" = 1 ] && OPTS="--dual-tuner"
 PIDFILE=/var/run/nasne-recpt1-server.pid
 case "$1" in
   start)
     [ -x $BIN ] || exit 0
     ( n=0; while [ $n -lt 60 ]; do [ -e /dev/vixs/xcodedrv ] && break; n=$((n+1)); sleep 1; done
-      nohup $BIN --listen $PORT >> /var/log/nasne-recpt1.log 2>&1 &
+      nohup $BIN $OPTS --listen $PORT >> /var/log/nasne-recpt1.log 2>&1 &
       echo $! > $PIDFILE ) &
     ;;
   stop)
