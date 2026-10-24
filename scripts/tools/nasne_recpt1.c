@@ -434,7 +434,32 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
 }
 
 static void set(unsigned long off, unsigned long v) { ob_sec[off / 4] = v; }
+/* B-CAS カードは1枚で、ACTIVATE(カードの初期化)は系統をまたいで共有される。地デジと衛星を同時に開始すると、
+ * ACTIVATE が失敗する(rv=2。Issue #12)ので、B-CAS ストリームを開く~OPEN_SECUREDTS までを、プロセス間で直列にする。 */
+#define LOCK_BCAS	"/tmp/nasne-recpt1-bcas.lock"
+static long bcas_lockfd = -1;
+static void bcas_lock(void) {
+    unsigned long w;
+    bcas_lockfd = sys3(SYS_open, (long)LOCK_BCAS, 0x100 | 2, 0644);
+    if (bcas_lockfd < 0) return;
+    for (w = 0; w < 20000; w += 50) {                                 /* 最大20秒待つ(別の系統の開始処理は、通常1〜3秒) */
+        if (sys3(SYS_flock, bcas_lockfd, 2 | 4, 0) >= 0) { if (w) lgx("bcas lock waited ms", w); return; }
+        msleep(50);
+    }
+    lgx("bcas lock timeout", 0);
+}
+static void bcas_unlock(void) {
+    if (bcas_lockfd >= 0) { sys3(SYS_close, bcas_lockfd, 0, 0); bcas_lockfd = -1; }
+}
+static int open_streams_inner(struct svc *s, int is_sat);
 static int open_streams(struct svc *s, int is_sat) {
+    int r;
+    bcas_lock();
+    r = open_streams_inner(s, is_sat);
+    bcas_unlock();
+    return r;
+}
+static int open_streams_inner(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
     clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
@@ -445,7 +470,15 @@ static int open_streams(struct svc *s, int is_sat) {
     tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
     tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
     rv = ioc(tb, 0x1d0, 0x13, 2000);
-    if (rv != 1) { err("B-CAS ACTIVATE失敗\n"); return -1; }
+    for (tries = 0; rv != 1 && tries < 3; tries++) {                  /* 失敗したら、少し待って再試行(最大3回) */
+        err("B-CAS ACTIVATE失敗 rv="); errhex(rv); err("。再試行\n");
+        msleep(300);
+        clr(tb, 0x1d0 / 4 + 2);
+        tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
+        tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
+        rv = ioc(tb, 0x1d0, 0x13, 2000);
+    }
+    if (rv != 1) { err("B-CAS ACTIVATE失敗 rv="); errhex(rv); err("\n"); return -1; }
     for (tries = 0, i = 0; tries < 6 && !stop_flag; tries++) {                 /* ACTIVATEDイベントを待つ */
         clr(rb, 0x230 / 4);
         rb[0xa4 / 4] = h_g0; rb[0xa8 / 4] = h_g1; rb[0xac / 4] = 0; rb[0xb0 / 4] = 0x10; rb[0xb4 / 4] = (unsigned long)dummy; rb[0xbc / 4] = sizeof(dummy);
