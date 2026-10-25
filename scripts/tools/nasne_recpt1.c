@@ -436,9 +436,10 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
 static void set(unsigned long off, unsigned long v) { ob_sec[off / 4] = v; }
 /* B-CAS カードは1枚で、ACTIVATE(カードの初期化)は系統をまたいで共有される。地デジと衛星を同時に開始すると、
  * ACTIVATE が失敗する(rv=2。Issue #12)ので、B-CAS ストリームを開く~OPEN_SECUREDTS までを、プロセス間で直列にする。
- * ただし、先に始めたセッションの最初の ECM の処理でカードが忙しい間に、後のセッションが ACTIVATE すると、ACTIVATE が
- * 待ち時間(以前は2秒)でタイムアウトした(rv=2。再試行で成功するが、立ち上がりが2.5〜3.5秒遅れた)ので、ACTIVATE の待ち時間を長くした。 */
-#define ACTIVATE_TMO_MS	6000
+ * さらに、先に始めたセッションが最初の鍵(ECM→Ks)を得るまで(=最初の映像/音声のパケットが出るまで。最大 BCAS_HOLD_MS)は、ロックを持ち続ける。
+ * 後のセッションが先に ACTIVATE すると、カードが忙しくて rv=2 で失敗し、その再試行が連続して、先着側の最初の ECM の応答まで
+ * 遅らせて、両方の立ち上がりが遅れる(共倒れ。Issue #12 の monutetsu さんの解析)ため。 */
+#define BCAS_HOLD_MS	4000
 #define LOCK_BCAS	"/tmp/nasne-recpt1-bcas.lock"
 static long bcas_lockfd = -1;
 static void bcas_lock(void) {
@@ -459,7 +460,7 @@ static int open_streams(struct svc *s, int is_sat) {
     int r;
     bcas_lock();
     r = open_streams_inner(s, is_sat);
-    bcas_unlock();
+    if (r < 0) bcas_unlock();      /* 成功時は、最初の映像/音声のパケットが出るまで(最大 BCAS_HOLD_MS)ロックを持ち続ける(session() で解放) */
     return r;
 }
 static int open_streams_inner(struct svc *s, int is_sat) {
@@ -472,14 +473,14 @@ static int open_streams_inner(struct svc *s, int is_sat) {
     clr(tb, 0x1d0 / 4 + 2);
     tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
     tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
-    rv = ioc(tb, 0x1d0, 0x13, ACTIVATE_TMO_MS);
-    for (tries = 0; rv != 1 && tries < 3; tries++) {                  /* 失敗したら、少し待って再試行(最大3回) */
+    rv = ioc(tb, 0x1d0, 0x13, 2000);
+    for (tries = 0; rv != 1 && tries < 4; tries++) {                  /* 失敗したら、少し待って再試行(最大3回) */
         err("B-CAS ACTIVATE失敗 rv="); errhex(rv); err("。再試行\n");
-        msleep(300);
+        msleep(500 * (tries + 1));                                  /* 再試行の間隔を広げる(500, 1000, 1500, 2000ms): カードへの連射が、先着側の ECM の応答を遅らせるため */
         clr(tb, 0x1d0 / 4 + 2);
         tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
         tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
-        rv = ioc(tb, 0x1d0, 0x13, ACTIVATE_TMO_MS);
+        rv = ioc(tb, 0x1d0, 0x13, 2000);
     }
     if (rv != 1) { err("B-CAS ACTIVATE失敗 rv="); errhex(rv); err("\n"); return -1; }
     for (tries = 0, i = 0; tries < 6 && !stop_flag; tries++) {                 /* ACTIVATEDイベントを待つ */
@@ -525,6 +526,7 @@ static int open_streams_inner(struct svc *s, int is_sat) {
     return 0;
 }
 static void close_streams(void) {
+    bcas_unlock();
     lgx("close_streams: sec", h_sec0);
     clr(tb, 0xb4 / 4 + 2);
     if (h_sec0 || h_sec1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_sec0; tb[0xa8 / 4] = h_sec1; ioc(tb, 0xb4, 0x11, 5000); h_sec0 = h_sec1 = 0; }
@@ -773,6 +775,7 @@ static int acquire_tuner(int is_sat) {
     return 0;
 }
 static void release_tuner(void) {
+    bcas_unlock();
     if (fd >= 0) sys3(SYS_close, fd, 0, 0);
     fd = -1;
     if (legacyfd >= 0) { sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; }
@@ -841,6 +844,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     int av_first = 0;
     while (!stop_flag) {
         unsigned long rv, idx, sz, k;
+        if (bcas_lockfd >= 0 && now_ms() - t_start >= BCAS_HOLD_MS) { lgx("bcas lock released by timeout", 0); bcas_unlock(); }
         if (dur_ms && now_ms() - t_start >= dur_ms) break;
         clr(rb, 0x230 / 4);
         rb[0xa4 / 4] = h_sec0; rb[0xa8 / 4] = h_sec1; rb[0xac / 4] = 0x2000; rb[0xbc / 4] = 0x10000; rb[0x144 / 4] = prev_sec;
@@ -852,7 +856,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
                 unsigned char *p = (unsigned char *)ob_sec[0x2d4 / 4 + idx];
                 /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)をそのまま通す */
                 if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) {
-                    if (!av_first) { unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6]; if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); } }
+                    if (!av_first) { unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6]; if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); bcas_unlock(); } }
                     put_pkt(p + k + 4);
                 }
                 prev_sec = idx;
