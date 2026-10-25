@@ -61,3 +61,5 @@ NASNE_WAKE_URL=http://<EPGStationのホスト>:8888
 自動で電源も切りたい(予約録画が終わって、使われなくなったら切る)ときは、`/etc/default/nasne-wake` に `NASNE_WAKE_AUTOOFF=1` を足します。**タイマで起きたときだけ**、録画・視聴・ssh が `NASNE_WAKE_IDLE` 秒(既定180)使われず、次の予約まで10分以上あるときに電源を切ります(手動で入れた電源は切りません)。Mirakurun の番組表の取得(約10分)は、最長 `NASNE_WAKE_EPG_MAX` 秒(既定600)まで待ちます(0 なら待たずに切る。そのぶん番組表の取得は途中で終わる)。
 電源が切れている間に追加した予約は、次に起きるまで反映されません。`/etc/default/nasne-poweroff` に `WAKE_SECONDS=21600`(6時間)のように書くと、予約の起床と短いほうで定期的に起きて、予約を確認します。
 
+## Tip: 番組表の巡回でチューナーが塞がるのを防ぐ
+nasne を地デジ用・衛星用の2チューナーで使う(`--dual-tuner`、[docs/11](../../docs/11_tv_streaming.md))場合、Mirakurun の `server.yml`(`mirakurun-conf/server.yml`)に `jobMaxRunning: 1` を設定すると、バックグラウンドの番組表の巡回が地デジと衛星で同時に走って、両方のチューナーを塞ぐのを防げます(他の人の実機で、極めて安定した)。
