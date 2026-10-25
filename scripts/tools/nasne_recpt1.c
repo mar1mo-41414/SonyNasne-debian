@@ -834,6 +834,8 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     lgx("streaming begin", 0);
     if (http) send_headers(ofd);
     t_start = now_ms();
+    {   /* 診断: セッションの開始から、映像/音声の最初のパケットが出るまでの時間を記録する(Issue #12: 同時開始で BS の映像・音声が遅れる件) */
+    int av_first = 0;
     while (!stop_flag) {
         unsigned long rv, idx, sz, k;
         if (dur_ms && now_ms() - t_start >= dur_ms) break;
@@ -846,7 +848,10 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
             if (idx < 16 && sz >= 192) {
                 unsigned char *p = (unsigned char *)ob_sec[0x2d4 / 4 + idx];
                 /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)をそのまま通す */
-                if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) put_pkt(p + k + 4);
+                if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) {
+                    if (!av_first) { unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6]; if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); } }
+                    put_pkt(p + k + 4);
+                }
                 prev_sec = idx;
             }
         } else if (rv == 6) {
@@ -858,6 +863,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
                 if (p[k] == 0x47 && is_si_pid(((p[k + 1] & 0x1f) << 8) | p[k + 2])) put_pkt(p + k);
         }
         if (olen) flush_out();
+    }
     }
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);

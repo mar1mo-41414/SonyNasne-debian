@@ -236,6 +236,8 @@ curl 'http://<nasne>:8301/status?detail'     # terrestrial=idle satellite=idle �
 
 **他の人の実機での確認**(CUHJ-15004、公式 v2.57、Issue #12): 地デジ(NHK 総合)と BS(BS 朝日)を**同時に約60秒**受信して、それぞれ約115MB を取得。TS の同期エラー・TEI・不正な AFC は 0、映像・音声(BS は ARIB 字幕も)を ffprobe で認識。受信後は `terrestrial=idle satellite=idle` に戻る。
 - **既知の問題**: 地デジと BS の受信を**ほぼ同時に開始**すると、まれに片方で `B-CAS ACTIVATE失敗`(`rv=2`)になり、その接続が HTTP 500、もう片方も途中で止まる(2秒ずらせば、毎回成功)。B-CAS カードは1枚で、ACTIVATE が系統をまたいで共有されることが関係していそうなので、**B-CAS ストリームを開いてから `OPEN_SECUREDTS` までを、プロセス間で直列にし、ACTIVATE の失敗は最大3回まで再試行する**ようにした(`/tmp/nasne-recpt1-bcas.lock`)。この修正で解消するかは、手元(電波なし)では確認できていないので、同時開始での結果を教えてください。
+- **ほぼ同時に開始した場合の BS の立ち上がり**: ほぼ同時に開始した 4 秒の試験で、BS の映像・音声が出始めるのが遅れる(4 秒以内に出ない)回があった。30 秒の試験(5 回)では毎回、映像・音声が取れている。「欠落」ではなく「開始の遅れ」と見ていて、`nasne-recpt1` のログ(`first A/V packet, ms since stream start`)で測れる(調査中)。開始を2秒ずらすと、遅れは出ない。Mirakurun のチューナーの起動の待ち時間には余裕を持たせるとよい。
+- **B-CAS ACTIVATE の競合への対処後**: ほぼ同時の開始を 15 回(4 秒 10 回+30 秒 5 回)行って、ACTIVATE の失敗は 0 回(ロックの待ちは約 300〜550ms)。
 - **未確認**: 長時間(数時間)の安定性、Mirakurun/EPGStation 経由の同時の予約録画、2サービスの B-CAS 復号を長時間続けたときの挙動。**試した結果を教えてください**([Issue #12](https://github.com/mar1mo-41414/SonyNasne-debian/issues/12) か、検証レポート)。
 
 ## 仕組み
