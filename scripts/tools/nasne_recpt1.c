@@ -525,7 +525,7 @@ static int open_streams_inner(struct svc *s, int is_sat) {
     h_sec0 = ob_sec[0xa4 / 4]; h_sec1 = ob_sec[0xa8 / 4];
     return 0;
 }
-static void close_streams(void) {
+static void close_streams_ex(int keep_g) {
     bcas_unlock();
     lgx("close_streams: sec", h_sec0);
     clr(tb, 0xb4 / 4 + 2);
@@ -533,8 +533,9 @@ static void close_streams(void) {
     lgx("close_streams: pt", h_pt0);
     if (h_pt0 || h_pt1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_pt0; tb[0xa8 / 4] = h_pt1; ioc(tb, 0xb4, 0x11, 5000); h_pt0 = h_pt1 = 0; }
     lgx("close_streams: generic", h_g0);
-    if (h_g0 || h_g1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
+    if (!keep_g && (h_g0 || h_g1)) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
+static void close_streams(void) { close_streams_ex(0); }
 
 /* 地デジ・衛星ともに復号ストリーム(OPEN_SECUREDTS)に正規PMT(Version 0, CA記述子除去済み)が含まれるため、
  * PSIストリームから元PMTを混ぜると二重混入(CCエラーおよび未復号CA記述子による暗号化誤認)が生じる。
@@ -788,6 +789,44 @@ static void release_tuner(void) {
     lockfd = -1;
 }
 
+/* --dual-tuner のとき、もう一方のセッションが動いている間は、B-CAS の GENERIC ストリームを閉じない。
+ * 片方のセッションが GENERIC ストリーム(ioctl 0x2f)を閉じると、ファームが `INPUT_DONE: Mips Failed` を出して、
+ * 動いている他方のセッションの出力が止まった(Issue #12。monutetsu さんのログ。3回中3回)。そこで、終了するセッションは、
+ * 系統のロックと従来の共有ロックだけ先に手放し(次の要求を受け付けられる)、ドライバの fd と GENERIC ストリームを持ったまま、
+ * ほかのセッションがなくなる(従来のロックが排他で取れる)まで待ってから、閉じる。 */
+static int other_sessions_active(void) {
+    long f = sys3(SYS_open, (long)LOCK_LEGACY, 0x100 | 2, 0644);
+    int busy;
+    if (f < 0) return 0;
+    busy = sys3(SYS_flock, f, 2 | 4, 0) < 0;
+    sys3(SYS_close, f, 0, 0);
+    return busy;
+}
+static void release_locks_keep_fd(void) {
+    bcas_unlock();
+    if (legacyfd >= 0) { sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; }
+    if (lockfd >= 0) {
+        unsigned long t = now_ms();
+        sys3(SYS_lseek, lockfd, 0, 0);
+        sys3(SYS_write, lockfd, (long)&t, sizeof(t));
+        sys3(SYS_close, lockfd, 0, 0);
+    }
+    lockfd = -1;
+}
+#define LINGER_MAX_MS	14400000UL		/* 4時間(それ以上、別のセッションが続いても、閉じる) */
+static void linger_close_generic(void) {
+    unsigned long w;
+    if (!(h_g0 || h_g1)) return;
+    release_locks_keep_fd();
+    for (w = 0; w < LINGER_MAX_MS && !stop_flag && other_sessions_active(); w += 200) {
+        if (!w) lgx("generic stream: 他のセッションが動いているので、閉じるのを待つ", 0);
+        msleep(200);
+    }
+    lgx("generic stream: 閉じる 待ち時間(ms)", w);
+    clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
+    h_g0 = h_g1 = 0;
+}
+
 static void http_status(int sock, const char *line, const char *body) {
     sys3(4004, sock, (long)line, slen(line));
     { const char *h2 = "\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n"; sys3(4004, sock, (long)h2, slen(h2)); }
@@ -897,7 +936,9 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);
     session_want_sid = 0;
-    close_streams();
+    if (http && dual_mode) sys3(SYS_close, ofd, 0, 0);       /* クライアントには、ここで配信の終了を伝える(以降の待機は、クライアントから見えない) */
+    close_streams_ex(dual_mode);          /* dual のときは、GENERIC を閉じるのを、ほかのセッションがなくなるまで待つ */
+    if (dual_mode) linger_close_generic();
     lgx("closed", 0);
     release_tuner();
     lgx("session end", 0);
