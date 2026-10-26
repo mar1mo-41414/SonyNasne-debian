@@ -799,10 +799,11 @@ static void send_headers(int sock) {
 }
 
 /* 1回の選局+受信セッション。http>0 のとき out_fd がソケットで、準備できた時点でHTTPヘッダを送る。戻り値は終了コード */
+static int si_only;		/* HTTP の ?si=1: SI(PAT/NIT/SDT/EIT/TOT 等)だけを出す。B-CAS の ACTIVATE も復号ストリームも使わない(番組表の取得用。視聴中の別系統に影響しない) */
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
     out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
-    session_want_sid = want_sid;
+    session_want_sid = si_only ? 0 : want_sid;      /* si_only のときは、PSI ストリームの元の PAT も通す */
     lgx("session start freq", freq_val);
     if (is_sat) lgx("session ts_id", ts_id);
     rc = acquire_tuner(is_sat);
@@ -822,6 +823,27 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     if (ioc(ob_pt, 0x484, 0x2d, 2000) != 1) { err("PSIストリームを開けない\n"); if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "psi stream\n"); release_tuner(); return 1; }
     h_pt0 = ob_pt[0xa4 / 4]; h_pt1 = ob_pt[0xa8 / 4];
     lgx("psi stream opened", h_pt0);
+    if (si_only) {      /* SI だけの配信(番組表の取得用)。discover も B-CAS も復号ストリームも使わない */
+        unsigned long nt = 0;
+        if (http) send_headers(ofd);
+        t_start = now_ms();
+        lgx("si-only streaming begin", 0);
+        while (!stop_flag) {
+            unsigned char *p; unsigned long psz, k;
+            if (dur_ms && now_ms() - t_start >= dur_ms) break;
+            if (recv_pt(200, &p, &psz)) {
+                nt = 0;
+                for (k = 0; k + 188 <= psz; k += 188)
+                    if (p[k] == 0x47 && is_si_pid(((p[k + 1] & 0x1f) << 8) | p[k + 2])) put_pkt(p + k);
+            } else if (++nt > 100) { err("出力が止まった\n"); break; }
+            if (olen) flush_out();
+        }
+        if (olen) flush_out();
+        session_want_sid = 0;
+        close_streams();
+        release_tuner();
+        return 0;
+    }
     sel = discover(want_sid, 8000);
     lgx("discover sel", (unsigned long)sel);
     if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
@@ -1294,6 +1316,7 @@ static int listen_port(unsigned long port) {
                         if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { ts_id = ts_id * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
                         else while (*p >= '0' && *p <= '9') { ts_id = ts_id * 10 + (*p - '0'); p++; }
                     } else if (starts(p, "sec=")) { p += 4; while (*p >= '0' && *p <= '9') { sec = sec * 10 + (*p - '0'); p++; } }
+                    else if (starts(p, "si=")) { p += 3; si_only = (*p == '1'); while (*p >= '0' && *p <= '9') p++; }
                     else break;
                 }
                 if (!parse_channel_str(ch_buf, &is_sat, &freq_val, &parsed_ts_id)) {

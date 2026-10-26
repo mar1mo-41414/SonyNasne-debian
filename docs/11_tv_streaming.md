@@ -102,7 +102,8 @@ python3 scripts/nasne_mirakurun_conf.py <nasne> --sat --scan -o mirakurun-conf
 ### HTTP
 
 ```
-GET /tuner/<UHF ch>[?sid=0xNNNN][&sec=N]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了
+GET /tuner/<UHF ch>[?sid=0xNNNN][&sec=N][&si=1]   復号済みTS(video/MP2T)。切断するとストリームを閉じる。sec を付けるとN秒で終了。
+                                                  si=1 を付けると、SI(PAT・EIT など)だけを出す(B-CAS を使わない。番組表の取得用)
 GET /<UHF ch>                              同上(短縮形)
 GET /scan[?sat|?all]                        サービス一覧(テキスト。地デジのみ約80秒。?sat=衛星のみ、?all=全部で数分)。サービス名も出し、結果を保存する
 GET /playlist.m3u8                         /scan の保存結果から作ったM3U(VLCなどでそのまま開ける)
