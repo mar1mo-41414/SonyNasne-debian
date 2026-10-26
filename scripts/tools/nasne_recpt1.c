@@ -86,6 +86,7 @@ static int streq(const char *a, const char *b) { while (*a && *a == *b) { a++; b
 
 static long fd;
 static volatile int stop_flag;
+static volatile int term_flag;		/* SIGINT/SIGTERM を受けた(クライアントの切断=SIGPIPE・書き込みエラーでは立たない。linger の待機は、これで抜ける) */
 static int verbose;
 static unsigned long ob_pt[0x484 / 4 + 4], ob_sec[0x9ec / 4 + 4], ob_g[0x208 / 4 + 4], rb[0x230 / 4 + 4], tb[0x1d0 / 4 + 4], ib[0x110 / 4 + 4];
 static unsigned char outbuf[0x20000];
@@ -107,7 +108,7 @@ static void lgx(const char *m, unsigned long v) {
     { char b[12]; int i = 11; unsigned long t = now_ms() % 100000000UL; b[i] = 0; do { b[--i] = '0' + t % 10; t /= 10; } while (t); err("["); err(b + i); err("] "); }
     err(m); err(" "); errhex(v); err("\n");
 }
-static void on_sig(int s) { (void)s; stop_flag = 1; }
+static void on_sig(int s) { stop_flag = 1; if (s != SIGPIPE_) term_flag = 1; }
 static void set_sig(int sig) {
     /* MIPS o32 の kernel sigaction: { unsigned long sa_flags; void *sa_handler; unsigned long sa_mask[4]; } */
     unsigned long sa[6];
@@ -814,17 +815,37 @@ static void release_locks_keep_fd(void) {
     lockfd = -1;
 }
 #define LINGER_MAX_MS	14400000UL		/* 4時間(それ以上、別のセッションが続いても、閉じる) */
+#define LINGER_SLOTS	4			/* 待機するプロセスの上限(Mirakurun の再試行などで、待機プロセスが増え続けないように) */
+static long linger_take_slot(void) {
+    static const char *const names[LINGER_SLOTS] = { "/tmp/nasne-recpt1-linger-0.lock", "/tmp/nasne-recpt1-linger-1.lock", "/tmp/nasne-recpt1-linger-2.lock", "/tmp/nasne-recpt1-linger-3.lock" };
+    int i;
+    for (i = 0; i < LINGER_SLOTS; i++) {
+        long f = sys3(SYS_open, (long)names[i], 0x100 | 2, 0644);
+        if (f < 0) continue;
+        if (sys3(SYS_flock, f, 2 | 4, 0) >= 0) return f;
+        sys3(SYS_close, f, 0, 0);
+    }
+    return -1;
+}
 static void linger_close_generic(void) {
-    unsigned long w;
+    unsigned long w; long slot = -1;
     if (!(h_g0 || h_g1)) return;
     release_locks_keep_fd();
-    for (w = 0; w < LINGER_MAX_MS && !stop_flag && other_sessions_active(); w += 200) {
-        if (!w) lgx("generic stream: 他のセッションが動いているので、閉じるのを待つ", 0);
+    /* 待機プロセスの枠(最大 LINGER_SLOTS)を取る。空くまで、または、ほかのセッションがなくなるまで待つ。
+     * クライアントの切断(SIGPIPE・書き込みエラー)で stop_flag が立っていても、待つ(term_flag=SIGTERM/SIGINT のときだけ、待たずに閉じる) */
+    for (w = 0; w < LINGER_MAX_MS && !term_flag && other_sessions_active(); w += 200) {
+        if (slot < 0) slot = linger_take_slot();
+        if (slot >= 0) break;
         msleep(200);
+    }
+    if (slot >= 0 && !term_flag && other_sessions_active()) {
+        lgx("generic stream: 他のセッションが動いているので、閉じるのを待つ", 0);
+        for (w = 0; w < LINGER_MAX_MS && !term_flag && other_sessions_active(); w += 200) msleep(200);
     }
     lgx("generic stream: 閉じる 待ち時間(ms)", w);
     clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
     h_g0 = h_g1 = 0;
+    if (slot >= 0) sys3(SYS_close, slot, 0, 0);
 }
 
 static void http_status(int sock, const char *line, const char *body) {
@@ -841,7 +862,7 @@ static void send_headers(int sock) {
 static int si_only;		/* HTTP の ?si=1: SI(PAT/NIT/SDT/EIT/TOT 等)だけを出す。B-CAS の ACTIVATE も復号ストリームも使わない(番組表の取得用。視聴中の別系統に影響しない) */
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
-    out_fd = ofd; olen = 0; stop_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
+    out_fd = ofd; olen = 0; stop_flag = 0; term_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
     session_want_sid = si_only ? 0 : want_sid;      /* si_only のときは、PSI ストリームの元の PAT も通す */
     lgx("session start freq", freq_val);
     if (is_sat) lgx("session ts_id", ts_id);
