@@ -233,7 +233,89 @@ newkernel/build.sh            # newkernel/out/new/vmlinux(.bin) と、KNL 用の
 
 ---
 
-## 10. 作業開始時のチェックリスト
+## 10. ログの収集と、Issue の出し方
+
+不具合・検証の報告は、**再現できる最小の情報**を、**個体を特定できる情報を除いて**まとめる。AI が報告を代わりに作る場合も、受け取る場合も、同じ形に揃える。
+
+### 10.1 ログの集め方(nasne 上で実行)
+
+| 目的 | コマンド | 備考 |
+|---|---|---|
+| まず全体 | `nasne-report`(地デジの検出数も載せるなら `nasne-report --scan`) | 個体情報(MAC・IP・HDD のシリアル・個体 ID・局名・B-CAS 番号)を出さない作り。**まずこれを貼る** |
+| カーネルのログ | `dmesg \| grep -E 'Boxster\|xcode\|Mips Failed\|Oops\|BUG\|hung\|blocked\|I/O error'` と、`dmesg \| tail -200` | `Boxster ... ReceiveStream ... return_value is 6` のように**大量に出る行は、件数(`grep -c`)と最初・最後の時刻だけ**でよい |
+| 受信サーバ | `tail -n 300 /var/log/nasne-recpt1.log` | 行頭の `[数字]` は内部の時計(ミリ秒)で、時刻ではない。**事象の前後の `session start` 〜 `session end` を丸ごと**(途中で切らない)。`出力が止まった`・`B-CAS ACTIVATE失敗`・`generic stream`・`rv=` の行は特に重要 |
+| 系統の状態 | `python3 -c "import urllib.request as u;print(u.urlopen('http://127.0.0.1:8301/status?detail').read().decode())"`(nasne には `curl`/`wget` が無い。PC からなら `curl http://<nasne>:8301/status?detail`) | 使用中の系統(`terrestrial=` `satellite=`)。状態ページ(8302)の JSON も有効 |
+| 固まり・再起動 | `tail -n 60 /var/log/nasne-hb.log` | 1 分ごとの load・メモリ・eth0 のカウンタ・D 状態のプロセス数。**無応答の直前の傾向**が見える。再起動をまたぐので、再起動後でも読める |
+| HDD | `smartctl -H -A /dev/sda` | **`-i` は出さない**(シリアルが入る) |
+| 受信品質 | PC から `curl -o x.ts 'http://<nasne>:8301/tuner/<ch>?sid=0x<sid>&sec=60'`(nasne 上なら `nasne-recpt1 --sid 0x<sid> <ch> 60 /tmp/x.ts`)のあと、`python3 scripts/tools/ts_analyze.py x.ts` | PAT/PMT、PID ごとの **CC エラー・TEI・スクランブル**の要約を貼る。**TS ファイルそのものは貼らない**(録画番組なので) |
+| 起動しない | 前面 LED の状態(色・点滅・どの段階で止まったか)、別の PC で `python3 scripts/newkernel/netlog.py`(UDP 6666 の早期コンソール) | UART は無い。LED の段階表示は docs で確認 |
+| ビルド・導入 | 実行したコマンドと出力(`nasne_setup.py ...`)、ビルド PC の OS、`git rev-parse --short HEAD`、ツールの `md5sum /usr/local/sbin/nasne-recpt1` | どの版のツールで起きたかを特定するため(ツールに `--version` は無い) |
+
+- 事象が起きた**時刻と、その時にしていた操作**(どのクライアント、どのチャンネル、同時に何本、何分目)をメモしておく。ログは後から切り取れるが、条件は後から思い出せない。
+- 再現させるなら、**条件を 1 つずつ変えて**、「あり/なし」を並べて取る(例: 待機あり/なし、同時 1 本/2 本)。
+
+### 10.2 貼る前の確認(個体情報の除去)
+
+ログには MAC アドレス・IP アドレス・ホスト名が混ざることがある。貼る前に確認して、あれば伏せる:
+
+```bash
+grep -nE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|[0-9]{1,3}(\.[0-9]{1,3}){3}|[Ss]erial|S/N' report.txt
+```
+
+除くもの: MAC、IP アドレス(`192.168.x.x` のように一般化してよい)、HDD のシリアル、本体の個体 ID、B-CAS の番号、局名、パスワード・トークン。**`nasne-report` の出力を編集して、個体情報を足さない。**
+
+### 10.3 Issue の出し方
+
+- このリポジトリの **Issue テンプレート「検証レポート」**(`.github/ISSUE_TEMPLATE/verification_report.yml`)を使う。必須項目: 本体のモデル、HDD(メーカー・型番・容量。**シリアルは書かない**)、何を試したか、結果(動いた/一部/動かなかった)。任意: 公式ファームの版、ビルド PC の環境、詳しい状況、`nasne-report` の出力。
+- **1 つの Issue に 1 つの事象**。同じ事象の再試験・追加情報は、新しい Issue にせず、**同じ Issue にコメント**する。別の事象は別の Issue にする。
+- タイトルは「[検証] 何をしたら何が起きたか」を 1 行で(例: `[検証] 地デジ視聴中に BS を開くと、地デジが止まる`)。
+
+### 10.4 情報のまとめ方(Issue 本文の型)
+
+```markdown
+### 結論(1〜2 行)
+何をしたら何が起きた。(例: CS 録画中に地デジの視聴を切ると、CS の出力が約 20 秒後に止まる)
+
+### 環境
+- 本体・ファーム・HDD(型番・容量)
+- カーネル(2.6.29 / 6.12)、ツールの版(コミットか md5)
+- 使っているソフト(Mirakurun / EPGStation / tvheadend / VLC など)の版
+
+### 再現手順と条件
+1. … 2. … (チャンネル、同時の本数、経過時間、クライアントの切断のしかた)
+
+### 期待した動作 / 実際の動作
+
+### 頻度
+N 回中 M 回(条件を変えると変わるか)
+
+### ログ(該当部分だけ)
+<details><summary>nasne-recpt1.log(事象の前後)</summary>
+
+```
+…
+```
+</details>
+(長いものは、テキストファイルとして添付する)
+
+### 試したこと・切り分け
+あり/なしの比較、直ったもの、直らなかったもの。
+
+### nasne-report
+(個体情報が入っていないことを確認してから貼る)
+```
+
+- **事実と推測を分ける**。「ログにこう出た」は事実、「たぶんこれが原因」は推測と書く。
+- 数値は単位と条件をつける(「drop=0、60 秒 × 115MB」のように)。
+- 動いた報告も歓迎。**「動いた」場合も、モデル・ファーム・HDD・試した範囲を書く**(対応状況の表に載せるため)。
+
+### 10.5 Issue を受ける側(メンテナ・AI)
+
+- 情報が足りないときは、**取ってほしいログを、コマンドつきで具体的に**頼む(§10.1 の表のコマンドをそのまま示す)。何が分かれば原因を絞れるのか(例: 待機あり/なしの比較)も書く。
+- 受け取ったら、**事実・推測・未確認を分けて要約**し、手元で再現できたか(できていないか)を正直に返す。再現できないことを「直った」と書かない。
+- 報告された環境(モデル・ファーム・HDD)は、対応状況の表(docs/20)に反映する。
+
+## 11. 作業開始時のチェックリスト
 
 1. この文書、[docs/00](docs/00_where_to_start.md)、[docs/10](docs/10_status_and_limits.md)、[docs/20](docs/20_compatibility_and_reports.md)、[docs/22](docs/22_new_kernel_612.md) を読む。`start-note.md` があれば先に読む(読み取り専用。編集しない。`.gitignore` に入れる)。
 2. `git status` と `git log --oneline -10` で現況を確認する。
