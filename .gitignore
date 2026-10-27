@@ -37,3 +37,6 @@ knl_new.bin
 *.tar.gz
 *.tar.zst
 *.tgz
+
+# 環境依存の設定(各自が作る)
+local.env
