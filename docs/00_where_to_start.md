@@ -43,10 +43,10 @@
 | 公式アプリを 1 回だけ起動して戻る | [docs/13](13_full_setup_from_official_hdd.md)「公式アプリを 1 回だけ起動する」 | NV と HDD が揃っていることが条件 |
 | Debian を新しくしたい(12 まで) | [docs/14](14_newer_debian_kernel_and_distribution.md)→[§1-D](#d-新しいカーネルlinux-612-debian-12試験中) | 2.6.29 のままでは Debian 7 が上限 |
 
-### D. 新しいカーネル(Linux 6.12)+ Debian 12(試験中)
+### D. 新しいカーネル(Linux 6.12)+ Debian 12(試験中・非推奨)
 | したいこと | 手順書 | 前提・注意 |
 |---|---|---|
-| 6.12 + Debian 12 をビルドして動かす | [docs/22](22_new_kernel_612.md) | **試験中。SPI を書き換えるので CH341A 必須級**。まず §1-C の安定版で Debian が動いている機体から進める(旧カーネル側の `mtdtool` で KNL を書く) |
+| 6.12 + Debian 12 をビルドして動かす | [docs/22](22_new_kernel_612.md) | **試験中・非推奨(一応使える)。SPI を書き換えるので、CH341A などの外付け書き込み器と書き戻しの知識がある人向けで、自己責任。試したら Issue で結果を教えてください**。まず §1-C の安定版で Debian が動いている機体から進める(旧カーネル側の `mtdtool` で KNL を書く) |
 | カーネルに何が入っているか/足せるか | [docs/23](23_kernel_feature_inventory.md) | KNL スロットの容量(gzip 後 2,621,376 バイト)との兼ね合い |
 | USB メモリ(ext4/vfat)・ホットプラグ・スワップ | [docs/22](22_new_kernel_612.md) §7、`scripts/newkernel/setup_swap12.sh` | 6.12 のみ |
 | 6.12 のチューナーと常駐サービス(LED・電源・起床・状態ページ) | [docs/22](22_new_kernel_612.md) の手順 5 | `install_tv12.sh`・`install_services12.sh` |
