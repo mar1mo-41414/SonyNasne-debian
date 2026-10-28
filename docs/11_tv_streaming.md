@@ -1,5 +1,7 @@
 # 11. 地デジを受信して配信する(`nasne-recpt1`)
 
+> **層**: 【CFW共通】 `nasne-recpt1`(旧・新どちらのカーネルでも同じ)。ビルド環境の記述(Docker の gcc 4.3.2)は【旧】の環境です。【新】では `scripts/build_tools.sh`(ホストの `mipsel-linux-gnu-gcc`)でもビルドできます([docs/22](22_new_kernel_612.md))。
+
 Debian直起動のnasneで、**地デジをB-CASカードで復号し、元の画質のまま(MPEG-2 1440×1080 など)TSとして取り出す**ためのツールと使い方。
 録画ソフト・プレーヤーから使える2つの形で提供している。
 

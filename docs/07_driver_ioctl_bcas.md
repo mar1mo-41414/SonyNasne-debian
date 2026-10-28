@@ -1,5 +1,7 @@
 # 07. ドライバ(`xcode4drv`)のioctlと、B-CAS
 
+> **層**: 【固定】 メディアエンジンのドライバ(`xcode4drv`)の ioctl。公式・旧・新のどれも、同じドライバを使います。
+
 ViXS製ドライバ `xcode4drv.ko`(ソースはSIEがGPLで公開、[docs/05](05_kernel_and_direct_boot.md))は、SoC内のメディアエンジン・I2C・ストリーム入出力を、
 `/dev/vixs/xcodedrv`(`rc.xcode4` が作る)への**単一の ioctl** で公開している。純正の `procmng` / `dtvtuner` はすべてこれを使う。
 コマンド番号表: [boxster_cmd_table.md](boxster_cmd_table.md)(SDKヘッダ `drv_if.h` の `CMD_*` / `CMD2_*` 列挙から作成)。

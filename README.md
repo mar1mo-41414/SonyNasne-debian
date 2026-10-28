@@ -23,34 +23,36 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 
 ## できること / できないこと
 
+各行の先頭の印は、**どの層の話か**を表します: **【固定】**=ハード・プロトコル(カーネルや公式/自作を問わない)、**【OFW】**=公式ファーム、**【CFW共通】**=自作ファームの共通部分、**【旧】**=Linux 2.6.29 + Debian 7、**【新】**=Linux 6.12 + Debian 12。自分の環境に当てはまる行だけ読めば足ります([docs/24](docs/24_layers.md))。
+
 | | 内容 |
 |---|---|
-| ✅ できる | Sony経路を通らない **Debian直起動**(ssh、cron、apt など通常のDebianとして常時稼働) |
-| ✅ できる | 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え)。**KNLが壊れて(CRC不一致)も、出荷時カーネルのB側で起動する**ことを実機で確認([docs/02](docs/02_boot_chain.md)) |
-| ✅ できる | **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
-| ✅ できる | HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
-| ✅ できる | **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
-| ✅ できる | **SPIフラッシュを「読むだけ」でバックアップ**(書き込まず、公式HDDの `00550066.dlm` を差し替えるだけで、nasne自身が読んでHDDに置く。[docs/16](docs/16_spi_backup_dlm.md)) |
-| ✅ できる | **本体のNV(SPIの設定領域)を空にして、HDD入れ替え後の「公式が固まる」を復旧**(`--mode nvreset`、`nasne-nvreset`。[docs/16](docs/16_spi_backup_dlm.md)) |
-| ✅ できる | **SPIのカーネル領域をバックアップへ戻す**(`--mode restore`。公式カーネルへ戻す、試したカーネルを元に戻す。[docs/16](docs/16_spi_backup_dlm.md)) |
-| ✅ できる | 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
-| ✅ できる | 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
-| ✅ できる | **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
-| ✅ できる | **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
-| ✅ できる | **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
-| ✅ できる | **状態ページ**(既定で動く。HDDの温度・SMART、メモリ・ディスク、MCU、チューナー。`http://<nasne>:8302/`、JSON、Prometheus。[docs/18](docs/18_status_page.md))。Home Assistant 連携はオプション([contrib/homeassistant](contrib/homeassistant/README.md)) |
-| ✅ できる | **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。約4日の連続運用で12本録画。[contrib/epgstation](contrib/epgstation/README.md)) |
-| ✅ できる | **予約に合わせて自動で起床し、録画が終わったら自動で電源オフ**(`nasne-waked`。EPGStationの予約の5分前に起きる。電源オフは任意。[contrib/epgstation](contrib/epgstation/README.md)) |
-| ✅ できる | **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
-| ✅ できる | **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
-| △ 試験中(非推奨) | **新しいカーネル(Linux 6.12 LTS)+ Debian 12**(SPI からの単独起動、SATA・Ethernet・MTD・MCU、**地デジの受信と B-CAS 復号(xcode4drv を 6.12 に移植)**、LED・電源ボタン・電源断と起床タイマ・状態ページ、**USB ホスト(USB メモリの ext4/vfat・ホットプラグ・USB マウス)**、スワップ、SysRq まで動く。**一応使えますが、非推奨です**(普段使いは旧カーネル版へ)。**SPI を書き換えるので、失敗したときに自分で復旧できる方(CH341A などの外付けの書き込み器と、書き戻しの知識がある方)向け**です。自己責任で試して、**結果を [Issue](../../issues/new/choose) で教えてください**(動いた場合も歓迎)。BS/CS は 6.12 では未確認。[docs/22](docs/22_new_kernel_612.md)、カーネルの機能一覧は [docs/23](docs/23_kernel_feature_inventory.md)) |
-| 🟡 他の人の報告 | **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。`/scan?all` で BS/CS も一覧化でき、`nasne_mirakurun_conf.py --sat --scan` で Mirakurun の設定を作れる(PR #5)。Mirakurun で使うときのチャンネル名の決まりは [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
-| △ 未検証 | 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
-| ✅ できる | **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
-| ✅ できる | **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。長押しで電源オフ。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
-| ❌ できない | UART/JTAGによるデバッグ(基板に未実装) |
-| 🚫 やらない | DTCP-IPで保護された既存の録画の取り出し・復号(上の「やらないこと」) |
-| ❌ やっていない | ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |
+| ✅ できる | 【旧】 Sony経路を通らない **Debian直起動**(ssh、cron、apt など通常のDebianとして常時稼働) |
+| ✅ できる | 【固定】 自前ビルドのカーネルへの差し替え(ブートローダは無改変。SPIのKNL領域だけ書き換え)。**KNLが壊れて(CRC不一致)も、出荷時カーネルのB側で起動する**ことを実機で確認([docs/02](docs/02_boot_chain.md)) |
+| ✅ できる | 【OFW】 **公式ファームを丸ごと動かす**(自前カーネル上で v1.00 / v2.60 が起動し、WebUIまで表示) |
+| ✅ できる | 【OFW】 HDDと本体の「紐付け」(`00110022.dlm`)と、p3の初期構造(HDD登録情報 `.hai` など)をツールで生成。**v1.00なしでHDD全損機を復旧**([docs/15](docs/15_p3_structure_and_hai.md)) |
+| ✅ できる | 【旧】 **公式のHDDの `00550066.dlm` を1ファイル差し替えるだけで、nasne自身がp3にDebianを作り、SPIのカーネルを書き換えて、Debian直起動になる**(実機1台で確認。[docs/13](docs/13_full_setup_from_official_hdd.md)) |
+| ✅ できる | 【OFW】 **SPIフラッシュを「読むだけ」でバックアップ**(書き込まず、公式HDDの `00550066.dlm` を差し替えるだけで、nasne自身が読んでHDDに置く。[docs/16](docs/16_spi_backup_dlm.md)) |
+| ✅ できる | 【OFW】 **本体のNV(SPIの設定領域)を空にして、HDD入れ替え後の「公式が固まる」を復旧**(`--mode nvreset`、`nasne-nvreset`。[docs/16](docs/16_spi_backup_dlm.md)) |
+| ✅ できる | 【OFW】 **SPIのカーネル領域をバックアップへ戻す**(`--mode restore`。公式カーネルへ戻す、試したカーネルを元に戻す。[docs/16](docs/16_spi_backup_dlm.md)) |
+| ✅ できる | 【固定】 約5.5分ごとの自動リセット(基板上MCUのウォッチドッグ)の停止 |
+| ✅ できる | 【固定】 復調IC・RFチューナーICのI2C通信、地デジの選局(ロック・C/N取得) |
+| ✅ できる | 【CFW共通】 **地デジの受信**: B-CASで復号した**元画質(MPEG-2 HD)のTS**を `recpt1` 互換コマンド / HTTP で取り出す(番組表用のSIも含む)。[docs/11](docs/11_tv_streaming.md) |
+| ✅ できる | 【CFW共通】 **VLCでプレイリスト再生**(`http://<nasne>:8301/playlist.m3u8`。局名つき)。ワンセグは扱わない |
+| ✅ できる | 【CFW共通】 **Mirakurunのチューナーとして使える**(チャンネルスキャン、番組表、ストリーム)。mpv/ffmpegでも再生確認済み |
+| ✅ できる | 【CFW共通】 **状態ページ**(既定で動く。HDDの温度・SMART、メモリ・ディスク、MCU、チューナー。`http://<nasne>:8302/`、JSON、Prometheus。[docs/18](docs/18_status_page.md))。Home Assistant 連携はオプション([contrib/homeassistant](contrib/homeassistant/README.md)) |
+| ✅ できる | 【CFW共通】 **EPGStationで予約録画**(Mirakurun経由。番組表・予約・録画を確認。約4日の連続運用で12本録画。[contrib/epgstation](contrib/epgstation/README.md)) |
+| ✅ できる | 【CFW共通】 **予約に合わせて自動で起床し、録画が終わったら自動で電源オフ**(`nasne-waked`。EPGStationの予約の5分前に起きる。電源オフは任意。[contrib/epgstation](contrib/epgstation/README.md)) |
+| ✅ できる | 【CFW共通】 **tvheadendで予約録画**(IPTVネットワークにM3Uを登録。20サービス検出・録画を確認。Jellyfinはチャンネル取り込みまで、Kodiは未確認。[contrib/tvheadend](contrib/tvheadend/README.md)) |
+| ✅ できる | 【CFW共通】 **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
+| △ 試験中(非推奨) | 【新】 **新しいカーネル(Linux 6.12 LTS)+ Debian 12**(SPI からの単独起動、SATA・Ethernet・MTD・MCU、**地デジの受信と B-CAS 復号(xcode4drv を 6.12 に移植)**、LED・電源ボタン・電源断と起床タイマ・状態ページ、**USB ホスト(USB メモリの ext4/vfat・ホットプラグ・USB マウス)**、スワップ、SysRq まで動く。**一応使えますが、非推奨です**(普段使いは旧カーネル版へ)。**SPI を書き換えるので、失敗したときに自分で復旧できる方(CH341A などの外付けの書き込み器と、書き戻しの知識がある方)向け**です。自己責任で試して、**結果を [Issue](../../issues/new/choose) で教えてください**(動いた場合も歓迎)。BS/CS は 6.12 では未確認。[docs/22](docs/22_new_kernel_612.md)、カーネルの機能一覧は [docs/23](docs/23_kernel_feature_inventory.md)) |
+| 🟡 他の人の報告 | 【CFW共通】 **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。`/scan?all` で BS/CS も一覧化でき、`nasne_mirakurun_conf.py --sat --scan` で Mirakurun の設定を作れる(PR #5)。Mirakurun で使うときのチャンネル名の決まりは [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
+| △ 未検証 | 【固定】 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
+| ✅ できる | 【CFW共通】 **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
+| ✅ できる | 【CFW共通】 **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。長押しで電源オフ。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
+| ❌ できない | 【固定】 UART/JTAGによるデバッグ(基板に未実装) |
+| 🚫 やらない | 【OFW】 DTCP-IPで保護された既存の録画の取り出し・復号(上の「やらないこと」) |
+| ❌ やっていない | 【固定】【旧】 ブートローダ(U-Boot / 4段目)の差し替え、Sony miniroot(SPIのRFS)を使わない完全Debian化 |
 
 > ### 🚫 やらないこと
 > **DTCP-IPで保護された既存の録画データの取り出し・復号は、やりません。** このプロジェクトの対象外で、今後も扱いません(解析も、そのためのツールの提供もしません)。
@@ -107,6 +109,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [20_compatibility_and_reports](docs/20_compatibility_and_reports.md) | **対応状況のマトリクス**(モデル・ファーム・HDD・機能)と、検証結果の報告のしかた(個体情報を出さない `nasne-report`) |
 | [22_new_kernel_612](docs/22_new_kernel_612.md) | **新しいカーネル(Linux 6.12 LTS)+ Debian 12**: ビルドと導入の手順、xcode4drv の移植、SoC の癖、USB、動くもの・動かないもの |
 | [23_kernel_feature_inventory](docs/23_kernel_feature_inventory.md) | 6.12 カーネルの機能一覧、省いたもの、追加できそうなもの(KNL スロットの容量との兼ね合い) |
+| [24_layers](docs/24_layers.md) | **情報の層(固定 / 公式 / 自作共通 / 旧カーネル / 新カーネル)と、全文書の対応表、自分の環境で調べるための逆引き** |
 | [21_troubleshooting](docs/21_troubleshooting.md) | **トラブルシューティング**: LEDの状態とネットワークの応答から、原因と対処を引く表(HDDの復旧、公式の起動、Debian直起動、フォールバック) |
 | [05_kernel_and_direct_boot](docs/05_kernel_and_direct_boot.md) | カーネルのビルド、SPIへの書き込み、Debian直起動の作り方 |
 | [06_mcu_watchdog](docs/06_mcu_watchdog.md) | ウォッチドッグの正体と止め方、MCU・LEDのメモ |

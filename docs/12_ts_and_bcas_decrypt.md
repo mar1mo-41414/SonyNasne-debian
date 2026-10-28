@@ -1,5 +1,7 @@
 # 12. TSの取り出しとB-CAS復号(ドライバのioctlレベルの手順)
 
+> **層**: 【固定】 ドライバの ioctl レベルの手順。
+
 [docs/11](11_tv_streaming.md) のツール(`nasne-recpt1`)が内部でやっていること。ドライバ `xcode4drv`(`/dev/vixs/xcodedrv`、ioctl `0x17241724`、共通ヘッダ0xa4バイト。[docs/07](07_driver_ioctl_bcas.md))の
 ストリームを開いて、B-CASで復号された放送波のTSを受け取るまでを説明する。構造体のオフセットはSDKヘッダ(`drv_if.h`)をコンパイルして確定し、
 既定値は純正 `dtvtuner` が組み立てる値を再現して得た(下記)。

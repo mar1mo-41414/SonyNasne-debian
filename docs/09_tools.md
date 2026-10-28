@@ -1,11 +1,15 @@
 # 09. ツールの使い方
 
+> **層**: ツールごとに層を表示しています(【固定】【OFW】【CFW共通】【旧】)。
+
 `scripts/` 以下のツールの一覧と使い方。Pythonのツールは Python 3.8+ のみで動く(外部ライブラリ不要)。
 `公式ファーム` は Sony の公開サーバから各自取得したもの(例: `KRST3101_0260_SECURE.dlm`)。このリポジトリには含まれない。
 
 ## PC側のツール(Python)
 
 ### `dlm_crypto.py` — `.dlm` の暗号(Blowfish変種)
+
+> 層: 【OFW】(`.dlm` の暗号)
 
 ```bash
 python3 scripts/dlm_crypto.py decrypt-header <file.dlm>                       # ヘッダを復号し、各フィールド(サイズ・バージョン・hwtype・日付・CRC)を表示
@@ -23,6 +27,8 @@ python3 scripts/dlm_crypto.py probe-tail      <file.dlm>                      # 
 
 ### `ofw_tool.py` — 公式ファームの分解
 
+> 層: 【OFW】
+
 ```bash
 python3 scripts/ofw_tool.py split <公式.dlm> <出力dir>                     # KNL.bin / RFS.bin / DLM.bin に分解
 python3 scripts/ofw_tool.py patch <rootfs.dlm> <out.dlm> --major 0         # ヘッダ+8(メジャーバージョン)を書き換えてCRCを再計算
@@ -31,6 +37,8 @@ python3 scripts/ofw_tool.py patch <rootfs.dlm> <out.dlm> --major 0         # ヘ
 `--major` を省略すると、CRCを再計算するだけ(元ファイルとバイト一致すれば、CRCの規則が正しいことの自己検証になる)。
 
 ### `dlm_mng.py` — `00110022.dlm`(マネージャ、HDD紐付け)
+
+> 層: 【OFW】
 
 ```bash
 python3 scripts/dlm_mng.py decode  <00110022.dlm>                                  # 中身の表示とCRC検証
@@ -41,22 +49,32 @@ python3 scripts/dlm_mng.py selftest <00110022.dlm>                              
 
 ### `nasne_hdd_rebuild.py` — HDD復旧
 
+> 層: 【OFW】
+
 [docs/04](04_hdd_recovery_guide.md) の手順用。`mkdisk`(HDDを作り直す)/ `phase1` / `read-id` / `final` / `p3init`(p3の初期構造を作る)/ `verify` / `v100`(v1.00方式用)。
 
 ### `nasne_hai.py` — HDD登録情報(`.hai`)
 
+> 層: 【OFW】
+
 [docs/15](15_p3_structure_and_hai.md)。`show <.hai>` で復号して中身と検査和を表示、`gen <出力dir> --chipid <16桁> --device /dev/sdX` で生成。
 
 ### `nasne_setup.py` — ビルドを1コマンドで
+
+> 層: 【旧】(旧カーネル + Debian 7 を作る一括ツール)
 
 [docs/13](13_full_setup_from_official_hdd.md)。`check` で足りないパッケージを調べ、`build` でカーネル→KNL→Debianツリー→`.dlm` まで作ります(済んだステップは飛ばす)。
 内部で `scripts/fetch_gpl_sources.sh` / `scripts/kernel_build/fetch_toolchain_sources.sh`(gcc・binutilsの取得とsha256確認)/ `scripts/build_tools.sh`(MIPS用の小さなツールのビルド)/ `prepare_tree.sh` / `make_stage1_dlm.py` を呼びます。
 
 ### `nasne_db.py` — 録画DB(`00000015/*.dat`)
 
+> 層: 【OFW】(公式の録画 DB)
+
 [docs/15 §3](15_p3_structure_and_hai.md)。`show <.dat>` でXMLを表示(CRC検算つき)、`decode`/`encode`、`verify <.dat>...` は復号→再暗号化がバイト単位で一致するかを確かめます。
 
 ### `build_knl.py` — SPIのKNLセグメント
+
+> 層: 【固定】(KNL セグメント。旧・新どちらでも使う)
 
 ```bash
 python3 scripts/build_knl.py info    <spi.bin> [--slot KNL|BKNL]
@@ -69,6 +87,8 @@ python3 scripts/build_knl.py verify  <segment.bin>                              
 
 ### `spi_segments.py` / `spi_boot_decrypt.py` — SPIダンプの解析
 
+> 層: 【固定】
+
 ```bash
 python3 scripts/spi_segments.py <spi.bin> [出力dir]                     # BFWF/INFO/INF2/FMAP/KNL/BKNL を復号・抽出
 python3 scripts/spi_boot_decrypt.py <spi.bin> <init(MIPS ELF)> <出力dir>   # U-Boot・4段目ブートの復号(XORパッド復元)
@@ -79,6 +99,8 @@ python3 scripts/spi_ab_info.py <spi.bin> [--extract <出力dir>]            # A/
 
 ### `build_dlm.py` — 自作 `.dlm`
 
+> 層: 【OFW】(`.dlm`)
+
 ```bash
 python3 scripts/build_dlm.py selftest <実物の00550066.dlm>                       # 検証ロジックの自己テスト
 python3 scripts/build_dlm.py build --template <実物の00550066.dlm> --body rootfs.tar.gz --out custom.dlm
@@ -88,6 +110,8 @@ python3 scripts/build_dlm.py verify <file.dlm>
 hwtype・日付などは**テンプレートの実ヘッダをそのまま使う**ので、そのファームが動いている本体向けにだけ使える。
 
 ### `nasne_fe.py` — チューナーのI2C操作(PCからssh経由)
+
+> 層: 【固定】
 
 ```bash
 python3 scripts/nasne_fe.py --host <ip> t-init                # 地デジ側の初期化
@@ -102,15 +126,21 @@ nasne側に `i2cx`(バッチモード対応版)と公式ドライバが必要。
 
 ### `fetch_gpl_sources.sh` / `kernel_build/`
 
+> 層: 【旧】
+
 [docs/05](05_kernel_and_direct_boot.md) 参照。`NASNE_CUSTOM=1 sh scripts/kernel_build/build.sh` でカーネルをビルド(Docker必須)。
 
 ### `build_debian_rootfs.sh`
+
+> 層: 【旧】
 
 ```bash
 sudo SSH_PUBKEY=~/.ssh/id_rsa.pub ./scripts/build_debian_rootfs.sh <出力dir>      # 要 debootstrap, qemu-user-static
 ```
 
 ## 実機側のツール(MIPS用の静的バイナリ)
+
+> 層: 【CFW共通】
 
 `scripts/tools/*.c` と `scripts/watchdog/mcui2c.c` は libc 不使用(素のsyscall)の小さなC。Docker の `nasne-kcc:gcc432`(docs/05)でビルドする:
 
@@ -154,6 +184,8 @@ mipsel-linux-gnu-gcc -O2 -nostartfiles -Wl,-e,_start -o physrd  scripts/tools/ph
 > ⚠️ I2C を `/dev/mem` のレジスタ直叩きで行ってはいけない(MCUのI2Cが固まり、電源サイクルが必要になる)。必ずドライバ経由のツールを使う。[docs/06](06_mcu_watchdog.md)
 
 ## Ghidra 補助スクリプト(`scripts/ghidra/`)
+
+> 層: 【固定】
 
 Ghidra の headless モード(`analyzeHeadless ... -process <プログラム> -noanalysis -scriptPath scripts/ghidra -postScript <スクリプト> <出力ファイル> <引数>...`)で使う:
 

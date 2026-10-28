@@ -1,11 +1,15 @@
 # 20. 対応状況(マトリクス)と、検証結果の報告のしかた
 
+> **層**: 表に**層の印**を付けています(【固定】【OFW】【CFW共通】【旧】【新】)。層の定義は [docs/24](24_layers.md)。
+
 作者が持っている nasne は **CECH-ZNR2J の1台だけ**です。「自分の環境でも動いた/動かなかった」の報告が、いちばん役に立ちます。
 このページは、(1) いま何が確認できているか、(2) 何を報告してもらえると助かるか、(3) 個体情報を出さずに報告する方法、をまとめたものです。
 
 凡例: ✅ 作者が実機で確認 / 🟡 他の人の報告あり(報告が増えたらここに反映) / ⚠️ 一部だけ・条件つき / ❌ 動かないことを確認 / ❓ 未検証(報告を歓迎)
 
 ## 1. 本体・ファーム
+
+> 層: 【固定】【OFW】
 
 | 項目 | 状況 |
 |---|---|
@@ -20,6 +24,8 @@
 | 本体のSPIが v2.60 より古いファームのまま | ⚠️ **KNL(カーネル)だけ v1.51 世代(2012-08)に戻した本体で、v2.60 の rootfs の公式アプリが起動し、HDD も登録された**(実機1台)。RFS(miniroot)は全バージョンで同一、KNL は v1.51 / v1.52〜v1.71 / v2.00〜v2.60 の3世代だけ(パッケージの比較)。KNL も rootfs も v1.51 の完全な旧世代でも、公式アプリが `0151` で起動し(実機)、**そこから公式の WebUI の更新で v2.60 まで上がった**([docs/02](02_boot_chain.md)) |
 
 ## 2. HDD
+
+> 層: 【OFW】【旧】
 
 | 項目 | 状況 |
 |---|---|
@@ -36,26 +42,28 @@
 
 | 機能 | 状況 | 詳細 |
 |---|---|---|
-| HDDの復旧(v1.00 なし) | ✅ | [docs/04](04_hdd_recovery_guide.md) |
-| SPIのバックアップ(`.dlm`) | ✅ `--dest sys1` `both` `p3`(`p3` 単独も実機で確認。約82秒、MD5・SHA1が一致、別のバックアップと比べて違いは書き換えたカーネルスロットだけ) | [docs/16](16_spi_backup_dlm.md) |
-| 新しいカーネル(6.12)+ Debian 12(SPI からの単独起動) | ✅(作者の1台。地デジ・LED・電源・USB・スワップ。BS/CS は 6.12 では未確認) | [docs/22](22_new_kernel_612.md) |
-| 6.12 での地デジ連続録画(1 本、4 時間、負荷つき) | ✅(作者の1台。映像・音声・PCR に欠落なし、TEI・スクランブル 0。EIT の起動時の欠落とデータ放送の CC 1 件あり。巡回が加わる条件・数日規模は未確認) | [docs/22 §9](22_new_kernel_612.md#9-連続録画の安定性地デジ1本4時間2026-10-27作者の1台) |
-| SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
-| Debian直起動(`embed`・`image`) | ✅ / 🟡 別の人の報告あり(公式で稼働していたHDDの `00550066.dlm` を上書きして成功) | [docs/13](13_full_setup_from_official_hdd.md) |
-| Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
-| 公式アプリを1回だけ起動(`official-once`) | ✅ 1TB の `embed`・`image` 構成でも確認(予約 → 公式が `0260` → 電源を入れ直すと Debian に戻り、印は消費)。NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
-| 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
-| 起動失敗時の自動フォールバック | ✅ `nasne_init` が Sony の miniroot へ切り替える(起動カウンタ `xx`。実機で確認)。**公式アプリは起動せず、ssh で入れる救出用の状態になる**。公式を動かすのは `official-once` |
-| SPIの A/B フォールバック(ブートローダ側) | ⚠️ **KNL の本体の1バイトを壊して CRC を不一致にしたら、BKNL で起動して公式ファームが動いた**(実機。A/B はカーネルと miniroot で別々に選ばれる)。復旧は HDD 経由で成功、SPI は実験前と完全一致。**ヘッダまで消えた場合・BRFS で起動する場合は未検証**(KNL がほぼ消去された事故では助からなかった報告がある。[docs/02](02_boot_chain.md)) | [docs/05](05_kernel_and_direct_boot.md) |
-| 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
-| 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
-| 前面LED(REC・LAN・PWR) | ✅ REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま、PWR=緑(異常を報告している間だけ赤。保留セクタなどは「急増」だけ異常扱い) | [docs/06](06_mcu_watchdog.md) |
-| EPGStation の予約に合わせた起床・自動電源オフ | ✅ 予約の5分前に自動で起床 → 予約どおり録画 → 使われなくなったら自動で電源オフ(任意) | [docs/06](06_mcu_watchdog.md)、[contrib/epgstation](../contrib/epgstation/README.md) |
-| BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。**投稿者の環境で、`/scan?all`(PR #5。BS/CS の自律スキャン)により地デジ33・BS45・CS54の計132サービスを収集し、Mirakurun + EPGStation で視聴と番組表の取得を確認**したとの報告。Mirakurun では、チャンネル名はサービスごとに一意(`27_56360`・`BS15_0_101`・`CS16_333`)にし、サービス指定は `commandVars` に分ける(`?` を含めると API が 404。[docs/11](11_tv_streaming.md)。`nasne_mirakurun_conf.py --sat --scan` で自動生成、Mirakurun 自身のスキャン結果は `--fix-sat` で直せる)。スキャン一覧に BS7・BS17 が無いのは意図的(nasne は 2K の ISDB-S 右旋専用チューナーで、電波の無い枠のタイムアウト待ちを避けるため、放送のある BS1/3/5/9/11/13/15/19/21/23 の 10 トランスポンダに絞っている、PR #5 の投稿者による説明)。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
-| 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
-| 数日の連続運用 | ✅ 約4日(EPGStation の予約録画12本、計約45GB)。録画は全部、予約どおりの長さ(30分・35分・約2時間)で、デマックスの最後まで読めた。HDD の温度は28〜47℃。Home Assistant と Prometheus での監視も実機で確認 | [docs/11](11_tv_streaming.md)、[docs/18](18_status_page.md) |
+| 【OFW】 HDDの復旧(v1.00 なし) | ✅ | [docs/04](04_hdd_recovery_guide.md) |
+| 【OFW】 SPIのバックアップ(`.dlm`) | ✅ `--dest sys1` `both` `p3`(`p3` 単独も実機で確認。約82秒、MD5・SHA1が一致、別のバックアップと比べて違いは書き換えたカーネルスロットだけ) | [docs/16](16_spi_backup_dlm.md) |
+| 【新】 新しいカーネル(6.12)+ Debian 12(SPI からの単独起動) | ✅(作者の1台。地デジ・LED・電源・USB・スワップ。BS/CS は 6.12 では未確認) | [docs/22](22_new_kernel_612.md) |
+| 【新】 6.12 での地デジ連続録画(1 本、4 時間、負荷つき) | ✅(作者の1台。映像・音声・PCR に欠落なし、TEI・スクランブル 0。EIT の起動時の欠落とデータ放送の CC 1 件あり。巡回が加わる条件・数日規模は未確認) | [docs/22 §9](22_new_kernel_612.md#9-連続録画の安定性地デジ1本4時間2026-10-27作者の1台) |
+| 【OFW】 SPIの復元(`--mode restore`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
+| 【旧】 Debian直起動(`embed`・`image`) | ✅ / 🟡 別の人の報告あり(公式で稼働していたHDDの `00550066.dlm` を上書きして成功) | [docs/13](13_full_setup_from_official_hdd.md) |
+| 【旧】 Debian直起動(`embed`・`format`、`p3` モード) | ✅ | 同上 |
+| 【旧】 公式アプリを1回だけ起動(`official-once`) | ✅ 1TB の `embed`・`image` 構成でも確認(予約 → 公式が `0260` → 電源を入れ直すと Debian に戻り、印は消費)。NVとHDDが揃っていれば動く(食い違うと固まる→NVを空にして復旧) | [docs/13](13_full_setup_from_official_hdd.md)、[docs/04](04_hdd_recovery_guide.md) |
+| 【OFW】 本体のNVを空にする(`--mode nvreset`、`nasne-nvreset`) | ✅ | [docs/16](16_spi_backup_dlm.md) |
+| 【旧】 起動失敗時の自動フォールバック | ✅ `nasne_init` が Sony の miniroot へ切り替える(起動カウンタ `xx`。実機で確認)。**公式アプリは起動せず、ssh で入れる救出用の状態になる**。公式を動かすのは `official-once` |
+| 【固定】 SPIの A/B フォールバック(ブートローダ側) | ⚠️ **KNL の本体の1バイトを壊して CRC を不一致にしたら、BKNL で起動して公式ファームが動いた**(実機。A/B はカーネルと miniroot で別々に選ばれる)。復旧は HDD 経由で成功、SPI は実験前と完全一致。**ヘッダまで消えた場合・BRFS で起動する場合は未検証**(KNL がほぼ消去された事故では助からなかった報告がある。[docs/02](02_boot_chain.md)) | [docs/05](05_kernel_and_direct_boot.md) |
+| 【CFW共通】 地デジの受信・配信(HTTP)、Mirakurun、EPGStation | ✅ / 🟡 別の人の報告あり(PCのDockerでMirakurun+EPGStation、iPhoneのEPGPlayerで予約・視聴に成功) | [docs/11](11_tv_streaming.md) |
+| 【CFW共通】 状態ページ・電源オフ・起床タイマ・電源ボタン | ✅ | [docs/18](18_status_page.md)、[docs/06](06_mcu_watchdog.md) |
+| 【CFW共通】 前面LED(REC・LAN・PWR) | ✅ REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま、PWR=緑(異常を報告している間だけ赤。保留セクタなどは「急増」だけ異常扱い) | [docs/06](06_mcu_watchdog.md) |
+| 【CFW共通】 EPGStation の予約に合わせた起床・自動電源オフ | ✅ 予約の5分前に自動で起床 → 予約どおり録画 → 使われなくなったら自動で電源オフ(任意) | [docs/06](06_mcu_watchdog.md)、[contrib/epgstation](../contrib/epgstation/README.md) |
+| 【CFW共通】 BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。**投稿者の環境で、`/scan?all`(PR #5。BS/CS の自律スキャン)により地デジ33・BS45・CS54の計132サービスを収集し、Mirakurun + EPGStation で視聴と番組表の取得を確認**したとの報告。Mirakurun では、チャンネル名はサービスごとに一意(`27_56360`・`BS15_0_101`・`CS16_333`)にし、サービス指定は `commandVars` に分ける(`?` を含めると API が 404。[docs/11](11_tv_streaming.md)。`nasne_mirakurun_conf.py --sat --scan` で自動生成、Mirakurun 自身のスキャン結果は `--fix-sat` で直せる)。スキャン一覧に BS7・BS17 が無いのは意図的(nasne は 2K の ISDB-S 右旋専用チューナーで、電波の無い枠のタイムアウト待ちを避けるため、放送のある BS1/3/5/9/11/13/15/19/21/23 の 10 トランスポンダに絞っている、PR #5 の投稿者による説明)。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
+| 【CFW共通】 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
+| 【CFW共通】(旧で確認) 数日の連続運用 | ✅ 約4日(EPGStation の予約録画12本、計約45GB)。録画は全部、予約どおりの長さ(30分・35分・約2時間)で、デマックスの最後まで読めた。HDD の温度は28〜47℃。Home Assistant と Prometheus での監視も実機で確認 | [docs/11](11_tv_streaming.md)、[docs/18](18_status_page.md) |
 
 ## 4. ビルドするPC
+
+> 層: 【旧】(`nasne_setup.py`)
 
 | 環境 | 状況 |
 |---|---|

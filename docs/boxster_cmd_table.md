@@ -1,5 +1,7 @@
 # Boxster ioctl コマンド番号表(`drv_if.h`の`CMD_*`列挙から生成)
 
+> **層**: 【固定】 ドライバのコマンド番号表。
+
 `ioctl(fd, 0x17241724, buf)` の`buf+4`(`IOCTLBUFFERHEADER.command`)に入れる番号。`CMD_*`は同期/非同期の汎用系、`CMD2_*`は256以降の新系統。
 
 | 10進 | 16進 | 名前 |

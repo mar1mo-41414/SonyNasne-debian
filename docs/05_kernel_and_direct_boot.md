@@ -1,5 +1,7 @@
 # 05. 自前カーネルとDebian直起動の作り方
 
+> **層**: 【旧】 自前ビルドの **Linux 2.6.29 + Debian 7**。新カーネル(Linux 6.12 + Debian 12)は [docs/22](22_new_kernel_612.md)(【新】)です。
+
 > この文書は **2.6.29 のカーネル + Debian wheezy** の話です。新しいカーネル(Linux 6.12 LTS)+ Debian 12 は [docs/22](22_new_kernel_612.md)。
 
 Sonyのユーザランド(sys2の再構築、`procmng` など)を一切通さず、**Debian wheezy の `sysvinit` を PID 1 として起動**する方法。

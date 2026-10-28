@@ -1,5 +1,7 @@
 # 21. トラブルシューティング(LEDの状態とネットワークの応答から、原因を探す)
 
+> **層**: 節と、節 3 の各行に**層の印**を付けています。層の定義は [docs/24](24_layers.md)。新カーネル(6.12)の既知の問題は [docs/22 の 8](22_new_kernel_612.md)。
+
 起動しない・止まるときに、**LEDの状態**と**ネットワークに出ているか**から、原因の候補と対処を引く表です。
 HDDの復旧([docs/04](04_hdd_recovery_guide.md))、Debian直起動([docs/13](13_full_setup_from_official_hdd.md))、NVの扱い([docs/16](16_spi_backup_dlm.md))で、実機で起きたことをまとめています。
 **実機1台での観測**です(検証状況は [docs/20](20_compatibility_and_reports.md))。LEDの色の細かい見え方は、個体や環境で違うことがあります。
@@ -11,6 +13,8 @@ HDDの復旧([docs/04](04_hdd_recovery_guide.md))、Debian直起動([docs/13](13
 3. **どの段階か**: 公式のまま / HDD復旧中 / Debian直起動 / 公式アプリを1回だけ起動(`official-once`)のどれか。
 
 ## 1. PWR LED(緑)の意味
+
+> 層: 【固定】
 
 PWR LED は MCU の「表示コード」で決まります([docs/06](06_mcu_watchdog.md))。
 
@@ -24,6 +28,8 @@ PWR LED は MCU の「表示コード」で決まります([docs/06](06_mcu_watc
 | **赤の点灯(Debian 稼働中)** | **状態ページが異常を報告している**(HDD の温度・SMART・保留/代替/訂正不能セクタの**急増**(24時間で16個以上。あるだけでは赤にならない)、ディスク使用率95%以上、チューナーの固まり、メモリ不足)。`http://<nasne>:8302/` の警告欄で内容を見る。異常が消えると緑に戻る(`nasne-ledd`。判定は30秒ごと・2回続けて同じ結果で切り替え)。赤が続くのが嫌なら `/etc/default/nasne-led` に `NASNE_LED_PWR_WARN=0` |
 
 ## 2. 症状から探す(HDDの復旧・公式ファームの起動)
+
+> 層: 【OFW】
 
 | 症状 | 考えられる原因 | 対処 |
 |---|---|---|
@@ -41,20 +47,22 @@ PWR LED は MCU の「表示コード」で決まります([docs/06](06_mcu_watc
 
 | 症状 | 考えられる原因 | 対処 |
 |---|---|---|
-| **ssh は通るが、サービス(`nasne-recpt1` 8301、`nasne-statusd` 8302、cron など)が1つも動かない。`runlevel` が `unknown`。約5.5分でリセットされる** | **PID 1 が Debian の `init` ではなく、Sony の `busybox` になっている**(`ls -l /proc/1/exe` が `/bin/busybox_dynamic`)。`nasne_init` がフォールバックしている | `cat /proc/1/fd/1` で `nasne_init` のログを読む(`FALLBACK: ...` の理由が出る)。理由に応じて下の表へ |
-| `nasne_init` のログに `FALLBACK: mount sda3 failed` | SPIに書かれたカーネルが古く、**XFS の p3 の中の `root.img`(imageモード)に対応していない** | カーネルを再ビルドして KNL を書き直す。`nasne_setup.py` は、入力が新しければカーネル・KNL・ツリーを自動で作り直す(古いと使い回さない)。書き込みは `NASNE_KNL=<新しい knl_new.bin> nasne-stage1.sh`(下の「SPIの KNL を書き直す」) |
-| `FALLBACK: boot count 'xx' >= 2` | Debian が2回続けて、起動成功の印(`/etc/rc.local` がカウンタを空にする)を付けずに終わった | ssh で入れる。原因を直したら `: > /var/lib/nasne-boot-count` で空にして `reboot -f`。Debian に戻る |
-| `FALLBACK: no /etc/nasne-direct-boot` | p3 に直起動の印が無い(オプトイン) | 印を置く(`touch /etc/nasne-direct-boot`) |
-| `stage1 ABORT: すでに 2 回試行した(上限 2)` | SPIの KNL を書く試行の上限(安全装置)。または KNL が SPI と違う | `/var/lib/nasne-stage1/tries` を消せば再試行。**消す前に、chroot 内の `knl_new.bin` と `.sha256` が、書きたいカーネルになっているか確認**(違うと、新しいカーネルを旧版へ書き戻す) |
-| dlm を差し替えたのに、新しいカーネルが入らない | stage1 が書く KNL は、dlm ではなく **Debian のイメージ内**(`/usr/local/share/nasne-stage1/knl_new.bin`)にある。イメージが入っている(`need_install=0`)と、再展開されない | `scp` で新しい `knl_new.bin` を送り、`NASNE_KNL=/tmp/knl_new.bin nasne-stage1.sh`。続けて、イメージ内の `knl_new.bin` と `.sha256` も新しい版にそろえる |
-| **約333秒(5.5分)ごとに再起動する** | MCU のウォッチドッグが止まっていない(`nasne-mcu-wd` が動いていない)。公式アプリが動いていない環境では、MCU が本体をリセットする | `/var/log/nasne-mcu-wd.log`。手動で止めるなら `mcui2c w 20 01`([docs/06](06_mcu_watchdog.md)) |
-| 状態ページに「**チューナーのプロセスが固まっている**」と出る | **D 状態のプロセスは、正常な受信中にもほぼ常に現れる**(ドライバの中で待つため)。以前の判定は誤検知していた。今の判定は「D のまま CPU 時間が30秒以上進まない」 | `/proc/<pid>/stat` の `utime+stime` が増えているか確認。増えていれば正常。増えずに30秒以上なら固まっている。**電源の入れ直しで戻る**([docs/11](11_tv_streaming.md)) |
-| **6.12 カーネルで、起動したのか分からない/固まった** | UART が無いので、画面に何も出ない | 早期コンソール(UDP ブロードキャスト、ポート 6666)を `scripts/newkernel/netlog.py` で受ける。固まったときは、`/proc/sysrq-trigger`(`echo m` でメモリの状態、`echo s` で同期)。詳しくは [docs/22](22_new_kernel_612.md) |
-| Mirakurun から見て、チューナーがずっと `busy`(`/status`)で、`503 tuner busy` と `respawning because request has not closed` が約10秒周期で出る | Mirakurun が、サービス検出(`Service.Add.Check`)や番組表の取得を、連続してやっている。**Docker で `/app-data` を永続化していない**と、再起動のたびに全サービスをやり直す | `/app-config` と `/app-data` を永続化する(`contrib/epgstation/docker-compose.yml`)。初回は BS/CS で30分〜1時間かかることがある。ほかの Mirakurun/アプリが同じ nasne を使っていないかも確認。詳しくは [docs/11](11_tv_streaming.md) |
-| ssh が `no matching host key type` などで失敗する | nasne の sshd が古い | `-o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa`、RSA の鍵 |
-| 時計が1970年から始まる、`apt update` が「Release file is not valid yet」 | 基板にRTCが無い | NTP(`ntpdate`)や `fake-hwclock`。Debian イメージには組み込み済み |
+| 【旧】 **ssh は通るが、サービス(`nasne-recpt1` 8301、`nasne-statusd` 8302、cron など)が1つも動かない。`runlevel` が `unknown`。約5.5分でリセットされる** | **PID 1 が Debian の `init` ではなく、Sony の `busybox` になっている**(`ls -l /proc/1/exe` が `/bin/busybox_dynamic`)。`nasne_init` がフォールバックしている | `cat /proc/1/fd/1` で `nasne_init` のログを読む(`FALLBACK: ...` の理由が出る)。理由に応じて下の表へ |
+| 【旧】 `nasne_init` のログに `FALLBACK: mount sda3 failed` | SPIに書かれたカーネルが古く、**XFS の p3 の中の `root.img`(imageモード)に対応していない** | カーネルを再ビルドして KNL を書き直す。`nasne_setup.py` は、入力が新しければカーネル・KNL・ツリーを自動で作り直す(古いと使い回さない)。書き込みは `NASNE_KNL=<新しい knl_new.bin> nasne-stage1.sh`(下の「SPIの KNL を書き直す」) |
+| 【旧】 `FALLBACK: boot count 'xx' >= 2` | Debian が2回続けて、起動成功の印(`/etc/rc.local` がカウンタを空にする)を付けずに終わった | ssh で入れる。原因を直したら `: > /var/lib/nasne-boot-count` で空にして `reboot -f`。Debian に戻る |
+| 【旧】 `FALLBACK: no /etc/nasne-direct-boot` | p3 に直起動の印が無い(オプトイン) | 印を置く(`touch /etc/nasne-direct-boot`) |
+| 【旧】 `stage1 ABORT: すでに 2 回試行した(上限 2)` | SPIの KNL を書く試行の上限(安全装置)。または KNL が SPI と違う | `/var/lib/nasne-stage1/tries` を消せば再試行。**消す前に、chroot 内の `knl_new.bin` と `.sha256` が、書きたいカーネルになっているか確認**(違うと、新しいカーネルを旧版へ書き戻す) |
+| 【旧】 dlm を差し替えたのに、新しいカーネルが入らない | stage1 が書く KNL は、dlm ではなく **Debian のイメージ内**(`/usr/local/share/nasne-stage1/knl_new.bin`)にある。イメージが入っている(`need_install=0`)と、再展開されない | `scp` で新しい `knl_new.bin` を送り、`NASNE_KNL=/tmp/knl_new.bin nasne-stage1.sh`。続けて、イメージ内の `knl_new.bin` と `.sha256` も新しい版にそろえる |
+| 【CFW共通】 **約333秒(5.5分)ごとに再起動する** | MCU のウォッチドッグが止まっていない(`nasne-mcu-wd` が動いていない)。公式アプリが動いていない環境では、MCU が本体をリセットする | `/var/log/nasne-mcu-wd.log`。手動で止めるなら `mcui2c w 20 01`([docs/06](06_mcu_watchdog.md)) |
+| 【CFW共通】 状態ページに「**チューナーのプロセスが固まっている**」と出る | **D 状態のプロセスは、正常な受信中にもほぼ常に現れる**(ドライバの中で待つため)。以前の判定は誤検知していた。今の判定は「D のまま CPU 時間が30秒以上進まない」 | `/proc/<pid>/stat` の `utime+stime` が増えているか確認。増えていれば正常。増えずに30秒以上なら固まっている。**電源の入れ直しで戻る**([docs/11](11_tv_streaming.md)) |
+| 【新】 **6.12 カーネルで、起動したのか分からない/固まった** | UART が無いので、画面に何も出ない | 早期コンソール(UDP ブロードキャスト、ポート 6666)を `scripts/newkernel/netlog.py` で受ける。固まったときは、`/proc/sysrq-trigger`(`echo m` でメモリの状態、`echo s` で同期)。詳しくは [docs/22](22_new_kernel_612.md) |
+| 【CFW共通】 Mirakurun から見て、チューナーがずっと `busy`(`/status`)で、`503 tuner busy` と `respawning because request has not closed` が約10秒周期で出る | Mirakurun が、サービス検出(`Service.Add.Check`)や番組表の取得を、連続してやっている。**Docker で `/app-data` を永続化していない**と、再起動のたびに全サービスをやり直す | `/app-config` と `/app-data` を永続化する(`contrib/epgstation/docker-compose.yml`)。初回は BS/CS で30分〜1時間かかることがある。ほかの Mirakurun/アプリが同じ nasne を使っていないかも確認。詳しくは [docs/11](11_tv_streaming.md) |
+| 【旧】 ssh が `no matching host key type` などで失敗する | nasne の sshd が古い | `-o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa`、RSA の鍵 |
+| 【CFW共通】 時計が1970年から始まる、`apt update` が「Release file is not valid yet」 | 基板にRTCが無い | NTP(`ntpdate`)や `fake-hwclock`。Debian イメージには組み込み済み |
 
 ## 4. フォールバックと `official-once`
+
+> 層: 【旧】
 
 | 状況 | 動き |
 |---|---|
@@ -65,6 +73,8 @@ PWR LED は MCU の「表示コード」で決まります([docs/06](06_mcu_watc
 フォールバックが公式を自動で起動しないのは、**設計どおり**です。フォールバックは「Debian が2回、成功印なしで終わった」状態なので、原因を確かめる前に公式アプリを走らせると、公式が p3 の NV・録画DBを書き換えて、Debian 側と食い違うおそれがあるためです([docs/05](05_kernel_and_direct_boot.md))。
 
 ## 5. SPIの KNL を書き直す(Debian 直起動の機体で)
+
+> 層: 【旧】
 
 ```bash
 # 新しい knl_new.bin を送って、そのファイルで段階1を実行する(SPI全体のバックアップ→消去→書き込み→読み戻し検証→reboot -f)
@@ -78,6 +88,8 @@ ssh root@<nasne> 'cd /tmp && sha256sum knl_new.bin > knl_new.bin.sha256 && NASNE
 - 試行は2回までです(`tries`)。
 
 ## 6. 診断に使うコマンド(Debian・フォールバック中の ssh)
+
+> 層: 【CFW共通】
 
 ```bash
 ls -l /proc/1/exe; runlevel                    # PID 1 が Debian の /sbin/init か、Sony の busybox か

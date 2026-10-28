@@ -1,5 +1,7 @@
 # 17. 公式の Web API(ポート 64210)を、WebUI と同じ手順で呼ぶ
 
+> **層**: 【OFW】 公式ファームの Web API。
+
 公式ファームが動いている nasne は、ポート 64210 で Web API を提供しています(公式のWebUI、nasne ACCESS などが使う)。
 公式WebUIの JavaScript(`/var/opt/dtvtuner/nv/00000022/lib/app.js`。公式 rootfs に入っていて、どの nasne でも配信されている)を読んで、呼び方が分かりました。
 標準ライブラリだけの小さなクライアントを `scripts/nasne_api.py` に置いてあります。

@@ -1,5 +1,7 @@
 # 22. 新しいカーネル(Linux 6.12 LTS)+ Debian 12 で動かす(試験中・非推奨)
 
+> **層**: 【新】 Linux 6.12 + Debian 12。節 6 の SoC の癖は、【固定】に近い情報です。
+
 nasne の自作カーネルを、Linux 2.6.29 から **6.12 LTS** に置き換え、Debian 12(bookworm、sysvinit)を動かす手順と、分かったことをまとめます。
 調査の経緯と、新カーネルが必要になる理由は [docs/19](19_new_kernel_survey.md)、旧カーネル(2.6.29)の直起動は [docs/05](05_kernel_and_direct_boot.md) です。
 
