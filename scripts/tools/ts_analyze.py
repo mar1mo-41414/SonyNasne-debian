@@ -1,5 +1,5 @@
 """取得した TS(188バイト単位)の簡易検査。使い方: python3 ts_analyze.py <TSファイル>
-表示: PAT/PMT(サービスと ES の PID、CA 記述子)、PID ごとの パケット数・CC エラー・スクランブル(transport_scrambling_control)・TEI(transport_error_indicator)。
+表示: PAT/PMT(サービスと ES の PID、CA 記述子=CA_system_ID と ECM の PID。番組レベルと ES レベルの両方)、PID ごとの パケット数・CC エラー・スクランブル(transport_scrambling_control)・TEI(transport_error_indicator)。
 BS/CS が乱れる、復号されていない、といった切り分けに使う(Issue #8)。ファイルの先頭・末尾は途中で切れるので、ffmpeg のエラーは -ss/-t で両端を落として確認すること。
 """
 import sys,collections
@@ -39,11 +39,16 @@ for pn,pp in pm.items():
     ln=((s[1]&0xf)<<8)|s[2]; ver=(s[5]>>1)&0x1f; pil=((s[10]&0xf)<<8)|s[11]
     ca=[]; o=12
     while o<12+pil:
-        if s[o]==9: ca.append(hex(((s[o+2]<<8)|s[o+3])))
+        if s[o]==9: ca.append("sys=%s,ecm=%s"%(hex((s[o+2]<<8)|s[o+3]),hex(((s[o+4]&0x1f)<<8)|s[o+5])))
         o+=2+s[o+1]
     es=[]; o=12+pil
     while o+5<=3+ln-4:
-        st=s[o]; ep=((s[o+1]&0x1f)<<8)|s[o+2]; il=((s[o+3]&0xf)<<8)|s[o+4]; es.append((hex(st),hex(ep))); o+=5+il
+        st=s[o]; ep=((s[o+1]&0x1f)<<8)|s[o+2]; il=((s[o+3]&0xf)<<8)|s[o+4]
+        eca=[]; q=o+5
+        while q<o+5+il:
+            if s[q]==9: eca.append("sys=%s,ecm=%s"%(hex((s[q+2]<<8)|s[q+3]),hex(((s[q+4]&0x1f)<<8)|s[q+5])))
+            q+=2+s[q+1]
+        es.append((hex(st),hex(ep),eca) if eca else (hex(st),hex(ep))); o+=5+il
     print("PMT sid=%s pid=%s ver=%d CA記述子=%s ES=%s"%(hex(pn),hex(pp),ver,ca,es))
 print("総パケット",n)
 for pid,c in sorted(cnt.items()):
