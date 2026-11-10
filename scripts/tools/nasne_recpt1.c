@@ -918,7 +918,14 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
         err(" pcr 0x"); errhex(s->pcr); err(" ecm 0x"); errhex(s->ecm); err("\n");
     }
     lgx("open_streams begin", 0);
-    if (open_streams(s, is_sat) < 0) { if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n"); close_streams(); release_tuner(); return 1; }
+    if (open_streams(s, is_sat) < 0) {
+        if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n");
+        if (http && dual_mode) sys3(SYS_close, ofd, 0, 0);
+        close_streams_ex(dual_mode);
+        if (dual_mode) linger_close_generic();
+        release_tuner();
+        return 1;
+    }
     lgx("streaming begin", 0);
     if (http) send_headers(ofd);
     t_start = now_ms();
