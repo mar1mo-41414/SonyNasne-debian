@@ -47,7 +47,7 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 | ✅ できる | 【CFW共通】 **Sambaのファイルサーバー**(オプション。`/data` をSMBで共有。SMB2でログイン・読み書きを確認。[contrib/samba](contrib/samba/README.md)) |
 | △ 試験中(非推奨) | 【新】 **新しいカーネル(Linux 6.12 LTS)+ Debian 12**(SPI からの単独起動、SATA・Ethernet・MTD・MCU、**地デジの受信と B-CAS 復号(xcode4drv を 6.12 に移植)**、LED・電源ボタン・電源断と起床タイマ・状態ページ、**USB ホスト(USB メモリの ext4/vfat・ホットプラグ・USB マウス)**、スワップ、SysRq まで動く。**一応使えますが、非推奨です**(普段使いは旧カーネル版へ)。**SPI を書き換えるので、失敗したときに自分で復旧できる方(CH341A などの外付けの書き込み器と、書き戻しの知識がある方)向け**です。自己責任で試して、**結果を [Issue](../../issues/new/choose) で教えてください**(動いた場合も歓迎)。BS/CS は 6.12 では未確認。[docs/22](docs/22_new_kernel_612.md)、カーネルの機能一覧は [docs/23](docs/23_kernel_feature_inventory.md)) |
 | 🟡 他の人の報告 | 【CFW共通】 **BS/CS110 の受信**(`nasne-recpt1` が `BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。他の人の実機で受信できた報告をもとに取り込んだもので、作者の環境では未検証。`/scan?all` で BS/CS も一覧化でき、`nasne_mirakurun_conf.py --sat --scan` で Mirakurun の設定を作れる(PR #5)。Mirakurun で使うときのチャンネル名の決まりは [docs/11](docs/11_tv_streaming.md)・[contrib/epgstation](contrib/epgstation/README.md)) |
-| △ 未検証 | 【固定】 2つ目のチューナー、複数番組の同時視聴(チューナーは1系統) |
+| ⚠️ できる(条件つき) | 【CFW共通】 **地デジと BS/CS の同時視聴・同時録画**(`--dual-tuner` で地デジ1番組+BS/CS 1番組。報告者の実電波環境で成立を確認。同じ系統の2番組は同時にできない。既知の問題: ザッピングの連続切断で待機プロセスが増殖する問題(系統ごとの担当プロセス方式へ移行中)と、後着セッションの映像・音声の開始が遅れる問題。[docs/11](docs/11_tv_streaming.md)、[Issue #12](https://github.com/mar1mo-41414/SonyNasne-debian/issues/12)) |
 | ✅ できる | 【CFW共通】 **前面LED**(PWR=緑、異常を報告している間だけ赤。REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま。[docs/06](docs/06_mcu_watchdog.md)) |
 | ✅ できる | 【CFW共通】 **電源オフ・起床タイマ・電源ボタン長押しでの停止**(`poweroff` がMCUへ電源断コマンドを送る。長押しで電源オフ。LANからの電源ONは不可で、起床タイマで代替。[docs/06](docs/06_mcu_watchdog.md)) |
 | ❌ できない | 【固定】 UART/JTAGによるデバッグ(基板に未実装) |
