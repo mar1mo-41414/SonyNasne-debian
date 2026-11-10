@@ -58,7 +58,7 @@
 | 【CFW共通】 前面LED(REC・LAN・PWR) | ✅ REC=チューナー使用中、LAN=ネットワーク確立で点灯のまま、PWR=緑(異常を報告している間だけ赤。保留セクタなどは「急増」だけ異常扱い) | [docs/06](06_mcu_watchdog.md) |
 | 【CFW共通】 EPGStation の予約に合わせた起床・自動電源オフ | ✅ 予約の5分前に自動で起床 → 予約どおり録画 → 使われなくなったら自動で電源オフ(任意) | [docs/06](06_mcu_watchdog.md)、[contrib/epgstation](../contrib/epgstation/README.md) |
 | 【CFW共通】 BS/CS | 🟡 **BS は受信できたとの報告あり**(`nasne_recpt1.c` に、復調ICのレジスタ `0x8F`/`0x90` へ TSID を書くスロット選択と、BS全スロットの TSID 表を足して、BS全局を分離・受信。Mirakurun / EPGStation で EPG・同時利用まで確認、とのこと)。**`nasne-recpt1` に取り込み済み**(`BS1`〜`BS23`・`CS2`〜`CS24` を指定できる。[docs/11](11_tv_streaming.md))。作者側では検証できません。**CS110 も受信できたとの報告**。**投稿者の環境で、`/scan?all`(PR #5。BS/CS の自律スキャン)により地デジ33・BS45・CS54の計132サービスを収集し、Mirakurun + EPGStation で視聴と番組表の取得を確認**したとの報告。Mirakurun では、チャンネル名はサービスごとに一意(`27_56360`・`BS15_0_101`・`CS16_333`)にし、サービス指定は `commandVars` に分ける(`?` を含めると API が 404。[docs/11](11_tv_streaming.md)。`nasne_mirakurun_conf.py --sat --scan` で自動生成、Mirakurun 自身のスキャン結果は `--fix-sat` で直せる)。スキャン一覧に BS7・BS17 が無いのは意図的(nasne は 2K の ISDB-S 右旋専用チューナーで、電波の無い枠のタイムアウト待ちを避けるため、放送のある BS1/3/5/9/11/13/15/19/21/23 の 10 トランスポンダに絞っている、PR #5 の投稿者による説明)。アンテナへの給電は未検証(報告者は壁面端子に信号が来ている環境)。手順は [docs/08](08_tuner_i2c.md)。作者の環境は、建物にケーブル局の BS/CS 配信が無いことを確認(信号が来ていない) | [docs/08](08_tuner_i2c.md) |
-| 【CFW共通】 複数のチューナー、同時録画 | ❓ チューナーは1系統 | |
+| 【CFW共通】 地デジ+BS/CS の同時視聴・同時録画(`--dual-tuner`) | 🟡 報告者の実電波環境で成立を確認(同時視聴、EPGStation での同時予約録画で drop 0)。既知の問題: ザッピングの連続切断で待機プロセスが増殖する問題(系統ごとの担当プロセス方式へ移行中)、後着セッションの映像・音声の開始が遅れる問題。同じ系統の2番組は同時にできない | [docs/11](11_tv_streaming.md) |
 | 【CFW共通】(旧で確認) 数日の連続運用 | ✅ 約4日(EPGStation の予約録画12本、計約45GB)。録画は全部、予約どおりの長さ(30分・35分・約2時間)で、デマックスの最後まで読めた。HDD の温度は28〜47℃。Home Assistant と Prometheus での監視も実機で確認 | [docs/11](11_tv_streaming.md)、[docs/18](18_status_page.md) |
 
 ## 4. ビルドするPC
