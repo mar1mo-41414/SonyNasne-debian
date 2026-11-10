@@ -57,6 +57,6 @@ HDDはMBRで3区画。ブートローダやカーネルはHDDには無い(すべ
 |---|---|---|---|
 | p1(256MB) | sys1 | ext3 | ファーム更新パッケージ領域(`.dlm`ファイル群)。[docs/03](03_firmware_format.md) |
 | p2(1GB) | sys2 | ext3 | 純正ルートファイルシステム。**毎起動、p1の`.dlm`から丸ごと再構築される** |
-| p3(残り) | user | XFS | 録画データ(`.hai`、DTCP-IP暗号化)、設定、共有フォルダ。**Debian構成ではここをext3にしてDebianを置く** |
+| p3(残り) | user | XFS | 録画データ(本体は `.dat` でDTCP-IP保護。`.hai` はHDD登録情報)、設定、共有フォルダ。**Debian構成ではここをext3にしてDebianを置く** |
 
 実機内部でのデバイス名は `/dev/sda1`〜`sda3`(別のPCに繋ぐと名前は変わる)。

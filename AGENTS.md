@@ -16,7 +16,7 @@
 | ゴール | 公式ファームを通さずに、SPI からカーネルを起動して Debian を PID1 から動かす。地デジ/BS/CS の受信・B-CAS 復号・HTTP 配信(Mirakurun/EPGStation/tvheadend)まで |
 | 現在の到達点 | **安定版**: 自前ビルドの Linux 2.6.29 + Debian 7 (wheezy)。**開発版**: Linux 6.12 LTS + Debian 12(sysvinit)。SPI の KNL スロット A から単独起動し、MCU・LED・USB・ネットワーク・チューナー・B-CAS が動く |
 | 公式 FW | 解析対象としては扱うが、**配布しない**(`.dlm`、SPI ダンプ、`SampleData/` は公開しない) |
-| 録画データ | `.hai` は DTCP-IP で暗号化されており**対象外** |
+| 録画データ | 本体(`.dat`)は DTCP-IP で保護されており**対象外**(`.hai` は HDD 登録情報で、録画データそのものではない。[docs/15](docs/15_p3_structure_and_hai.md)) |
 
 起動の連鎖(重要):
 
@@ -203,7 +203,7 @@ newkernel/build.sh            # newkernel/out/new/vmlinux(.bin) と、KNL 用の
 
 - 接続ごとに fork。ドライバの ioctl を直接叩く: `OPEN_PSI_STREAM`(入力選択 0=地デジ、1=衛星)、B-CAS の GENERIC ストリーム(0x2e open / 0x13 ACTIVATE / 0x2f close)、`OPEN_SECUREDTS`(0x30)、ストリームを閉じる(0x11)。`ACTIVATE` の `rv=2` は「カードがビジー」(即座に返る)。
 - **`--dual-tuner`**: 地デジ(T、I2C 0x10)と衛星(S、0x11)を別のロック(`/tmp/nasne-recpt1-T.lock`、`-S.lock`)で扱う。B-CAS は 1 枚・1 エンジンなので共有ロック(`-bcas.lock`)。先着が最初の映像/音声を出す(=鍵を得る)まで最大 4 秒ロックを保持し、後着は ACTIVATE をバックオフ付きで再試行する。
-- **GENERIC を閉じると、動いている他方が止まる**(カーネルログ `Boxster, [txc_write_input_done] … INPUT_DONE: Mips Failed`)。対策として、終了するセッションは**クライアントとロックを手放したあと、ほかのセッションがなくなるまで GENERIC を閉じずに待つ**(linger。最大 4 時間、待機プロセスは同時に 4 つまで)。待機の脱出条件は `term_flag`(SIGINT/SIGTERM)だけ。**SIGPIPE で `stop_flag` が立っても待つ**こと。
+- **GENERIC を閉じると、動いている他方が止まる**(カーネルログ `Boxster, [txc_write_input_done] … INPUT_DONE: Mips Failed`)。対策として、終了するセッションは**クライアントとロックを手放したあと、ほかのセッションがなくなるまで GENERIC を閉じずに待つ**(linger。最大 4 時間)。待機の枠(スロット)は同時に 4 つまでだが、枠を取れなかったプロセスも GENERIC を持ったまま待つため、短い間隔の切断が続くと待機プロセスが増殖する既知の問題がある(Issue #12。系統ごとの担当プロセス方式へ移行中)。dual 時の開始失敗(`open_streams` の失敗)でも、即時クローズせず linger で閉じるよう修正済み(Issue #17)。待機の脱出条件は `term_flag`(SIGINT/SIGTERM)だけ。**SIGPIPE で `stop_flag` が立っても待つ**こと。
 - `?si=1`: SI(EIT 等、暗号化されていない)だけを出す。B-CAS を使わないので、番組表の巡回に付けると、視聴中の ACTIVATE 競合を避けられる。
 - Mirakurun の運用: `/app-config`、`/app-data` を永続化、`jobMaxRunning: 1`、番組表のジョブには `?si=1`。BS の既定のチャンネル名 101〜256 は使えない(`useSubCh=1`、`?sid=` が必要。`--sat`/`--fix-sat` あり)。
 - 既知の未解決: ①他方の系統を視聴中に新しい系統を開くと、まれに復号の開始に失敗する(`ReceiveStream rv=6`、約 20 秒)。②多数のクライアントの頻繁な開閉でドライバが D 状態になる(検知のみ)。③長期稼働中の原因不明の無応答(観測中)。
@@ -226,7 +226,7 @@ newkernel/build.sh            # newkernel/out/new/vmlinux(.bin) と、KNL 用の
 - **実機のハングの原因を HDD に決めつけない**: ある固まりは HDD ではなく GMAC の MMC カウンタ割り込み嵐だった(MMC_RX_INTR_MASK 0x10c、TX 0x110、RX_IPC 0x200 をマスク)。
 - **USB**: SDUH の間接レジスタ(EHCI は EOC 0x2004、OHCI は OOC 0x200c)。ctypes での usbfs 試験はオフセットを誤りやすいので C で書く。
 - **ホスト全体の `sync`** は他の重い書き込みで何分も待たされる。`sync <file>` を使う。
-- **PAT の差し替え**: `--sid` 指定時は単一サービスの PAT にして出力する。SI のレーン(`is_si_pid`)は別扱い。
+- **PAT の差し替え**: `--sid` 指定時は単一サービスの PAT にして出力する。その PAT の program 0 の PID(network_PID)は、ファーム生成値の `0x1f` のままだと Mirakurun が NIT を辿れないため、実 NIT の `0x0010` に書き換えて CRC を再計算する(Issue #16)。SI のレーン(`is_si_pid`)は別扱い。
 - **公式 FW に自作カーネルや観測シムを混ぜると不調になる**(クリーンな公式では、スキャン・録画ともできる)。
 - **procmng の anti-tamper**: `LD_PRELOAD`/`IFS` を検出する。自前シムが原因の誤認が過去にあった。
 - **ssh のホスト鍵**: 実機は再起動や入れ替えで鍵が変わる。なりすましと決めつけない(実機以外では警告を無視しない)。
