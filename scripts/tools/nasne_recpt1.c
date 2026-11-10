@@ -567,6 +567,69 @@ static void put_pkt(const unsigned char *q) {
     olen += 188;
 }
 
+/* ---- Issue #16: sid 指定時の単一サービス PAT の network_PID 修正 ----
+ * ファームウェア生成の単一サービス PAT は program_number 0 (network_PID) が
+ * 0x1f 固定になっており、実 NIT (PID 0x0010) を指さないため、Mirakurun 等が
+ * PAT を辿って NIT を取得できずサービス検出に失敗する (Issue #16、第6節で実測)。
+ * NIT の PID は ARIB / DVB とも 0x0010 固定であり、本プロジェクトの全実測
+ * (地デジ9局・SI 経路・通常経路) でも実 NIT は常に 0x0010 だった。そのため
+ * ストリーム中の NIT を動的検出するのではなく、標準で固定の 0x0010 へ
+ * 書き換える方式とした (動的検出は PSI 側ストリームとの状態共有が必要になり、
+ * PAT が NIT より先に届く場合の扱いも含めて複雑化する割に得るものがない)。
+ * 対象は sid 経路で出力される PAT の program 0 エントリのみで、それ以外
+ * (各プログラムの PMT PID、PMT、NIT 自体、映像・音声) には一切触らない。
+ * 構造チェックを全て通過した場合だけ書き換え、少しでも想定と違えば
+ * 元パケットをそのまま返す (fail-safe)。既に 0x0010 の場合は CRC にも
+ * 触らないため、元々正しい PAT に対しては冪等 (無変更) である。 */
+#define NIT_PID_FIXED 0x0010
+static unsigned long crc32_mpeg(const unsigned char *d, unsigned long n) {
+    /* MPEG-2 CRC32: poly 0x04C11DB7, init 0xFFFFFFFF, 非反射, 最終 XOR なし */
+    unsigned long crc = 0xffffffffUL, i;
+    int b;
+    for (i = 0; i < n; i++) {
+        crc ^= (unsigned long)d[i] << 24;
+        for (b = 0; b < 8; b++) crc = (crc & 0x80000000UL) ? ((crc << 1) ^ 0x04c11db7UL) : (crc << 1);
+    }
+    return crc;
+}
+static unsigned char patfix_buf[188];
+static const unsigned char *patfix_network_pid(const unsigned char *q) {
+    unsigned long afc, off, ptr, soff, slen, total, j, i, crc;
+    const unsigned char *sec;
+    if (q[0] != 0x47) return q;
+    if ((((q[1] & 0x1f) << 8) | q[2]) != 0) return q;   /* PID 0 (PAT) のみ */
+    if (!(q[1] & 0x40)) return q;                        /* PUSI ありのみ (セクション先頭を含む) */
+    afc = (q[3] >> 4) & 3;
+    if (!(afc & 1)) return q;                            /* payload の無いパケットは触らない */
+    off = 4;
+    if (afc & 2) { off = 5 + q[4]; if (off >= 188) return q; }  /* adaptation field を飛ばす */
+    ptr = q[off];
+    soff = off + 1 + ptr;                                /* pointer_field を飛ばしたセクション先頭 */
+    if (soff + 16 > 188) return q;                       /* 最小構成: ヘッダ8 + エントリ4 + CRC4 */
+    sec = q + soff;
+    if (sec[0] != 0x00) return q;                        /* table_id = 0 (PAT) のみ */
+    slen = ((sec[1] & 0xf) << 8) | sec[2];
+    total = slen + 3;                                    /* セクション全体 (CRC 含む) */
+    if (total < 16 || soff + total > 188) return q;      /* 1パケットに収まらない PAT は触らない */
+    for (j = 8; j + 4 <= total - 4; j += 4) {
+        unsigned long pn = (sec[j] << 8) | sec[j + 1];
+        unsigned long epid = ((sec[j + 2] & 0x1f) << 8) | sec[j + 3];
+        if (pn != 0) continue;
+        if (epid == NIT_PID_FIXED) return q;             /* 既に正しい: CRC にも触らず冪等 */
+        for (i = 0; i < 188; i++) patfix_buf[i] = q[i];  /* 共有バッファ上の原パケットは書き換えず、コピー側で直す */
+        {
+            unsigned char *w = patfix_buf + soff;
+            w[j + 2] = (w[j + 2] & 0xe0) | ((NIT_PID_FIXED >> 8) & 0x1f);  /* reserved (上位3bit) は保持 */
+            w[j + 3] = NIT_PID_FIXED & 0xff;
+            crc = crc32_mpeg(w, total - 4);
+            w[total - 4] = (crc >> 24) & 0xff; w[total - 3] = (crc >> 16) & 0xff;
+            w[total - 2] = (crc >> 8) & 0xff;  w[total - 1] = crc & 0xff;
+        }
+        return patfix_buf;
+    }
+    return q;   /* program 0 エントリの無い PAT は触らない */
+}
+
 static unsigned long parse_dec(const char *s) { unsigned long v = 0; for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (*s - '0'); return v; }
 static int is_num(const char *s) { if (!*s) return 0; for (; *s; s++) if (*s < '0' || *s > '9') return 0; return 1; }
 static unsigned long uhf_hz(unsigned long ch) { return 473142857UL + 6000000UL * (ch - 13); }
@@ -943,10 +1006,12 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
             idx = rb[0x13c / 4]; sz = rb[0xbc / 4];
             if (idx < 16 && sz >= 192) {
                 unsigned char *p = (unsigned char *)ob_sec[0x2d4 / 4 + idx];
-                /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)をそのまま通す */
+                /* want_sid 指定時はファームウェア生成のシングルサービスPAT(PID 0)を通す。
+                 * ただしその PAT は Issue #16 の修正 (network_PID 0x1f -> 実 NIT の 0x0010 + CRC 再計算) を通す */
                 if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) {
-                    if (!av_first) { unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6]; if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); bcas_unlock(); } }
-                    put_pkt(p + k + 4);
+                    unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6];
+                    if (!av_first) { if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); bcas_unlock(); } }
+                    if (want_sid && pid2 == 0) put_pkt(patfix_network_pid(p + k + 4)); else put_pkt(p + k + 4);
                 }
                 prev_sec = idx;
             }
