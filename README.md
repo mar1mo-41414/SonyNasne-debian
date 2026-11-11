@@ -16,6 +16,18 @@ SIE(旧SCE)製ネットワークレコーダー **nasne CECH-ZNR2J**(初期型�
 
 **[docs/00_where_to_start.md](docs/00_where_to_start.md)**: 「何をしたいか」「どのバージョン(カーネル・Debian・本体のモデル)か」「何を入れたいか」「どこまで触るか」から、読む手順書を選べる振り分けリストです。
 
+## まず試すなら(おすすめコース)
+
+「公式ファームで動いている nasne を Debian 化して、テレビの受信まで使いたい」という、いちばん多いコースの全体像です。
+
+1. **SPI のバックアップを取る**(保険。以後のどの作業でも先にこれ): [docs/16](docs/16_spi_backup_dlm.md)
+2. **PC で `.dlm` を作る**(カーネル・Debian ツリー・`.dlm` を `nasne_setup.py` の 1 コマンドで): [docs/13](docs/13_full_setup_from_official_hdd.md)
+3. **HDD に入れて、nasne に挿して電源を入れる**(約 5 分で Debian が起動): [docs/13](docs/13_full_setup_from_official_hdd.md)
+4. **ssh で入って確認する**(ログインできれば導入は完了): [docs/13](docs/13_full_setup_from_official_hdd.md)
+5. **テレビを見る・録る設定をする**: [docs/11](docs/11_tv_streaming.md)(受信・配信)、[contrib/epgstation](contrib/epgstation/README.md)(Mirakurun + EPGStation で予約録画)
+
+途中で止まったら [docs/21](docs/21_troubleshooting.md)、自分の機体・HDD で確認できているかは [docs/20](docs/20_compatibility_and_reports.md) です。他の目的(新しいカーネルを試す、HDD の復旧だけ、元に戻す等)は上の振り分けリスト([docs/00](docs/00_where_to_start.md))から選んでください。
+
 ## HDDが壊れて、復旧したいだけの方へ
 
 **[docs/04_hdd_recovery_guide.md](docs/04_hdd_recovery_guide.md)** を読んでください。HDDの区画作成とファイルのコピーだけで、
