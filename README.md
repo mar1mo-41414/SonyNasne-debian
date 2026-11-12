@@ -116,6 +116,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [15_p3_structure_and_hai](docs/15_p3_structure_and_hai.md) | p3の初期構造と `.hai`(v1.00なしで復旧できる理由) |
 | [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm`、バックアップへ戻す `.dlm` |
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
+| [25_official_update_push](docs/25_official_update_push.md) | 公式アップデート経路でカスタム .dlm を適用する(push方式。前提・版ゲート・容量・エラーコード表) |
 | [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
 | [19_new_kernel_survey](docs/19_new_kernel_survey.md) | 新しいカーネル(6.x)を作るために必要な情報の調査(ベンダーソースの実測、移植の対象、`xcode4drv`、デバッグの進め方) |
 | [20_compatibility_and_reports](docs/20_compatibility_and_reports.md) | **対応状況のマトリクス**(モデル・ファーム・HDD・機能)と、検証結果の報告のしかた(個体情報を出さない `nasne-report`) |
@@ -165,6 +166,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
    ├─ fetch_gpl_sources.sh    … SIE公開のGPLソースの取得
    ├─ kernel_build/           … 自前カーネルのビルド(Docker)と内蔵initramfs
    ├─ stage1/                 … 公式HDDの00550066.dlm差し替えだけでDebian直起動へ移行するツール一式
+   ├─ push/                   … 公式アップデート経路で .dlm を適用する (nasne_push.py とテスト)
    ├─ watchdog/               … MCUウォッチドッグ停止(mcui2c、initサービス)
    ├─ newkernel/              … 新カーネル(6.12)用の rootfs 作成・導入・サービス(Debian 12)
    ├─ tools/                  … 実機用のツール(`nasne-recpt1`(TS取得・HTTP配信)、I2C、ioctl、/dev/mem、MTD書き込み、B-CAS)
