@@ -77,7 +77,12 @@ NET
 echo nasne-debian | $SUDO tee "$OUT/etc/hostname" >/dev/null
 
 # update-rc.d は MIPS のDebian側のコマンドなので qemu-user で chroot して実行する
-$SUDO cp "$(command -v qemu-mipsel-static)" "$OUT/usr/bin/"
+# qemu-mipsel-static が無い環境 (Ubuntu 26.04 では qemu-user-static パッケージ自体が
+# 無くなった) では qemu-mipsel (qemu-user / qemu-user-binfmt) にフォールバックする (Issue #18)。
+# ツリー内へは従来どおり qemu-mipsel-static という名前で配置する (cleanup_mounts の削除対象も同じ名前)。
+QEMU_MIPS=$(command -v qemu-mipsel-static || command -v qemu-mipsel || true)
+[ -n "$QEMU_MIPS" ] || { echo "qemu-mipsel-static (または qemu-mipsel) が必要です: apt-get install qemu-user-static (新しいディストリビューションでは qemu-user / qemu-user-binfmt)" >&2; exit 1; }
+$SUDO cp "$QEMU_MIPS" "$OUT/usr/bin/qemu-mipsel-static"
 $SUDO mount -t proc proc "$OUT/proc"; $SUDO mount -t sysfs sysfs "$OUT/sys"
 cleanup_mounts() { $SUDO umount "$OUT/proc" "$OUT/sys" 2>/dev/null || $SUDO umount -l "$OUT/proc" "$OUT/sys" 2>/dev/null || true; $SUDO rm -f "$OUT/usr/bin/qemu-mipsel-static"; }
 trap 'cleanup_mounts; rm -rf "$WORK"' EXIT

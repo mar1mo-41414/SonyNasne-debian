@@ -7,7 +7,7 @@
 #
 # 使い方:
 #   sudo ./scripts/build_debian_rootfs.sh <出力先ディレクトリ>
-#   (必要: debootstrap, qemu-user-static。SSH_PUBKEY環境変数でroot用の公開鍵を指定、既定 ~/.ssh/id_rsa.pub)
+#   (必要: debootstrap, qemu-mipsel-static (無い環境では qemu-mipsel でも可)。SSH_PUBKEY環境変数でroot用の公開鍵を指定、既定 ~/.ssh/id_rsa.pub)
 #
 # 出来上がった <出力先>/ を、nasneのHDDのp3(ext3)にそのままコピーして使う(docs/05_kernel_and_direct_boot.md)。
 # 注意: wheezyのリポジトリは archive.debian.org にあり、署名鍵が期限切れのため --no-check-gpg を使っている。
@@ -28,8 +28,12 @@ if ! command -v debootstrap >/dev/null; then
     echo "debootstrapが必要です: apt-get install debootstrap" >&2
     exit 1
 fi
-if ! command -v qemu-mipsel-static >/dev/null; then
-    echo "qemu-mipsel-staticが必要です: apt-get install qemu-user-static" >&2
+# qemu-mipsel-static が無い環境 (Ubuntu 26.04 では qemu-user-static パッケージ自体が
+# 無くなった) では qemu-mipsel (qemu-user / qemu-user-binfmt) にフォールバックする (Issue #18)。
+# ツリー内へは従来どおり qemu-mipsel-static という名前で配置する。
+QEMU_MIPS=$(command -v qemu-mipsel-static || command -v qemu-mipsel || true)
+if [ -z "$QEMU_MIPS" ]; then
+    echo "qemu-mipsel-static (または qemu-mipsel) が必要です: apt-get install qemu-user-static (新しいディストリビューションでは qemu-user / qemu-user-binfmt)" >&2
     exit 1
 fi
 
@@ -37,8 +41,8 @@ echo "=== 1st stage: debootstrap --foreign (wheezy, mipsel) ==="
 debootstrap --no-check-gpg --arch=mipsel --foreign wheezy "$OUT" \
     http://archive.debian.org/debian/
 
-echo "=== qemu-mipsel-static を配置、2nd stageを実行 ==="
-cp "$(command -v qemu-mipsel-static)" "$OUT/usr/bin/"
+echo "=== qemu ($QEMU_MIPS) を qemu-mipsel-static として配置、2nd stageを実行 ==="
+cp "$QEMU_MIPS" "$OUT/usr/bin/qemu-mipsel-static"
 chroot "$OUT" /debootstrap/debootstrap --second-stage
 
 echo "=== proc/sysをマウントしopensssh-server等をインストール ==="

@@ -8,7 +8,12 @@ OUT="${1:?使い方: $0 <出力ディレクトリ>}"
 SSH_PUBKEY="${SSH_PUBKEY:-$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)/.ssh/id_rsa.pub}"
 MIRROR="${MIRROR:-http://deb.debian.org/debian}"
 [ "$(id -u)" -eq 0 ] || { echo "root が必要です" >&2; exit 1; }
-for c in debootstrap qemu-mipsel-static; do command -v $c >/dev/null || { echo "$c が必要です" >&2; exit 1; }; done
+command -v debootstrap >/dev/null || { echo "debootstrap が必要です" >&2; exit 1; }
+# qemu-mipsel-static が無い環境 (Ubuntu 26.04 では qemu-user-static パッケージ自体が
+# 無くなった) では qemu-mipsel (qemu-user / qemu-user-binfmt) にフォールバックする (Issue #18)。
+# ツリー内へは従来どおり qemu-mipsel-static という名前で配置する。
+QEMU_MIPS=$(command -v qemu-mipsel-static || command -v qemu-mipsel || true)
+[ -n "$QEMU_MIPS" ] || { echo "qemu-mipsel-static (または qemu-mipsel) が必要です: apt-get install qemu-user-static (新しいディストリビューションでは qemu-user / qemu-user-binfmt)" >&2; exit 1; }
 umount_all() { for m in dev/pts dev proc sys; do while mountpoint -q "$OUT/$m"; do umount "$OUT/$m" || break; done; done; }
 trap umount_all EXIT
 
@@ -17,7 +22,7 @@ debootstrap --foreign --arch=mipsel --variant=minbase \
   --include=sysvinit-core,sysv-rc,initscripts,openssh-server,ifupdown,isc-dhcp-client,iproute2,iputils-ping,procps,kmod,udev,ethtool,less,vim-tiny,ca-certificates,kexec-tools \
   --exclude=systemd-sysv,init \
   bookworm "$OUT" "$MIRROR"
-cp "$(command -v qemu-mipsel-static)" "$OUT/usr/bin/"
+cp "$QEMU_MIPS" "$OUT/usr/bin/qemu-mipsel-static"
 echo "=== 2nd stage ==="
 chroot "$OUT" /debootstrap/debootstrap --second-stage
 echo "=== 設定 ==="

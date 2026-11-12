@@ -18,7 +18,11 @@ fi
 rm -rf "$OUT"; mkdir -p "$OUT"/{bin,sbin,dev,proc,sys,tmp,p3,newroot,usr/bin,usr/sbin,etc}
 install -m755 "$BB" "$OUT/bin/busybox"
 # アプリレットの symlink(qemu-user で busybox 自身に一覧を出させる)
-for a in $(qemu-mipsel-static "$BB" --list-full 2>/dev/null); do
+# qemu-mipsel-static が無い環境 (Ubuntu 26.04 では qemu-user-static パッケージ自体が
+# 無くなった) では qemu-mipsel (qemu-user / qemu-user-binfmt) にフォールバックする (Issue #18)。
+QEMU_MIPS=$(command -v qemu-mipsel-static || command -v qemu-mipsel || true)
+[ -n "$QEMU_MIPS" ] || { echo "qemu-mipsel-static (または qemu-mipsel) が必要です: apt-get install qemu-user-static (新しいディストリビューションでは qemu-user / qemu-user-binfmt)" >&2; exit 1; }
+for a in $("$QEMU_MIPS" "$BB" --list-full 2>/dev/null); do
   [ -e "$OUT/$a" ] || { mkdir -p "$OUT/$(dirname "$a")"; ln -s /bin/busybox "$OUT/$a"; }
 done
 mipsel-linux-gnu-gcc -nostdlib -static -fno-pic -mno-abicalls -mips32r2 -Os -fno-builtin -e __start -o "$OUT/bin/mapsum" "$HERE/mapsum.c"   # 診断用
