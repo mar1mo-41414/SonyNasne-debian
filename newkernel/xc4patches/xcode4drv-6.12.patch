@@ -14,7 +14,16 @@ diff -ruN a b
 diff -ruN a b
 --- a/kdrv/drv/Os_Linux_Init.c
 +++ b/kdrv/drv/Os_Linux_Init.c
-@@ -144,16 +144,16 @@
+@@ -54,6 +54,8 @@
+ module_param(allocator_himem_size, int, 0);
+ #endif
+ module_param(Load2ndFirmware, int, 0);
++extern int fw_secondary;
++module_param(fw_secondary, int, 0);
+ #else
+ MODULE_PARM(Diagnostic, "int");
+ MODULE_PARM(Board_ID, "int");
+@@ -144,16 +146,16 @@
  //DECLARE_WORK (Interrupt_tasklet, Interrupt_TimerDpc_Tasklet);
  #endif
  #else
@@ -38,7 +47,7 @@ diff -ruN a b
  
  char *pConfig_file = NULL;
  #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 16)
-@@ -989,14 +989,49 @@
+@@ -989,14 +991,49 @@
   *  PARAMETERS:    NONE
   *
   ***************************************************************************/
@@ -88,7 +97,7 @@ diff -ruN a b
      int32 returnVal = 0;
      PXCODEDEV pXcode = NULL;
  #ifdef VIXS_USBD
-@@ -1039,6 +1074,7 @@
+@@ -1039,6 +1076,7 @@
              }
  
              InitializeXcode(pXcode);
@@ -96,7 +105,7 @@ diff -ruN a b
              devicecount ++;
  
  			returnVal = OS_SUCCESS;
-@@ -3737,7 +3773,7 @@
+@@ -3737,7 +3775,7 @@
  	#endif
  
      //if (offset >= &thinsp;_pa(high_memory) || (File->f_flags & O_SYNC))
@@ -105,7 +114,7 @@ diff -ruN a b
      //Vma->vm_flags |= VM_LOCKED;
  
      PDEBUG("Inside Boxster_Mmap the physical addr is: %Xh\n", (uint)offset);
-@@ -3745,7 +3781,7 @@
+@@ -3745,7 +3783,7 @@
  
      if((offset == pXcode->physfb) || (offset == pXcode->physmmr))
      {
@@ -344,6 +353,57 @@ diff -ruN a b
      {
          return OS_FAILURE;
      }
+diff -ruN a b
+--- a/kdrv/drv/mips.c
++++ b/kdrv/drv/mips.c
+@@ -1746,6 +1746,38 @@
+ #endif
+ }
+ 
++/*
++ * nasne(Issue #14): 復号したファームの、チャンネルのオブジェクトのプール secondary の個数を増やす。
++ * 個数(既定 22)とバッファ(既定 0x5e000)の積を超えないようにバッファを縮め、後ろの配置を変えない。
++ * fw_secondary=0(既定)なら何もしない。書き換える前に元の値をすべて確かめ、1 つでも違えば何もしない。
++ */
++int fw_secondary = 0;
++static uint32 xc_fw_patch_secondary(PXCODEDEV pXcode, uint32 fb_offset)
++{
++    static const uint32 limm_off[4] = { 0x11295c, 0x112964, 0x112974, 0x11297c };
++    volatile uint32 *base = (volatile uint32 *)(fb_offset + (uint32_ptr)pXcode->pmmfb);
++    uint32 v, i, size;
++    if (fw_secondary <= 22 || fw_secondary > 0xff)
++        return OS_SUCCESS;
++    size = ((22 * 0x5e000) / fw_secondary) & ~0xfff;
++    if (READL_CHECK(pXcode, &v, base + 0x1128c8 / 4) == RET_NODEVICE || v != 0x73cfda16) {
++        PMSG("fw_secondary: unexpected %08x, not patched\n", v);
++        return OS_SUCCESS;
++    }
++    for (i = 0; i < 4; i++)
++        if (READL_CHECK(pXcode, &v, base + limm_off[i] / 4) == RET_NODEVICE || v != 0xe0000005) {
++            PMSG("fw_secondary: unexpected %x: %08x, not patched\n", limm_off[i], v);
++            return OS_SUCCESS;
++        }
++    for (i = 0; i < 4; i++)
++        if (WRITEL_CHECK(pXcode, ((size & 0xffff) << 16) | (size >> 16), base + limm_off[i] / 4) == RET_NODEVICE)
++            return RET_NODEVICE;
++    if (WRITEL_CHECK(pXcode, 0x73cfda00 | fw_secondary, base + 0x1128c8 / 4) == RET_NODEVICE)
++        return RET_NODEVICE;
++    PMSG("fw_secondary: secondary pool %d, buffer 0x%x\n", fw_secondary, size);
++    return OS_SUCCESS;
++}
++
+ static uint32 Down_Load_Embedded_Secured_Mips_Prog(PXCODEDEV pXcode, uint32 fb_offset)
+ {
+     uint32  count;
+@@ -1792,6 +1824,8 @@
+ 		offset += temp;
+ 	}
+ 	PDEBUG("Decrypt mips code finished\n");
++	if (xc_fw_patch_secondary(pXcode, fb_offset) == RET_NODEVICE)
++		return RET_NODEVICE;
+  
+ 	return OS_SUCCESS;
+ }
 diff -ruN a b
 --- a/kdrv/inc/devcontext.h
 +++ b/kdrv/inc/devcontext.h
