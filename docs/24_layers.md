@@ -40,6 +40,7 @@ nasne の情報は、**どの前提に依存するか**で、次の 5 つの層�
 | [21 トラブルシューティング](21_troubleshooting.md) | 混在(節・行ごとに表示) | 節 1〜6 |
 | [22 新カーネル(6.12)+ Debian 12](22_new_kernel_612.md) | 【新】 | 節 6 の SoC の癖は【固定】に近い |
 | [23 6.12 カーネルの機能一覧](23_kernel_feature_inventory.md) | 【新】 | — |
+| [26 メディアエンジンのファーム(ARC)の解析](26_media_engine_firmware.md) | 【固定】 | — |
 | [Boxster ioctl のコマンド番号表](boxster_cmd_table.md) | 【固定】 | — |
 
 ## 2. 節ごとの層(混在している文書)

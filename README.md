@@ -117,6 +117,7 @@ nasne(Debian直起動)がLANに出すものと、その認証です。**どれ�
 | [16_spi_backup_dlm](docs/16_spi_backup_dlm.md) | SPIフラッシュを読むだけでバックアップする `.dlm`、バックアップへ戻す `.dlm` |
 | [17_official_web_api](docs/17_official_web_api.md) | 公式Web APIの呼び方(認証トークン、LED制御、初期化API) |
 | [25_official_update_push](docs/25_official_update_push.md) | 公式アップデート経路でカスタム .dlm を適用する(push方式。前提・版ゲート・容量・エラーコード表) |
+| [26_media_engine_firmware](docs/26_media_engine_firmware.md) | メディアエンジンのファーム(ARC)の解析と、secondary プールの上限(22 個)を広げる対策 `fw_secondary`(Issue #14) |
 | [18_status_page](docs/18_status_page.md) | 状態ページ(HDD温度・SMART・メモリ・ディスク・MCU・チューナー。HTTP、JSON、Prometheus) |
 | [19_new_kernel_survey](docs/19_new_kernel_survey.md) | 新しいカーネル(6.x)を作るために必要な情報の調査(ベンダーソースの実測、移植の対象、`xcode4drv`、デバッグの進め方) |
 | [20_compatibility_and_reports](docs/20_compatibility_and_reports.md) | **対応状況のマトリクス**(モデル・ファーム・HDD・機能)と、検証結果の報告のしかた(個体情報を出さない `nasne-report`) |
