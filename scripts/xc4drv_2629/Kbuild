@@ -1,0 +1,5 @@
+# xcode4drv を 2.6.29 向けに GPL ソースからビルドする(公式 drvbuild/Makefile と同じ定義。newkernel/xc4drv/Kbuild.in の 2.6.29 版)
+obj-m := xcode4drv.o
+xcode4drv-objs := $(patsubst %.c,%.o,$(sort $(wildcard $(src)/meminit/*.c $(src)/drv/*.c)))
+xcode4drv-objs := $(subst $(src)/,,$(xcode4drv-objs))
+EXTRA_CFLAGS := -DLINUX -DBOXSTER_DRIVER -DBCAS -DXC_SOC_BUILD -DCUST4_BUILD -DXC_FW_BUILD -DXCODE3 $(XC_EXTRA) -I$(src)/../commsdk/include -I$(src)/inc
