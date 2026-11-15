@@ -41,6 +41,14 @@
 #define SYS_rt_sigaction 4194
 #define SYS_rename 4038
 #define SYS_mkdir  4039
+#define SYS_sendmsg 4179
+#define SYS_recvmsg 4177
+#define SYS_socketpair 4184
+#define SYS_kill   4037
+#define SYS_getpid 4020
+#define SYS_unlink 4010
+#define SYS_poll   4188
+#define SYS_recv   4175
 
 static long sys6(long n, long a, long b, long c, long d, long e, long f) {
     register long v0 __asm__("$2") = n;
@@ -85,8 +93,11 @@ static int streq(const char *a, const char *b) { while (*a && *a == *b) { a++; b
 #define SIGTERM_ 15
 
 static long fd;
+static int owner_mode;			/* 1 のとき、このプロセスは系統の担当プロセス (担当プロセス方式、Issue #12) */
+static int owner_keep_g;		/* 段階2: 担当が自系統の GENERIC を保持して使い回す */
+static int owner_has_g;			/* 担当が GENERIC を保持している (h_g0/h_g1 が有効) */
 static volatile int stop_flag;
-static volatile int term_flag;		/* SIGINT/SIGTERM を受けた(クライアントの切断=SIGPIPE・書き込みエラーでは立たない。linger の待機は、これで抜ける) */
+static volatile int term_flag;		/* SIGINT/SIGTERM を受けた(クライアントの切断=SIGPIPE・書き込みエラーでは立たない) */
 static int verbose;
 static unsigned long ob_pt[0x484 / 4 + 4], ob_sec[0x9ec / 4 + 4], ob_g[0x208 / 4 + 4], rb[0x230 / 4 + 4], tb[0x1d0 / 4 + 4], ib[0x110 / 4 + 4];
 static unsigned char outbuf[0x20000];
@@ -467,10 +478,15 @@ static int open_streams(struct svc *s, int is_sat) {
 static int open_streams_inner(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
-    clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
-    rv = ioc(ob_g, 0x208, 0x2e, 2000);
-    if (rv != 1) { err("B-CASストリームを開けない rv="); errhex(rv); err("\n"); return -1; }
-    h_g0 = ob_g[0xa4 / 4]; h_g1 = ob_g[0xa8 / 4];
+    if (owner_keep_g && owner_has_g) {
+        lgx("open_streams: GENERIC reuse by owner", h_g0);	/* 段階2: 開き直さず、保持中の GENERIC に対して ACTIVATE から入る */
+    } else {
+        clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
+        rv = ioc(ob_g, 0x208, 0x2e, 2000);
+        if (rv != 1) { err("B-CASストリームを開けない rv="); errhex(rv); err("\n"); return -1; }
+        h_g0 = ob_g[0xa4 / 4]; h_g1 = ob_g[0xa8 / 4];
+        if (owner_keep_g) { owner_has_g = 1; lgx("open_streams: GENERIC opened, owner keeps it", h_g0); }
+    }
     clr(tb, 0x1d0 / 4 + 2);
     tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
     tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
@@ -537,6 +553,8 @@ static void close_streams_ex(int keep_g) {
     if (!keep_g && (h_g0 || h_g1)) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 static void close_streams(void) { close_streams_ex(0); }
+/* セッション内の後始末用: 担当が GENERIC を保持する場合は GENERIC を閉じず、SECUREDTS/PSI だけ閉じる */
+static void close_streams_session(void) { close_streams_ex(owner_keep_g ? 1 : 0); }
 
 /* 地デジ・衛星ともに復号ストリーム(OPEN_SECUREDTS)に正規PMT(Version 0, CA記述子除去済み)が含まれるため、
  * PSIストリームから元PMTを混ぜると二重混入(CCエラーおよび未復号CA記述子による暗号化誤認)が生じる。
@@ -826,6 +844,12 @@ static int acquire_tuner(int is_sat) {
             }
         }
     }
+    if (owner_keep_g && fd >= 0) {
+        if (fw_alive()) { if (is_sat) fe_init_s(); else fe_init(); return 0; }	/* 段階2: 担当が保持するドライバ fd を使い回す (GENERIC を開いた fd を閉じない。設計書 3.5) */
+        lgx("acquire: owner fw not alive, drop kept GENERIC/fd", h_g0);	/* ファーム無応答: 保持中の GENERIC は使えないものとして追跡をやめ (残骸の可能性は設計書に記録)、通常経路へ */
+        owner_has_g = 0; h_g0 = h_g1 = 0;
+        sys3(SYS_close, fd, 0, 0); fd = -1;
+    }
     fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (fd < 0) { err("/dev/vixs/xcodedrv を開けない(ドライバ未ロード)\n"); reload_driver(); if (fd < 0) return 1; }
     if (!fw_alive()) {
@@ -841,8 +865,8 @@ static int acquire_tuner(int is_sat) {
 }
 static void release_tuner(void) {
     bcas_unlock();
-    if (fd >= 0) sys3(SYS_close, fd, 0, 0);
-    fd = -1;
+    if (fd >= 0 && !owner_keep_g) sys3(SYS_close, fd, 0, 0);	/* 段階2: 担当はドライバ fd を保持し続ける */
+    if (!owner_keep_g) fd = -1;
     if (legacyfd >= 0) { sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; }
     if (lockfd >= 0) {
         unsigned long t = now_ms();
@@ -853,11 +877,22 @@ static void release_tuner(void) {
     lockfd = -1;
 }
 
-/* --dual-tuner のとき、もう一方のセッションが動いている間は、B-CAS の GENERIC ストリームを閉じない。
- * 片方のセッションが GENERIC ストリーム(ioctl 0x2f)を閉じると、ファームが `INPUT_DONE: Mips Failed` を出して、
- * 動いている他方のセッションの出力が止まった(Issue #12。monutetsu さんのログ。3回中3回)。そこで、終了するセッションは、
- * 系統のロックと従来の共有ロックだけ先に手放し(次の要求を受け付けられる)、ドライバの fd と GENERIC ストリームを持ったまま、
- * ほかのセッションがなくなる(従来のロックが排他で取れる)まで待ってから、閉じる。 */
+/* ほかのセッション (従来プロセス・scan・別インスタンス等) が動いているかを、レガシー排他の
+ * 取得可否で判定する。段階3以降は U3 の閉じ判定の補助ガードとして使う (閉じるのを止める
+ * 方向にだけ働く)。
+ *
+ * 段階4で linger 経路 (linger_close_generic、LINGER_SLOTS 枠、200ms 待機ポーリング、
+ * release_locks_keep_fd) を撤去した。linger は「片方のセッションが GENERIC ストリーム
+ * (ioctl 0x2f) を閉じると、ファームが INPUT_DONE: Mips Failed を出して、動いている他方の
+ * セッションの出力が止まる」(Issue #12。monutetsu さんのログ。3回中3回) への対策として、
+ * 接続ごとの子プロセスが系統ロックと従来ロックだけ先に手放し、GENERIC を持ったまま
+ * ほかのセッションがなくなるまで待つ仕組みだった。担当プロセス方式では、dual 時に
+ * GENERIC をセッションをまたいで保持するのは各系統の担当だけになり、担当が閉じるのは
+ * U3 の判定で「両系統とも無セッション」のときだけになったため、この危険は構造的に
+ * 起きない。従来プロセス (担当が使えない場合のフォールバック、CLI、scan) は、非 dual 時と
+ * 同様に自分の GENERIC をその場で閉じる。他系統で配信が走っているときにフォールバックの
+ * 子が GENERIC を閉じると #12 の事象が再発し得るが、それは担当が両系統とも使えない
+ * 異常時に限られる (通常の dual 運用では起きない)。 */
 static int other_sessions_active(void) {
     long f = sys3(SYS_open, (long)LOCK_LEGACY, 0x100 | 2, 0644);
     int busy;
@@ -865,50 +900,6 @@ static int other_sessions_active(void) {
     busy = sys3(SYS_flock, f, 2 | 4, 0) < 0;
     sys3(SYS_close, f, 0, 0);
     return busy;
-}
-static void release_locks_keep_fd(void) {
-    bcas_unlock();
-    if (legacyfd >= 0) { sys3(SYS_close, legacyfd, 0, 0); legacyfd = -1; }
-    if (lockfd >= 0) {
-        unsigned long t = now_ms();
-        sys3(SYS_lseek, lockfd, 0, 0);
-        sys3(SYS_write, lockfd, (long)&t, sizeof(t));
-        sys3(SYS_close, lockfd, 0, 0);
-    }
-    lockfd = -1;
-}
-#define LINGER_MAX_MS	14400000UL		/* 4時間(それ以上、別のセッションが続いても、閉じる) */
-#define LINGER_SLOTS	4			/* 待機するプロセスの上限(Mirakurun の再試行などで、待機プロセスが増え続けないように) */
-static long linger_take_slot(void) {
-    static const char *const names[LINGER_SLOTS] = { "/tmp/nasne-recpt1-linger-0.lock", "/tmp/nasne-recpt1-linger-1.lock", "/tmp/nasne-recpt1-linger-2.lock", "/tmp/nasne-recpt1-linger-3.lock" };
-    int i;
-    for (i = 0; i < LINGER_SLOTS; i++) {
-        long f = sys3(SYS_open, (long)names[i], 0x100 | 2, 0644);
-        if (f < 0) continue;
-        if (sys3(SYS_flock, f, 2 | 4, 0) >= 0) return f;
-        sys3(SYS_close, f, 0, 0);
-    }
-    return -1;
-}
-static void linger_close_generic(void) {
-    unsigned long w; long slot = -1;
-    if (!(h_g0 || h_g1)) return;
-    release_locks_keep_fd();
-    /* 待機プロセスの枠(最大 LINGER_SLOTS)を取る。空くまで、または、ほかのセッションがなくなるまで待つ。
-     * クライアントの切断(SIGPIPE・書き込みエラー)で stop_flag が立っていても、待つ(term_flag=SIGTERM/SIGINT のときだけ、待たずに閉じる) */
-    for (w = 0; w < LINGER_MAX_MS && !term_flag && other_sessions_active(); w += 200) {
-        if (slot < 0) slot = linger_take_slot();
-        if (slot >= 0) break;
-        msleep(200);
-    }
-    if (slot >= 0 && !term_flag && other_sessions_active()) {
-        lgx("generic stream: 他のセッションが動いているので、閉じるのを待つ", 0);
-        for (w = 0; w < LINGER_MAX_MS && !term_flag && other_sessions_active(); w += 200) msleep(200);
-    }
-    lgx("generic stream: 閉じる 待ち時間(ms)", w);
-    clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
-    h_g0 = h_g1 = 0;
-    if (slot >= 0) sys3(SYS_close, slot, 0, 0);
 }
 
 static void http_status(int sock, const char *line, const char *body) {
@@ -925,7 +916,8 @@ static void send_headers(int sock) {
 static int si_only;		/* HTTP の ?si=1: SI(PAT/NIT/SDT/EIT/TOT 等)だけを出す。B-CAS の ACTIVATE も復号ストリームも使わない(番組表の取得用。視聴中の別系統に影響しない) */
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
-    out_fd = ofd; olen = 0; stop_flag = 0; term_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = h_g0 = h_g1 = 0;
+    out_fd = ofd; olen = 0; stop_flag = 0; term_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = 0;
+    if (!owner_keep_g) h_g0 = h_g1 = 0;		/* 段階2: 担当が保持する GENERIC のハンドルはセッションをまたいで消さない */
     session_want_sid = si_only ? 0 : want_sid;      /* si_only のときは、PSI ストリームの元の PAT も通す */
     lgx("session start freq", freq_val);
     if (is_sat) lgx("session ts_id", ts_id);
@@ -963,13 +955,13 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
         }
         if (olen) flush_out();
         session_want_sid = 0;
-        close_streams();
+        close_streams_session();
         release_tuner();
         return 0;
     }
     sel = discover(want_sid, 8000);
     lgx("discover sel", (unsigned long)sel);
-    if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams(); release_tuner(); return 1; }
+    if (sel < 0) { err("サービスが見つからない\n"); if (http) http_status(ofd, "HTTP/1.0 404 Not Found", "service not found\n"); close_streams_session(); release_tuner(); return 1; }
     s = &svcs[sel];
     lgx("discover found num_audio", (unsigned long)s->num_audio);
     if (verbose) {
@@ -983,9 +975,8 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     lgx("open_streams begin", 0);
     if (open_streams(s, is_sat) < 0) {
         if (http) http_status(ofd, "HTTP/1.0 500 Internal Server Error", "secured stream\n");
-        if (http && dual_mode) sys3(SYS_close, ofd, 0, 0);
-        close_streams_ex(dual_mode);
-        if (dual_mode) linger_close_generic();
+        if (http && dual_mode && !owner_mode) sys3(SYS_close, ofd, 0, 0);		/* 担当モードでは接続 fd は担当が閉じる (二重クローズの回避) */
+        close_streams_session();		/* 段階4: 担当は GENERIC を保持し (実際の閉じは U3)、従来プロセスは自分の GENERIC をその場で閉じる (linger 撤去) */
         release_tuner();
         return 1;
     }
@@ -1029,9 +1020,8 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     if (olen) flush_out();
     lgx("loop end stop_flag", (unsigned long)stop_flag);
     session_want_sid = 0;
-    if (http && dual_mode) sys3(SYS_close, ofd, 0, 0);       /* クライアントには、ここで配信の終了を伝える(以降の待機は、クライアントから見えない) */
-    close_streams_ex(dual_mode);          /* dual のときは、GENERIC を閉じるのを、ほかのセッションがなくなるまで待つ */
-    if (dual_mode) linger_close_generic();
+    if (http && dual_mode && !owner_mode) sys3(SYS_close, ofd, 0, 0);       /* クライアントには、ここで配信の終了を伝える(以降の待機は、クライアントから見えない)。担当モードでは担当が閉じる */
+    close_streams_session();		/* 段階4: 担当は GENERIC を保持し (実際の閉じは U3)、従来プロセスは自分の GENERIC をその場で閉じる (linger 撤去) */
     lgx("closed", 0);
     release_tuner();
     lgx("session end", 0);
@@ -1377,12 +1367,367 @@ static void send_playlist(int sock, const char *req) {
     sys3(4004, sock, (long)out, on);
 }
 
+
+/* ---- 担当プロセス方式 (Issue #12) ----
+ * 段階1 (地デジ担当のみの骨格): --dual-tuner のとき、待ち受け親が地デジの接続 fd を
+ * SCM_RIGHTS で地デジ担当プロセスへ渡し、担当が session() を1つずつ直列に実行する。
+ * 段階2からは地デジ担当が GENERIC を開いたまま使い回す (owner_keep_g。PSI/SECUREDTS は開き直す)。
+ * 段階3: 衛星担当を追加し、両系統とも担当が処理する。U3 の閉じ処理 (共有ファイル方式 +
+ * アイドル上限なし) と、U8 の深さ制限・503 化・待ち上限、親の先読み poll 化を実装する。
+ *
+ * U10 の判断 (要求の伝達形式): リクエスト文字列ではなく、解釈済みのパラメータを
+ * 固定長構造体で渡す。解釈 (parse_tuner_target) を親と子で共用することで、担当側に
+ * HTTP パースを持ち込まず、解釈の複製による食い違いも避けられる。session() の
+ * 引数そのものなので、移行の差分も最小になる。
+ * U3 の判断 (閉じ処理。2026-11-14 本人承認): 各担当が自系統の busy/idle を状態ファイルに
+ * 書き、相手の状態とレガシー排他の有無を見て「両系統とも無セッション」を判定する。
+ * 閉じる直前にもう一度読み直し、busy になっていたらやめる (競合ガード)。
+ * アイドル保持に上限は設けない。
+ * U8 の扱い (段階3): 親が担当ごとに在庫数 (処理中 + キュー中) を数え、上限
+ * (OWNER_QUEUE_MAX) を超える要求は親がその場で 503 を返す。要求には投入時刻を付け、
+ * 担当が取り出した時点で待ち上限 (OWNER_QUEUE_WAIT_MS) を超えていたら担当が 503 を返す。
+ * 処理完了は担当から完了通知 (8バイト) が同じ socketpair で戻り、親が振り分けや
+ * accept の合間に排出し在庫数を減らす。親の先読みは poll で待ち時間 (3秒) を付け、
+ * 何も送らない接続で親が固まらないようにする。 */
+#define OWNER_MSG_MAGIC 0x4f574e52UL	/* "OWNR" */
+struct owner_req { unsigned long magic, freq_val, ts_id, want_sid, dur_ms, si, rsv0, rsv1; };
+
+#define OWNER_QUEUE_MAX 4				/* U8: 担当1つあたりの在庫上限 (処理中1 + キュー3) */
+#define OWNER_QUEUE_WAIT_MS 30000UL			/* U8: 要求がキューで待てる上限 (超過は担当側で 503) */
+#define OWNER_NOTE_MAGIC 0x444f4e45UL			/* U8: 完了通知 "DONE" の4バイト並び */
+struct owner_slot { long pid, sock; int inflight; unsigned long dbuf; int dlen; };
+static struct owner_slot owners[2];			/* 親側: 担当の状態 (index 0 = 地デジ、1 = 衛星)。pid/sock は listen_port で -1 に初期化する (静的 0 のままだと sock=0 を開いていると誤認する) */
+static long g_listen_fd = -1;		/* 親側: listen ソケット (担当 fork 時に子側で閉じるため) */
+static volatile int parent_term;	/* 親側: SIGTERM/SIGINT を受けた */
+
+/* HTTP のチューナーリクエスト (<ch>?sid=..&tsid=..&sec=..&si=..) の解釈。
+ * 成功したら 1 を返し、結果を出力引数へ入れる。0 は解釈不能 (呼び出し側が 400 を返す)。
+ * 従来は listen_port の子プロセス内にあった解釈を関数化したもので、解釈規則は従来と同一。
+ * 担当方式の振り分け (親) と従来方式 (子) が共用する。 */
+static int parse_tuner_target(const char *p, char *ch_buf, int *is_sat, unsigned long *freq_val, unsigned long *ts_id, unsigned long *want_sid, unsigned long *dur_ms, int *si) {
+    int ci = 0, sat = 0, sival = 0;
+    unsigned long sid = 0, tsid = 0, sec = 0, parsed_ts_id = 0, freq = 0;
+    while (*p && *p != '?' && *p != '&' && *p != ' ' && *p != '\r' && *p != '\n' && ci < 31) {
+        ch_buf[ci++] = *p++;
+    }
+    ch_buf[ci] = 0;
+    while (*p == '?' || *p == '&') {
+        p++;
+        if (starts(p, "sid=")) {
+            p += 4;
+            if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { sid = sid * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
+            else while (*p >= '0' && *p <= '9') { sid = sid * 10 + (*p - '0'); p++; }
+        } else if (starts(p, "tsid=")) {
+            p += 5;
+            tsid = 0;
+            if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { tsid = tsid * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
+            else while (*p >= '0' && *p <= '9') { tsid = tsid * 10 + (*p - '0'); p++; }
+        } else if (starts(p, "sec=")) { p += 4; while (*p >= '0' && *p <= '9') { sec = sec * 10 + (*p - '0'); p++; } }
+        else if (starts(p, "si=")) { p += 3; sival = (*p == '1'); while (*p >= '0' && *p <= '9') p++; }
+        else break;
+    }
+    if (!parse_channel_str(ch_buf, &sat, &freq, &parsed_ts_id)) return 0;
+    if (!tsid) tsid = parsed_ts_id;
+    *is_sat = sat; *freq_val = freq; *ts_id = tsid; *want_sid = sid; *dur_ms = sec * 1000; *si = sival;
+    return 1;
+}
+
+/* msghdr / cmsghdr を自前で組む (libc なし。MIPS o32 は全フィールド 4 バイト)。
+ * cmsg: cmsg_len=16, cmsg_level=SOL_SOCKET (MIPS では 0xffff), cmsg_type=SCM_RIGHTS (1), データ = fd 1個。 */
+static int owner_send_req(long sock, int cfd, const struct owner_req *rq) {
+    unsigned long ctl[4]; unsigned long iov[2]; unsigned long mh[7]; long r;
+    ctl[0] = 16; ctl[1] = 0xffff; ctl[2] = 1; ctl[3] = (unsigned long)cfd;
+    iov[0] = (unsigned long)rq; iov[1] = sizeof(*rq);
+    mh[0] = 0; mh[1] = 0; mh[2] = (unsigned long)iov; mh[3] = 1; mh[4] = (unsigned long)ctl; mh[5] = 16; mh[6] = 0;
+    r = sys3(SYS_sendmsg, sock, (long)mh, 0);
+    return r == (long)sizeof(*rq) ? 0 : -1;
+}
+static int owner_recv_req(long sock, struct owner_req *rq, int *cfd_out) {
+    unsigned long ctl[4]; unsigned long iov[2]; unsigned long mh[7]; long r; int i;
+    for (i = 0; i < 4; i++) ctl[i] = 0;
+    iov[0] = (unsigned long)rq; iov[1] = sizeof(*rq);
+    mh[0] = 0; mh[1] = 0; mh[2] = (unsigned long)iov; mh[3] = 1; mh[4] = (unsigned long)ctl; mh[5] = 16; mh[6] = 0;
+    r = sys3(SYS_recvmsg, sock, (long)mh, 0);
+    if (r != (long)sizeof(*rq)) return -1;
+    if (rq->magic != OWNER_MSG_MAGIC) return -1;
+    if (ctl[0] < 16 || ctl[1] != 0xffff || ctl[2] != 1) return -1;
+    *cfd_out = (int)ctl[3];
+    return 0;
+}
+
+/* 接続先が既に切断しているか。
+ * 切断済みの要求でも開始処理 (選局・discover・ACTIVATE) をフルに行うと、1件ごとに数秒かかり、
+ * ザッピング後にキューが詰まって生きている要求の応答まで遅れる (段階2テスト S4 で実測: reuse は
+ * 回るが直後の通常セッションが 12 秒で応答しなかった)。開始前に捨てることで蓄積を防ぐ。
+ * 判定方法: 当初は poll の POLLHUP/POLLERR だけを見たが、TCP では相手の close は POLLHUP ではなく
+ * POLLIN (EOF を読める状態) として現れるため全く検知できなかった (再テスト R2 で実測: skip=0)。
+ * そこで、POLLIN が立っている場合は recv(MSG_PEEK | MSG_DONTWAIT) で 1 バイト覗き、0 (EOF) なら
+ * 切断と判定する。データが見える場合は生きている (または少なくとも切断ではない) として処理する。
+ * MSG_DONTWAIT を付けるので、この確認で止まることはない。 */
+static int owner_peer_gone(int cfd) {
+    unsigned long pfd[2]; long r; unsigned long rev; char b;
+    pfd[0] = (unsigned long)cfd; pfd[1] = 0x19;	/* pollfd: fd, events = POLLIN(0x01) | POLLERR(0x08) | POLLHUP(0x10) */
+    r = sys3(SYS_poll, (long)pfd, 1, 0);
+    if (r <= 0) return 0;
+    rev = (pfd[1] >> 16) & 0xffff;			/* revents は上位16ビット */
+    if (rev & 0x18) return 1;				/* POLLERR / POLLHUP */
+    if (rev & 0x01) {
+        r = sys6(SYS_recv, cfd, (long)&b, 1, 0x42, 0, 0);	/* MSG_PEEK(0x02) | MSG_DONTWAIT(0x40) */
+        if (r == 0) return 1;				/* EOF: 相手が閉じた */
+    }
+    return 0;
+}
+
+/* 担当のログ (系統タグ付き)。olgx(band, "ready", 0) のように使う。 */
+static void olgx(int band, const char *tail, unsigned long v) {
+    char b[96]; int i = 0; const char *p;
+    p = "owner("; while (*p) b[i++] = *p++;
+    b[i++] = band ? 'S' : 'T';
+    p = "): "; while (*p) b[i++] = *p++;
+    while (*tail && i < 92) b[i++] = *tail++;
+    b[i] = 0;
+    lgx(b, v);
+}
+
+static int put_ul(char *out, int i, unsigned long v) {
+    unsigned long d = 1;
+    while (v / d >= 10) d *= 10;
+    while (d) { out[i++] = (char)('0' + (v / d) % 10); d /= 10; }
+    return i;
+}
+
+/* ---- U3 の閉じ処理 (共有ファイル方式。2026-11-14 本人承認) ----
+ * 各担当は自系統の状態を /tmp/nasne-recpt1-owner-<T|S>.state に
+ * 「<pid> <連番> busy|idle」の1行で書き、tmp ファイル + rename で原子的に差し替える。
+ * ファイルが無い = 相手は無セッション扱い。解釈できない内容は busy 扱い (安全側)。
+ * busy と書いたプロセスが既に死んでいたら、その状態は無効として idle 扱いにする
+ * (担当が異常終了しても、古い busy で永久に閉じられなくなる事態を避ける)。 */
+#define OWNER_STATE_T "/tmp/nasne-recpt1-owner-T.state"
+#define OWNER_STATE_S "/tmp/nasne-recpt1-owner-S.state"
+static const char *owner_state_path(int band) { return band ? OWNER_STATE_S : OWNER_STATE_T; }
+
+static void owner_state_write(int band, int busy) {
+    static unsigned long seq = 0;
+    char tmp[64], body[64]; int i = 0, j = 0; long f;
+    const char *p = owner_state_path(band);
+    while (p[i] && i < 52) { tmp[i] = p[i]; i++; }
+    tmp[i++] = '.'; tmp[i++] = (char)('0' + (int)(seq % 10)); tmp[i] = 0;
+    j = put_ul(body, j, (unsigned long)sys3(SYS_getpid, 0, 0, 0));
+    body[j++] = ' ';
+    j = put_ul(body, j, seq); seq++;
+    body[j++] = ' ';
+    if (busy) { body[j++] = 'b'; body[j++] = 'u'; body[j++] = 's'; body[j++] = 'y'; }
+    else { body[j++] = 'i'; body[j++] = 'd'; body[j++] = 'l'; body[j++] = 'e'; }
+    body[j++] = '\n'; body[j] = 0;
+    f = sys3(SYS_open, (long)tmp, 0x301, 0644);	/* MIPS の O_WRONLY(1)|O_CREAT(0x100)|O_TRUNC(0x200)。x86 の値と違うので注意 */
+    if (f < 0) return;
+    sys3(SYS_write, f, (long)body, j);
+    sys3(SYS_close, f, 0, 0);
+    sys3(SYS_rename, (long)tmp, (long)owner_state_path(band), 0);
+}
+
+/* 相手担当の状態を読む。1 = busy、0 = idle (ファイル無し・書き手が死んでいる場合を含む)。 */
+static int owner_state_read_busy(int band) {
+    char b[64]; long f, n, pid = 0; int i = 0;
+    f = sys3(SYS_open, (long)owner_state_path(band), 0, 0);
+    if (f < 0) return 0;
+    n = sys3(SYS_read, f, (long)b, 63);
+    sys3(SYS_close, f, 0, 0);
+    if (n <= 0) return 1;			/* 空 = 書き込み途中とみなして安全側 */
+    b[n] = 0;
+    while (b[i] >= '0' && b[i] <= '9') { pid = pid * 10 + (b[i] - '0'); i++; }
+    if (b[i] != ' ' || pid <= 0) return 1;	/* 解釈不能は busy 扱い */
+    i++;
+    while (b[i] >= '0' && b[i] <= '9') i++;	/* 連番は読み捨て */
+    if (b[i] != ' ') return 1;
+    i++;
+    if (sys3(SYS_kill, pid, 0, 0) < 0) return 0;	/* 書き手が死んでいれば状態は無効 */
+    if (b[i] == 'b') return 1;
+    if (b[i] == 'i') return 0;
+    return 1;
+}
+
+/* 両系統とも無セッションなら、自分の GENERIC を閉じる (U3)。
+ * 判定材料は (1) 相手担当の状態ファイル (2) レガシー排他 (従来プロセス・scan・別インスタンス
+ * のセッション検出) の2つで、閉じる直前にもう一度両方を読み直す (競合ガード)。
+ * (2) は閉じる方向に倒れることは決してない (補助ガード)。閉じるのは開いた担当自身だけ
+ * (設計書 4.8)。アイドル保持に上限は設けないため、条件が成立しない間は保持し続ける。 */
+static void owner_maybe_close_generic(int band) {
+    if (!owner_has_g || !(h_g0 || h_g1) || fd < 0) return;	/* 保持していない */
+    if (owner_state_read_busy(band ^ 1)) return;
+    if (other_sessions_active()) return;
+    msleep(100);					/* 相手が要求を取り出す瞬間との競合を避ける */
+    if (owner_state_read_busy(band ^ 1)) return;	/* 競合ガード: 読み直し */
+    if (other_sessions_active()) return;
+    olgx(band, "both idle, close kept GENERIC", h_g0);
+    clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
+    owner_has_g = 0; h_g0 = h_g1 = 0;
+}
+
+/* U8: 処理完了を親へ知らせる (8バイト: "DONE" + 系統 + 0埋め)。親は在庫数を減らす。 */
+static void owner_send_done(long sock, int band) {
+    unsigned char note[8];
+    note[0] = 'D'; note[1] = 'O'; note[2] = 'N'; note[3] = 'E';
+    note[4] = (unsigned char)band; note[5] = 0; note[6] = 0; note[7] = 0;
+    sys3(SYS_write, sock, (long)note, 8);
+}
+
+/* socketpair に要求が来るのを最大 ms まで待つ。1 = 読める、0 = タイムアウト、-1 = 異常。
+ * タイムアウトのたびに U3 の閉じ判定を行う (「両系統とも無セッション」の成立を検出する機会)。 */
+static int owner_wait_req(long sock, int band, int ms) {
+    unsigned long pfd[2]; long r; unsigned long rev;
+    pfd[0] = (unsigned long)sock; pfd[1] = 0x01;	/* POLLIN */
+    r = sys3(SYS_poll, (long)pfd, 1, ms);
+    if (r < 0) return -1;
+    if (r == 0) { owner_maybe_close_generic(band); return 0; }
+    rev = (pfd[1] >> 16) & 0xffff;			/* revents は上位16ビット */
+    if (rev & 0x01) return 1;
+    if (rev & 0x18) return -1;				/* POLLERR / POLLHUP は recv 側で確定させる */
+    return 0;
+}
+
+/* 担当プロセスの本体 (band: 0 = 地デジ、1 = 衛星)。要求を1件ずつ受け、session() を直列に実行する。
+ * SIGTERM/SIGINT を受けたら、現在のセッションの終了処理 (session 内で term_flag を見る) の後、
+ * または受信待ちの割り込みで、ループを抜けて終了する。 */
+static int owner_main(long sock, int band) {
+    struct owner_req rq; int cfd; int wr;
+    owner_mode = 1; owner_keep_g = 1; logv = 1;		/* 段階2: GENERIC を使い回す */
+    fd = -1;						/* グローバルの初期値は 0 で、「保持中のドライバ fd」の判定 (fd >= 0) が新規プロセスでも真になってしまうため、未オープンを明示する (段階2テスト S6 で実測) */
+    set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
+    owner_state_write(band, 0);
+    olgx(band, "ready", 0);
+    for (;;) {
+        wr = owner_wait_req(sock, band, 2000);
+        if (wr == 0) continue;
+        cfd = -1;
+        if (owner_recv_req(sock, &rq, &cfd) < 0) {
+            olgx(band, term_flag ? "terminate requested" : "channel closed/error, exit", 0);
+            break;
+        }
+        owner_state_write(band, 1);
+        if (term_flag) { sys3(SYS_close, cfd, 0, 0); olgx(band, "terminate before session", 0); owner_state_write(band, 0); break; }
+        if (owner_peer_gone(cfd)) { olgx(band, "skip request, peer already gone", rq.freq_val); sys3(SYS_close, cfd, 0, 0); owner_state_write(band, 0); owner_send_done(sock, band); continue; }
+        if (rq.rsv0 && (unsigned long)(now_ms() - rq.rsv0) > OWNER_QUEUE_WAIT_MS) {	/* U8: キュー待ち上限 */
+            olgx(band, "queue wait exceeded, answer 503", rq.freq_val);
+            http_status(cfd, "HTTP/1.0 503 Service Unavailable", "tuner busy\n");
+            sys3(SYS_close, cfd, 0, 0); owner_state_write(band, 0); owner_send_done(sock, band); continue;
+        }
+        si_only = (int)rq.si;
+        olgx(band, "session dispatch freq", rq.freq_val);
+        session(band, rq.freq_val, rq.ts_id, rq.want_sid, rq.dur_ms, cfd, 1);
+        sys3(SYS_close, cfd, 0, 0);
+        owner_state_write(band, 0);
+        owner_send_done(sock, band);
+        if (term_flag) { olgx(band, "terminate after session", 0); break; }
+        owner_maybe_close_generic(band);
+    }
+    /* 担当の終了処理: 保持中の GENERIC は、開いた担当自身が閉じる (設計書 4.8。親や他プロセスには閉じられない) */
+    if (owner_has_g && (h_g0 || h_g1) && fd >= 0) {
+        olgx(band, "close kept GENERIC", h_g0);
+        clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
+        owner_has_g = 0; h_g0 = h_g1 = 0;
+    }
+    if (fd >= 0) { sys3(SYS_close, fd, 0, 0); fd = -1; }
+    sys3(SYS_unlink, (long)owner_state_path(band), 0, 0);
+    sys3(SYS_close, sock, 0, 0);
+    olgx(band, "exit", 0);
+    return 0;
+}
+
+/* 担当プロセスを (再) 起動する。成功で 0。 */
+static int owner_start(int band) {
+    long sv[2]; long pid;
+    if (sys6(SYS_socketpair, 1, 2, 0, (long)sv, 0, 0) < 0) { olgx(band, "socketpair failed", 0); return -1; }
+    pid = sys3(SYS_fork, 0, 0, 0);
+    if (pid == 0) {
+        long i;
+        /* 親から継承した fd (listen ソケット、振り分け中の接続 fd、旧 socketpair 等) を全て閉じる。
+         * 特に再 fork のとき、振り分け中の接続 fd を担当が継承したままだと、その接続が担当側で
+         * 閉じられず、クライアントが EOF を受け取れない (段階2テスト S6 で実測: データは揃うのに
+         * 応答がタイムアウトまで張り付いた)。担当が要るのは自分の socketpair 側だけ。 */
+        for (i = 3; i < 256; i++) if (i != sv[1]) sys3(SYS_close, i, 0, 0);
+        sys3(SYS_exit, owner_main(sv[1], band), 0, 0);
+    }
+    sys3(SYS_close, sv[1], 0, 0);
+    if (pid < 0) { sys3(SYS_close, sv[0], 0, 0); olgx(band, "fork failed", 0); return -1; }
+    if (owners[band].sock >= 0) sys3(SYS_close, owners[band].sock, 0, 0);
+    owners[band].sock = sv[0]; owners[band].pid = pid;
+    owners[band].inflight = 0; owners[band].dbuf = 0; owners[band].dlen = 0;	/* 再起動した担当のキューは空。在庫も数え直す */
+    olgx(band, "started pid", (unsigned long)pid);
+    return 0;
+}
+static int owner_alive(int band) {
+    if (owners[band].pid <= 0 || owners[band].sock < 0) return 0;
+    return sys3(SYS_kill, owners[band].pid, 0, 0) >= 0;
+}
+
+/* U8: 担当からの完了通知を排出して在庫数を減らす。ブロックしない。
+ * 通知は8バイト単位だが、途中から読んでも復帰できるよう、バイト列として
+ * マジック "DONE" の並びを走査して数える。 */
+static void owner_drain_notes(int band) {
+    struct owner_slot *o = &owners[band];
+    unsigned char buf[64]; long n, i;
+    if (o->sock < 0) return;
+    for (;;) {
+        n = sys6(SYS_recv, o->sock, (long)buf, 64, 0x40, 0, 0);	/* MSG_DONTWAIT */
+        if (n <= 0) return;
+        for (i = 0; i < n; i++) {
+            o->dbuf = (o->dbuf << 8) | buf[i]; o->dlen++;
+            if (o->dlen >= 4) {
+                if (o->dbuf == OWNER_NOTE_MAGIC) { if (o->inflight > 0) o->inflight--; o->dlen = 0; o->dbuf = 0; }
+                else { o->dbuf &= 0xffffffUL; o->dlen = 3; }
+            }
+        }
+    }
+}
+
+/* 親側のシグナル: 終了要求をフラグで受け、accept ループで担当へ伝達する。
+ * SIGPIPE は無視する (担当への sendmsg の失敗で親が死なないように)。 */
+static void on_parent_sig(int s) { (void)s; parent_term = 1; }
+static void set_parent_sig(void) {
+    unsigned long sa[6];
+    sa[0] = 0; sa[1] = (unsigned long)on_parent_sig; sa[2] = sa[3] = sa[4] = sa[5] = 0;
+    sys6(SYS_rt_sigaction, SIGINT_, (long)sa, 0, 16, 0, 0);
+    sys6(SYS_rt_sigaction, SIGTERM_, (long)sa, 0, 16, 0, 0);
+    sa[1] = 1;	/* SIG_IGN */
+    sys6(SYS_rt_sigaction, SIGPIPE_, (long)sa, 0, 16, 0, 0);
+}
+
+/* 親側の振り分け: この接続を担当へ渡したら 1 (親は接続 fd を閉じてよい)、
+ * 従来方式 (子プロセス) で処理すべきなら 0、担当の在庫が上限 (U8) で親がその場で
+ * 503 を返すべきなら -1 を返す。担当が死んでいたら再起動を試み、それでも送れなければ
+ * 0 (従来方式へフォールバック) にする。dual 時は担当と従来方式の子が系統ロックで
+ * 排他されるため、フォールバックしても同時に走ることはない (段階1・2 と同じ)。 */
+static int route_to_owner(long c, const char *req) {
+    const char *p; char ch_buf[32]; int is_sat = 0, siv = 0, tries, band;
+    unsigned long freq_val = 0, ts_id = 0, sid = 0, dur = 0;
+    struct owner_req rq;
+    if (!(req[0] == 'G' && req[1] == 'E' && req[2] == 'T' && req[3] == ' ')) return 0;
+    p = req + 4;
+    if (*p == '/') p++;
+    if (starts(p, "status") || starts(p, "playlist") || starts(p, "scan")) return 0;	/* U5/U7: SI 巡回以外の管理系は従来方式のまま。scan は担当と系統ロックで競合し得るが従来と同じ */
+    if (starts(p, "tuner/")) p += 6;
+    if (!parse_tuner_target(p, ch_buf, &is_sat, &freq_val, &ts_id, &sid, &dur, &siv)) return 0;	/* 解釈不能は子が 400 を返す */
+    band = is_sat ? 1 : 0;
+    owner_drain_notes(band);
+    if (owners[band].inflight >= OWNER_QUEUE_MAX) { olgx(band, "queue full, parent answers 503", freq_val); return -1; }
+    rq.magic = OWNER_MSG_MAGIC; rq.freq_val = freq_val; rq.ts_id = ts_id; rq.want_sid = sid;
+    rq.dur_ms = dur; rq.si = (unsigned long)siv; rq.rsv0 = now_ms(); rq.rsv1 = 0;	/* rsv0 = 投入時刻 (U8 の待ち上限判定用) */
+    for (tries = 0; tries < 2; tries++) {
+        if (!owner_alive(band)) { owners[band].pid = -1; if (owner_start(band) < 0) return 0; }
+        if (owner_send_req(owners[band].sock, (int)c, &rq) == 0) { owners[band].inflight++; olgx(band, "request routed", freq_val); return 1; }
+        olgx(band, "send failed, will respawn", 0);
+        owners[band].pid = -1;
+    }
+    return 0;
+}
+
 static int listen_port(unsigned long port) {
     long ls, one = 1; unsigned char sa[16]; unsigned long sg[6];
     int i;
     /* SIGCHLD(MIPSは18)を無視して子プロセスを回収 */
     sg[0] = 0; sg[1] = 1; sg[2] = sg[3] = sg[4] = sg[5] = 0; sys6(SYS_rt_sigaction, 18, (long)sg, 0, 16, 0, 0);
-    ls = sys3(4183, 2, 2, 0);                                                    /* socket(AF_INET, SOCK_STREAM(MIPS=2), 0) */
+    g_listen_fd = ls = sys3(4183, 2, 2, 0);                                                    /* socket(AF_INET, SOCK_STREAM(MIPS=2), 0) */
     if (ls < 0) { err("socket失敗\n"); return 1; }
     sys6(4181, ls, 0xffff, 4, (long)&one, 4, 0);                                  /* SOL_SOCKET(MIPS=0xffff), SO_REUSEADDR(=4) */
     for (i = 0; i < 16; i++) sa[i] = 0;
@@ -1390,16 +1735,59 @@ static int listen_port(unsigned long port) {
     if (sys3(4169, ls, (long)sa, 16) < 0) { err("bind失敗\n"); return 1; }
     sys3(4174, ls, 8, 0);
     err("nasne-recpt1: listening on port "); errhex(port); err(" (hex)\n");
+    if (dual_mode) {			/* 担当プロセス方式 (段階3: 両系統とも担当を起動する) */
+        int b;
+        for (b = 0; b < 2; b++) { owners[b].pid = -1; owners[b].sock = -1; owners[b].inflight = 0; owners[b].dbuf = 0; owners[b].dlen = 0; }
+        set_parent_sig();
+        owner_start(0); owner_start(1);
+    }
     for (;;) {
         long c = sys3(4168, ls, 0, 0), pid;
+        char pre_req[1024]; long pre_n = -1;
+        if (parent_term) {		/* 終了要求: 両担当へ SIGTERM を伝達し、両担当の終了を待ってから終わる (設計書 4.8) */
+            int w, b, any;
+            for (b = 0; b < 2; b++) if (owners[b].pid > 0) sys3(SYS_kill, owners[b].pid, SIGTERM_, 0);
+            for (w = 0; w < 50; w++) {
+                any = 0;
+                for (b = 0; b < 2; b++) if (owner_alive(b)) any = 1;
+                if (!any) break;
+                msleep(100);
+            }
+            sys3(SYS_close, ls, 0, 0);
+            err("nasne-recpt1: terminated\n");
+            return 0;
+        }
         if (c < 0) { msleep(100); continue; }
+        if (dual_mode) {		/* 親が先にリクエストを読んで振り分ける (チューナー要求は担当へ、それ以外は従来の子へ) */
+            unsigned long pfd[2]; long pr; int rt;
+            owner_drain_notes(0); owner_drain_notes(1);
+            /* U8: 先読みは poll で 3 秒だけ待つ。何も送ってこない接続で親が無制限に
+             * 固まると、終了処理も他の接続の振り分けも止まってしまう (段階1・2 の持ち越し)。 */
+            pfd[0] = (unsigned long)c; pfd[1] = 0x19;
+            pr = sys3(SYS_poll, (long)pfd, 1, 3000);
+            if (pr <= 0) { sys3(SYS_close, c, 0, 0); continue; }
+            {
+                long n = sys3(SYS_read, c, (long)pre_req, sizeof(pre_req) - 1);
+                if (n <= 0) { sys3(SYS_close, c, 0, 0); continue; }
+                pre_req[n] = 0; pre_n = n;
+            }
+            rt = route_to_owner(c, pre_req);
+            if (rt > 0) { sys3(SYS_close, c, 0, 0); continue; }
+            if (rt < 0) {		/* U8: 担当の在庫上限。親が 503 を返して閉じる */
+                http_status(c, "HTTP/1.0 503 Service Unavailable", "tuner busy\n");
+                sys3(SYS_close, c, 0, 0); continue;
+            }
+        }
         pid = sys3(SYS_fork, 0, 0, 0);
         if (pid == 0) {
             char req[1024]; long n; unsigned long ch = 0, sid = 0, sec = 0; char *p;
             sys3(SYS_close, ls, 0, 0);
-            n = sys3(SYS_read, c, (long)req, sizeof(req) - 1);
-            if (n <= 0) sys3(SYS_exit, 0, 0, 0);
-            req[n] = 0;
+            if (pre_n >= 0) { long k; for (k = 0; k < pre_n; k++) req[k] = pre_req[k]; req[pre_n] = 0; n = pre_n; }
+            else {
+                n = sys3(SYS_read, c, (long)req, sizeof(req) - 1);
+                if (n <= 0) sys3(SYS_exit, 0, 0, 0);
+                req[n] = 0;
+            }
             if (!(req[0] == 'G' && req[1] == 'E' && req[2] == 'T' && req[3] == ' ')) { http_status(c, "HTTP/1.0 400 Bad Request", "GET only\n"); sys3(SYS_exit, 0, 0, 0); }
             p = req + 4;
             if (*p == '/') p++;
@@ -1433,33 +1821,14 @@ static int listen_port(unsigned long port) {
             }
             if (starts(p, "tuner/")) p += 6;                                   /* /tuner/<ch>?sid=0xNNNN&sec=N  または /<ch>?... */
             {
-                char ch_buf[32]; int ci = 0; int is_sat = 0; unsigned long freq_val = 0, ts_id = 0, parsed_ts_id = 0;
-                while (*p && *p != '?' && *p != '&' && *p != ' ' && *p != '\r' && *p != '\n' && ci < 31) {
-                    ch_buf[ci++] = *p++;
-                }
-                ch_buf[ci] = 0;
-                while (*p == '?' || *p == '&') {
-                    p++;
-                    if (starts(p, "sid=")) {
-                        p += 4;
-                        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { sid = sid * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
-                        else while (*p >= '0' && *p <= '9') { sid = sid * 10 + (*p - '0'); p++; }
-                    } else if (starts(p, "tsid=")) {
-                        p += 5;
-                        ts_id = 0;
-                        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { p += 2; while ((*p >= '0' && *p <= '9') || ((*p | 32) >= 'a' && (*p | 32) <= 'f')) { ts_id = ts_id * 16 + (*p <= '9' ? *p - '0' : (*p | 32) - 'a' + 10); p++; } }
-                        else while (*p >= '0' && *p <= '9') { ts_id = ts_id * 10 + (*p - '0'); p++; }
-                    } else if (starts(p, "sec=")) { p += 4; while (*p >= '0' && *p <= '9') { sec = sec * 10 + (*p - '0'); p++; } }
-                    else if (starts(p, "si=")) { p += 3; si_only = (*p == '1'); while (*p >= '0' && *p <= '9') p++; }
-                    else break;
-                }
-                if (!parse_channel_str(ch_buf, &is_sat, &freq_val, &parsed_ts_id)) {
+                char ch_buf[32]; int is_sat = 0, siv = 0; unsigned long freq_val = 0, ts_id = 0, sid2 = 0, dur = 0;
+                if (!parse_tuner_target(p, ch_buf, &is_sat, &freq_val, &ts_id, &sid2, &dur, &siv)) {
                     http_status(c, "HTTP/1.0 400 Bad Request", "channel must be UHF 13-62 (e.g. 31), BS<odd 1-23>[_<slot>] (e.g. BS15_0 or BS1), or CS<even 2-24> (e.g. CS2). Mirakurun BS channel names 101-256 are not supported: scan with useSubCh=1 (BS01_0 style). Add ?sid=0x<serviceId>.\n");
                     sys3(SYS_exit, 0, 0, 0);
                 }
-                if (!ts_id) ts_id = parsed_ts_id;
+                si_only = siv;
                 set_sig(SIGINT_); set_sig(SIGTERM_); set_sig(SIGPIPE_);
-                session(is_sat, freq_val, ts_id, sid, sec * 1000, (int)c, 1);
+                session(is_sat, freq_val, ts_id, sid2, dur, (int)c, 1);
                 sys3(SYS_close, c, 0, 0);
                 sys3(SYS_exit, 0, 0, 0);
             }
