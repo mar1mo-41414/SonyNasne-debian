@@ -475,9 +475,59 @@ static int open_streams(struct svc *s, int is_sat) {
     if (r < 0) bcas_unlock();      /* 成功時は、最初の映像/音声のパケットが出るまで(最大 BCAS_HOLD_MS)ロックを持ち続ける(session() で解放) */
     return r;
 }
+/* ---- GENERIC を 1 本にして両方の担当で共有する(試作) ----
+ * もう一方の系統が受信している最中に ACTIVATE すると、SendStream の中で戻らなくなることがある(Issue #12 の課題①。docs/11)。
+ * 系統ごとに GENERIC を持つと、片方の受信中にもう片方が ACTIVATE する場面が残るので、待ち受けの親が起動時(まだ何も
+ * 受信していないとき)に GENERIC を 1 本だけ開いて ACTIVATE し、閉じずに持ち続ける。担当は fork のときに受け継いだ
+ * ハンドルの値(sg_h0/sg_h1)で復号ストリームを開くだけで、ACTIVATE も GENERIC の開閉もしない。
+ * (別のプロセス・別の fd から ACTIVATE 済みのハンドルで復号できることは docs/11「GENERIC ストリームの使い回し」で確認済み)
+ * 開けなかったとき(ドライバの準備がまだ、など)は sg_h0/sg_h1 が 0 のままで、従来どおり担当が自分の GENERIC を使う。 */
+static unsigned long sg_h0, sg_h1;
+static long sg_fd = -1;
+static void single_generic_open(void) {
+    long save = fd; unsigned long rv, i; int tries;
+    sg_fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
+    if (sg_fd < 0) { lgx("single generic: driver open failed", 0); return; }
+    fd = sg_fd;
+    if (!fw_alive()) { lgx("single generic: fw not alive", 0); goto fail; }
+    clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
+    rv = ioc(ob_g, 0x208, 0x2e, 2000);
+    if (rv != 1) { lgx("single generic: open GENERIC rv", rv); goto fail; }
+    sg_h0 = ob_g[0xa4 / 4]; sg_h1 = ob_g[0xa8 / 4];
+    for (tries = 0; tries < 5; tries++) {
+        if (tries) msleep(500 * tries);
+        clr(tb, 0x1d0 / 4 + 2);
+        tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xac / 4] = 0; tb[0xb0 / 4] = 0x10; tb[0xc4 / 4] = (unsigned long)dummy; tb[0xcc / 4] = 0;
+        tb[0xd4 / 4] = 0x400; tb[0xd8 / 4] = 1; tb[0xdc / 4] = 1;
+        rv = ioc(tb, 0x1d0, 0x13, 2000);
+        if (rv == 1) break;
+        lgx("single generic: ACTIVATE rv", rv);
+    }
+    if (rv != 1) {
+        clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
+        sg_h0 = sg_h1 = 0; goto fail;
+    }
+    for (tries = 0, i = 0; tries < 6; tries++) {
+        clr(rb, 0x230 / 4);
+        rb[0xa4 / 4] = sg_h0; rb[0xa8 / 4] = sg_h1; rb[0xac / 4] = 0; rb[0xb0 / 4] = 0x10; rb[0xb4 / 4] = (unsigned long)dummy; rb[0xbc / 4] = sizeof(dummy);
+        if (ioc(rb, 0x230, 0x14, 1000) == 1 && (rb[0x130 / 4] & 0x400)) { i = 1; break; }
+        if (rb[0x130 / 4] & 0x400) { i = 1; break; }
+    }
+    if (!i) err("警告: B-CAS活性化イベントを確認できないまま続行\n");
+    lgx("single generic: opened and activated by parent", sg_h0);
+    fd = save;
+    return;
+fail:
+    sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; fd = save;
+}
 static int open_streams_inner(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
+    if (owner_mode && (sg_h0 || sg_h1)) {     /* 親が持つ 1 本を使う。ACTIVATE も GENERIC の開閉もしない */
+        h_g0 = sg_h0; h_g1 = sg_h1; owner_has_g = 0;
+        lgx("open_streams: single shared GENERIC (parent), skip ACTIVATE", h_g0);
+        goto activated;
+    }
     if (owner_keep_g && owner_has_g) {
         lgx("open_streams: GENERIC reuse by owner", h_g0);	/* 段階2: 開き直さず、保持中の GENERIC に対して ACTIVATE から入る */
     } else {
@@ -507,6 +557,7 @@ static int open_streams_inner(struct svc *s, int is_sat) {
         if (rb[0x130 / 4] & 0x400) { i = 1; break; }
     }
     if (!i) err("警告: B-CAS活性化イベントを確認できないまま続行\n");
+activated: ;
     /* 復号ストリーム: 純正の既定値(映像パススルー設定)+番組ごとのPID */
     int na = s->num_audio > 0 ? s->num_audio : 1;
     int a;
@@ -1739,6 +1790,7 @@ static int listen_port(unsigned long port) {
         int b;
         for (b = 0; b < 2; b++) { owners[b].pid = -1; owners[b].sock = -1; owners[b].inflight = 0; owners[b].dbuf = 0; owners[b].dlen = 0; }
         set_parent_sig();
+        single_generic_open();		/* 試作: GENERIC を 1 本にして両方の担当で共有する(担当を起動する前に。担当はハンドルの値を受け継ぐ) */
         owner_start(0); owner_start(1);
     }
     for (;;) {
