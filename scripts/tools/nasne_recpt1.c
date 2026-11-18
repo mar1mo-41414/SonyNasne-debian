@@ -500,6 +500,7 @@ static volatile int sg_regen_flag;			/* 親: 担当から SIGUSR1 を受けた *
 static int sg_using, sg_regen_tried;			/* 担当: このセッションは共有の GENERIC を使っている / 作り直しを頼んだ */
 static unsigned long sg_av_ms;
 static int other_band_busy(int is_sat);
+static int dual_mode;
 static void sg_file_write(void) {
     unsigned long v[4]; long f;
     v[0] = sg_h0; v[1] = sg_h1; v[2] = (unsigned long)sys3(SYS_getpid, 0, 0, 0); v[3] = sg_no;
@@ -544,19 +545,31 @@ static int sg_activate(void) {		/* 親: いまの fd で GENERIC を開いて AC
     if (!i) err("警告: B-CAS活性化イベントを確認できないまま続行\n");
     return 0;
 }
+/* もう一方の系統が受信している最中に ACTIVATE すると、SendStream の中で戻らなくなることがある。作り直し(閉じて開き直して ACTIVATE)は、
+ * 頼んだ系統のほかに受信している系統が無いときだけ行う。頼んだ系統は自分のロックを持っているので、2 系統とも使用中なら断る
+ * (担当は頼む前にも確かめるが、その後でもう一方が始まった場合の備え)。まだ共有の GENERIC が無いときに新しく作るのは、
+ * どの系統も受信していないときだけ。(2026-11-19、nasne2 で、もう一方の系統が raw を受信中に作り直して、親が D 状態になった) */
 static void sg_check(void) {		/* 親: 起動時・要求を担当へ渡す前・SIGUSR1 のあとに呼ぶ。共有の GENERIC が無いか壊れていれば(作り)直す */
-    long b, save = fd;
+    long b, save = fd; int rebuilding = 0;
     if (sg_fd >= 0) {
         fd = sg_fd;
         b = sys3(SYS_open, (long)SG_BAD, 0, 0);
         if (b < 0 && fw_alive()) { fd = save; return; }		/* 使える */
-        if (b >= 0) sys3(SYS_close, b, 0, 0);
+        if (b >= 0) {
+            sys3(SYS_close, b, 0, 0);
+            if (other_band_busy(0) && other_band_busy(1)) {     /* 2 系統とも受信中: 作り直さない */
+                lgx("single generic: both bands busy, do not rebuild", sg_h0);
+                sys3(SYS_unlink, (long)SG_BAD, 0, 0); fd = save; return;
+            }
+        }
+        rebuilding = 1;
         lgx(b >= 0 ? "single generic: rebuild (requested by a session)" : "single generic: rebuild (fw not alive)", sg_h0);
         sys3(SYS_unlink, (long)SG_FILE, 0, 0);
         if (fw_alive()) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); }
         sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; sg_h0 = sg_h1 = 0;
     }
     sys3(SYS_unlink, (long)SG_BAD, 0, 0);
+    if (!rebuilding && (other_band_busy(0) || other_band_busy(1))) { fd = save; return; }     /* 新しく作るのは、どの系統も受信していないときだけ。次の要求の前にまた試す */
     sg_fd = fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
     if (sg_fd < 0 || !fw_alive()) {		/* ファームが止まっていれば、fd を持たない(担当がドライバを入れ直せるように)。次の要求の前にまた試す */
         lgx("single generic: driver or fw not available, not sharing this time", 0);
@@ -671,7 +684,9 @@ activated: ;
     rv = ioc(ob_sec, 0x9ec, 0x30, 2000);
     lgx("open_streams SECUREDTS rv", rv);
     if (rv != 1) { err("復号ストリーム(OPEN_SECUREDTS)を開けない rv="); errhex(rv); err("\n");
-        if (sg_using && !sg_regen_tried) { sg_regen_tried = 1; if (sg_regen("OPEN_SECUREDTS")) return open_streams_inner(s, is_sat); }
+        if (sg_using && !sg_regen_tried) { sg_regen_tried = 1;
+            if (dual_mode && other_band_busy(is_sat)) err("もう一方の系統が受信中なので、共有の GENERIC を作り直さない\n");     /* 受信中の ACTIVATE を避ける */
+            else if (sg_regen("OPEN_SECUREDTS")) return open_streams_inner(s, is_sat); }
         return -1;
     }
     h_sec0 = ob_sec[0xa4 / 4]; h_sec1 = ob_sec[0xa8 / 4];
@@ -1126,6 +1141,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
         if (sg_using && !av_first && !sg_regen_tried && now_ms() - t_start >= SG_REACT_MS) {
             sg_regen_tried = 1;
             if (sg_other_av_ok(is_sat)) err("映像・音声が出ないが、もう一方の系統は同じ GENERIC で映っているので、作り直さない\n");
+            else if (dual_mode && other_band_busy(is_sat)) err("映像・音声が出ないが、もう一方の系統が受信中なので、作り直さない\n");     /* raw・SI だけの受信でも、受信中の ACTIVATE を避ける */
             else if (sg_regen("映像・音声が出ない")) {
                 clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_sec0; tb[0xa8 / 4] = h_sec1; ioc(tb, 0xb4, 0x11, 5000); h_sec0 = h_sec1 = 0; prev_sec = 0xff;
                 if (open_streams_inner(s, is_sat) < 0) break;
