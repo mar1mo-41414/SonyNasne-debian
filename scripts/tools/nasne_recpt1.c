@@ -477,22 +477,50 @@ static int open_streams(struct svc *s, int is_sat) {
 }
 /* ---- GENERIC を 1 本にして両方の担当で共有する(試作) ----
  * もう一方の系統が受信している最中に ACTIVATE すると、SendStream の中で戻らなくなることがある(Issue #12 の課題①。docs/11)。
- * 系統ごとに GENERIC を持つと、片方の受信中にもう片方が ACTIVATE する場面が残るので、待ち受けの親が起動時(まだ何も
- * 受信していないとき)に GENERIC を 1 本だけ開いて ACTIVATE し、閉じずに持ち続ける。担当は fork のときに受け継いだ
- * ハンドルの値(sg_h0/sg_h1)で復号ストリームを開くだけで、ACTIVATE も GENERIC の開閉もしない。
- * (別のプロセス・別の fd から ACTIVATE 済みのハンドルで復号できることは docs/11「GENERIC ストリームの使い回し」で確認済み)
- * 開けなかったとき(ドライバの準備がまだ、など)は sg_h0/sg_h1 が 0 のままで、従来どおり担当が自分の GENERIC を使う。 */
-static unsigned long sg_h0, sg_h1;
-static long sg_fd = -1;
-static void single_generic_open(void) {
-    long save = fd; unsigned long rv, i; int tries;
-    sg_fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
-    if (sg_fd < 0) { lgx("single generic: driver open failed", 0); return; }
-    fd = sg_fd;
-    if (!fw_alive()) { lgx("single generic: fw not alive", 0); goto fail; }
+ * 系統ごとに GENERIC を持つと、片方の受信中にもう片方が ACTIVATE する場面が残るので、待ち受けの親が、まだ何も受信して
+ * いないときに GENERIC を 1 本だけ開いて ACTIVATE し、閉じずに持ち続ける。担当は SG_FILE のハンドルで復号ストリームを
+ * 開くだけで、ACTIVATE も GENERIC の開閉もしない(別のプロセス・別の fd から ACTIVATE 済みのハンドルで復号できることは
+ * docs/11「GENERIC ストリームの使い回し」で確認済み)。親が持っていないとき(ドライバの準備がまだ、など)は、従来どおり
+ * 担当が自分の GENERIC を使う。
+ * 作り直し(fork の --shared-generic から移植): どれか 1 つの GENERIC を閉じるとカードの活性化が全体で失われ、その GENERIC は
+ * ACTIVATE し直しても戻らない。担当は、SG_REACT_MS たっても映像・音声が出ない(または OPEN_SECUREDTS が失敗した)とき、
+ * SG_BAD を作って親に SIGUSR1 を送る。親は GENERIC を閉じて開き直し、ACTIVATE して、世代を進めて SG_FILE を書き直す。
+ * 担当は新しい世代を待って、復号ストリームを開き直す。ただし、もう一方の系統が同じ世代で今映っていれば、GENERIC は
+ * 壊れていない(電波・契約・局の組み合わせなど別の原因)とみて作り直さない(作り直すと映っている他方まで止まるため)。
+ * 親は、要求を担当へ渡す前にも点検し、ファームが止まっていれば fd を閉じる(担当がドライバを入れ直せるように)。 */
+#define SIGUSR1_	16		/* MIPS */
+#define SG_FILE		"/tmp/nasne-recpt1-sg"		/* ハンドル 2 つ・親の PID・世代(unsigned long × 4) */
+#define SG_BAD		"/tmp/nasne-recpt1-sg.bad"	/* 担当 → 親: 作り直してほしい */
+#define SG_AV_T		"/tmp/nasne-recpt1-sg-av-T"	/* 映像・音声が流れている間、1 秒おきに「時刻・世代」を書く */
+#define SG_AV_S		"/tmp/nasne-recpt1-sg-av-S"
+#define SG_REACT_MS	3000
+static unsigned long sg_h0, sg_h1, sg_pid, sg_no;	/* 親: 自分が持つもの。担当: SG_FILE から読んだもの */
+static long sg_fd = -1;					/* 親が GENERIC を開いた fd */
+static volatile int sg_regen_flag;			/* 親: 担当から SIGUSR1 を受けた */
+static int sg_using, sg_regen_tried;			/* 担当: このセッションは共有の GENERIC を使っている / 作り直しを頼んだ */
+static unsigned long sg_av_ms;
+static int other_band_busy(int is_sat);
+static void sg_file_write(void) {
+    unsigned long v[4]; long f;
+    v[0] = sg_h0; v[1] = sg_h1; v[2] = (unsigned long)sys3(SYS_getpid, 0, 0, 0); v[3] = sg_no;
+    f = sys3(SYS_open, (long)SG_FILE ".tmp", 0x301, 0644);	/* MIPS の O_WRONLY|O_CREAT|O_TRUNC */
+    if (f < 0) return;
+    sys3(SYS_write, f, (long)v, sizeof(v)); sys3(SYS_close, f, 0, 0);
+    sys3(SYS_rename, (long)SG_FILE ".tmp", (long)SG_FILE, 0);
+}
+static int sg_file_read(void) {		/* 親が生きていて共有の GENERIC を持っていれば、sg_h0/sg_h1/sg_pid/sg_no を更新して 1 */
+    unsigned long v[4]; long f = sys3(SYS_open, (long)SG_FILE, 0, 0), n;
+    if (f < 0) return 0;
+    n = sys3(SYS_read, f, (long)v, sizeof(v)); sys3(SYS_close, f, 0, 0);
+    if (n != sizeof(v) || !(v[0] || v[1]) || sys3(SYS_kill, (long)v[2], 0, 0) < 0) return 0;
+    sg_h0 = v[0]; sg_h1 = v[1]; sg_pid = v[2]; sg_no = v[3];
+    return 1;
+}
+static int sg_activate(void) {		/* 親: いまの fd で GENERIC を開いて ACTIVATE する。成功で 0 */
+    unsigned long rv, i; int tries;
     clr(ob_g, 0x208 / 4 + 2); ob_g[0xac / 4] = 0x400; ob_g[0xb0 / 4] = 0x1000;
     rv = ioc(ob_g, 0x208, 0x2e, 2000);
-    if (rv != 1) { lgx("single generic: open GENERIC rv", rv); goto fail; }
+    if (rv != 1) { lgx("single generic: open GENERIC rv", rv); return -1; }
     sg_h0 = ob_g[0xa4 / 4]; sg_h1 = ob_g[0xa8 / 4];
     for (tries = 0; tries < 5; tries++) {
         if (tries) msleep(500 * tries);
@@ -505,7 +533,7 @@ static void single_generic_open(void) {
     }
     if (rv != 1) {
         clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000);
-        sg_h0 = sg_h1 = 0; goto fail;
+        sg_h0 = sg_h1 = 0; return -1;
     }
     for (tries = 0, i = 0; tries < 6; tries++) {
         clr(rb, 0x230 / 4);
@@ -514,17 +542,68 @@ static void single_generic_open(void) {
         if (rb[0x130 / 4] & 0x400) { i = 1; break; }
     }
     if (!i) err("警告: B-CAS活性化イベントを確認できないまま続行\n");
+    return 0;
+}
+static void sg_check(void) {		/* 親: 起動時・要求を担当へ渡す前・SIGUSR1 のあとに呼ぶ。共有の GENERIC が無いか壊れていれば(作り)直す */
+    long b, save = fd;
+    if (sg_fd >= 0) {
+        fd = sg_fd;
+        b = sys3(SYS_open, (long)SG_BAD, 0, 0);
+        if (b < 0 && fw_alive()) { fd = save; return; }		/* 使える */
+        if (b >= 0) sys3(SYS_close, b, 0, 0);
+        lgx(b >= 0 ? "single generic: rebuild (requested by owner)" : "single generic: rebuild (fw not alive)", sg_h0);
+        sys3(SYS_unlink, (long)SG_FILE, 0, 0);
+        if (fw_alive()) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); }
+        sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; sg_h0 = sg_h1 = 0;
+    }
+    sys3(SYS_unlink, (long)SG_BAD, 0, 0);
+    sg_fd = fd = sys3(SYS_open, (long)"/dev/vixs/xcodedrv", 2, 0);
+    if (sg_fd < 0 || !fw_alive()) {		/* ファームが止まっていれば、fd を持たない(担当がドライバを入れ直せるように)。次の要求の前にまた試す */
+        lgx("single generic: driver or fw not available, not sharing this time", 0);
+        if (sg_fd >= 0) sys3(SYS_close, sg_fd, 0, 0);
+        sg_fd = -1; fd = save; return;
+    }
+    bcas_lock();
+    if (sg_activate() < 0) { bcas_unlock(); sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; fd = save; return; }
+    bcas_unlock();
+    sg_no++; sg_file_write();
     lgx("single generic: opened and activated by parent", sg_h0);
+    lgx("single generic: generation", sg_no);
     fd = save;
-    return;
-fail:
-    sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; fd = save;
+}
+static void on_sg_usr1(int s) { (void)s; sg_regen_flag = 1; }
+static int sg_regen(const char *why) {	/* 担当: 親に作り直してもらい、新しい世代を待つ。変わったら 1 */
+    unsigned long old = sg_no, w; long b;
+    err("共有の GENERIC が使えない: "); err(why); err("。作り直してもらう\n");
+    bcas_unlock();				/* 親が ACTIVATE するときに B-CAS のロックを取る */
+    b = sys3(SYS_open, (long)SG_BAD, 0x100 | 1, 0644);
+    if (b >= 0) sys3(SYS_close, b, 0, 0);
+    if (sg_pid) sys3(SYS_kill, (long)sg_pid, SIGUSR1_, 0);
+    for (w = 0; w < 5000 && !stop_flag; w += 100) { msleep(100); if (sg_file_read() && sg_no != old) { lgx("single generic: new handle", sg_h0); return 1; } }
+    lgx("single generic: no new handle", 0);
+    return 0;
+}
+static void sg_av_beat(int is_sat) {
+    unsigned long v[2], t = now_ms(); long f;
+    if (!sg_using || (sg_av_ms && t - sg_av_ms < 1000)) return;
+    sg_av_ms = t; v[0] = t; v[1] = sg_no;
+    f = sys3(SYS_open, (long)(is_sat ? SG_AV_S : SG_AV_T), 0x301, 0644);
+    if (f < 0) return;
+    sys3(SYS_write, f, (long)v, sizeof(v)); sys3(SYS_close, f, 0, 0);
+}
+static int sg_other_av_ok(int is_sat) {	/* もう一方の系統が、同じ世代の共有の GENERIC で、2 秒以内に映像・音声を出していれば 1 */
+    unsigned long v[2]; long f, n;
+    if (!sg_using || !other_band_busy(is_sat)) return 0;
+    f = sys3(SYS_open, (long)(is_sat ? SG_AV_T : SG_AV_S), 0, 0);
+    if (f < 0) return 0;
+    n = sys3(SYS_read, f, (long)v, sizeof(v)); sys3(SYS_close, f, 0, 0);
+    return n == sizeof(v) && now_ms() - v[0] < 2000 && v[1] == sg_no;
 }
 static int open_streams_inner(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
-    if (owner_mode && (sg_h0 || sg_h1)) {     /* 親が持つ 1 本を使う。ACTIVATE も GENERIC の開閉もしない */
-        h_g0 = sg_h0; h_g1 = sg_h1; owner_has_g = 0;
+    if (owner_mode && sg_file_read()) {     /* 親が持つ 1 本を使う。ACTIVATE も GENERIC の開閉もしない */
+        sg_using = 1; h_g0 = sg_h0; h_g1 = sg_h1; owner_has_g = 0;
         lgx("open_streams: single shared GENERIC (parent), skip ACTIVATE", h_g0);
         goto activated;
     }
@@ -589,7 +668,10 @@ activated: ;
     set(0x964, 0x1e8480); set(0x968, 2); set(0x96c, 3); set(0x978, 1); set(0x980, 2);
     rv = ioc(ob_sec, 0x9ec, 0x30, 2000);
     lgx("open_streams SECUREDTS rv", rv);
-    if (rv != 1) { err("復号ストリーム(OPEN_SECUREDTS)を開けない rv="); errhex(rv); err("\n"); return -1; }
+    if (rv != 1) { err("復号ストリーム(OPEN_SECUREDTS)を開けない rv="); errhex(rv); err("\n");
+        if (sg_using && !sg_regen_tried) { sg_regen_tried = 1; if (sg_regen("OPEN_SECUREDTS")) return open_streams_inner(s, is_sat); }
+        return -1;
+    }
     h_sec0 = ob_sec[0xa4 / 4]; h_sec1 = ob_sec[0xa8 / 4];
     return 0;
 }
@@ -967,7 +1049,7 @@ static void send_headers(int sock) {
 static int si_only;		/* HTTP の ?si=1: SI(PAT/NIT/SDT/EIT/TOT 等)だけを出す。B-CAS の ACTIVATE も復号ストリームも使わない(番組表の取得用。視聴中の別系統に影響しない) */
 static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsigned long want_sid, unsigned long dur_ms, int ofd, int http) {
     int rc, sel; struct svc *s; unsigned long t_start, nto = 0;
-    out_fd = ofd; olen = 0; stop_flag = 0; term_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = 0;
+    out_fd = ofd; olen = 0; stop_flag = 0; term_flag = 0; prev_pt = prev_sec = 0xff; h_pt0 = h_pt1 = h_sec0 = h_sec1 = 0; sg_using = sg_regen_tried = 0; sg_av_ms = 0;
     if (!owner_keep_g) h_g0 = h_g1 = 0;		/* 段階2: 担当が保持する GENERIC のハンドルはセッションをまたいで消さない */
     session_want_sid = si_only ? 0 : want_sid;      /* si_only のときは、PSI ストリームの元の PAT も通す */
     lgx("session start freq", freq_val);
@@ -1038,6 +1120,15 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
     int av_first = 0;
     while (!stop_flag) {
         unsigned long rv, idx, sz, k;
+        if (sg_using && !av_first && !sg_regen_tried && now_ms() - t_start >= SG_REACT_MS) {
+            sg_regen_tried = 1;
+            if (sg_other_av_ok(is_sat)) err("映像・音声が出ないが、もう一方の系統は同じ GENERIC で映っているので、作り直さない\n");
+            else if (sg_regen("映像・音声が出ない")) {
+                clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_sec0; tb[0xa8 / 4] = h_sec1; ioc(tb, 0xb4, 0x11, 5000); h_sec0 = h_sec1 = 0; prev_sec = 0xff;
+                if (open_streams_inner(s, is_sat) < 0) break;
+                lgx("single generic: reopened secured stream", h_sec0);
+            }
+        }
         if (bcas_lockfd >= 0 && now_ms() - t_start >= BCAS_HOLD_MS) { lgx("bcas lock released by timeout", 0); bcas_unlock(); }
         if (dur_ms && now_ms() - t_start >= dur_ms) break;
         clr(rb, 0x230 / 4);
@@ -1052,6 +1143,7 @@ static int session(int is_sat, unsigned long freq_val, unsigned long ts_id, unsi
                  * ただしその PAT は Issue #16 の修正 (network_PID 0x1f -> 実 NIT の 0x0010 + CRC 再計算) を通す */
                 if (p) for (k = 0; k + 192 <= sz; k += 192) if (p[k + 4] == 0x47 && (want_sid || (p[k + 5] & 0x1f) + p[k + 6] != 0)) {
                     unsigned long pid2 = ((p[k + 5] & 0x1f) << 8) | p[k + 6];
+                    if (dual_mode && (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0]))) sg_av_beat(is_sat);
                     if (!av_first) { if (pid2 == s->vpid || (s->num_audio && pid2 == s->apid[0])) { av_first = 1; lgx("first A/V packet, ms since stream start", now_ms() - t_start); lgx("first A/V packet pid", pid2); bcas_unlock(); } }
                     if (want_sid && pid2 == 0) put_pkt(patfix_network_pid(p + k + 4)); else put_pkt(p + k + 4);
                 }
@@ -1740,6 +1832,8 @@ static void set_parent_sig(void) {
     sa[0] = 0; sa[1] = (unsigned long)on_parent_sig; sa[2] = sa[3] = sa[4] = sa[5] = 0;
     sys6(SYS_rt_sigaction, SIGINT_, (long)sa, 0, 16, 0, 0);
     sys6(SYS_rt_sigaction, SIGTERM_, (long)sa, 0, 16, 0, 0);
+    sa[1] = (unsigned long)on_sg_usr1;	/* 担当からの「共有の GENERIC を作り直して」。accept は EINTR で戻る */
+    sys6(SYS_rt_sigaction, SIGUSR1_, (long)sa, 0, 16, 0, 0);
     sa[1] = 1;	/* SIG_IGN */
     sys6(SYS_rt_sigaction, SIGPIPE_, (long)sa, 0, 16, 0, 0);
 }
@@ -1790,12 +1884,14 @@ static int listen_port(unsigned long port) {
         int b;
         for (b = 0; b < 2; b++) { owners[b].pid = -1; owners[b].sock = -1; owners[b].inflight = 0; owners[b].dbuf = 0; owners[b].dlen = 0; }
         set_parent_sig();
-        single_generic_open();		/* 試作: GENERIC を 1 本にして両方の担当で共有する(担当を起動する前に。担当はハンドルの値を受け継ぐ) */
+        sg_check();		/* 試作: GENERIC を 1 本にして両方の担当で共有する(担当を起動する前に開く) */
         owner_start(0); owner_start(1);
     }
     for (;;) {
-        long c = sys3(4168, ls, 0, 0), pid;
+        long c, pid;
         char pre_req[1024]; long pre_n = -1;
+        if (dual_mode && sg_regen_flag) { sg_regen_flag = 0; sg_check(); }
+        c = sys3(4168, ls, 0, 0);
         if (parent_term) {		/* 終了要求: 両担当へ SIGTERM を伝達し、両担当の終了を待ってから終わる (設計書 4.8) */
             int w, b, any;
             for (b = 0; b < 2; b++) if (owners[b].pid > 0) sys3(SYS_kill, owners[b].pid, SIGTERM_, 0);
@@ -1809,7 +1905,7 @@ static int listen_port(unsigned long port) {
             err("nasne-recpt1: terminated\n");
             return 0;
         }
-        if (c < 0) { msleep(100); continue; }
+        if (c < 0) { if (!sg_regen_flag) msleep(100); continue; }
         if (dual_mode) {		/* 親が先にリクエストを読んで振り分ける (チューナー要求は担当へ、それ以外は従来の子へ) */
             unsigned long pfd[2]; long pr; int rt;
             owner_drain_notes(0); owner_drain_notes(1);
@@ -1823,6 +1919,7 @@ static int listen_port(unsigned long port) {
                 if (n <= 0) { sys3(SYS_close, c, 0, 0); continue; }
                 pre_req[n] = 0; pre_n = n;
             }
+            sg_check();		/* 試作: 要求を担当へ渡す前に、共有の GENERIC を点検する */
             rt = route_to_owner(c, pre_req);
             if (rt > 0) { sys3(SYS_close, c, 0, 0); continue; }
             if (rt < 0) {		/* U8: 担当の在庫上限。親が 503 を返して閉じる */
