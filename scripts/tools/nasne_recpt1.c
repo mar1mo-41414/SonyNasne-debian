@@ -551,7 +551,7 @@ static void sg_check(void) {		/* 親: 起動時・要求を担当へ渡す前・
         b = sys3(SYS_open, (long)SG_BAD, 0, 0);
         if (b < 0 && fw_alive()) { fd = save; return; }		/* 使える */
         if (b >= 0) sys3(SYS_close, b, 0, 0);
-        lgx(b >= 0 ? "single generic: rebuild (requested by owner)" : "single generic: rebuild (fw not alive)", sg_h0);
+        lgx(b >= 0 ? "single generic: rebuild (requested by a session)" : "single generic: rebuild (fw not alive)", sg_h0);
         sys3(SYS_unlink, (long)SG_FILE, 0, 0);
         if (fw_alive()) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = sg_h0; tb[0xa8 / 4] = sg_h1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); }
         sys3(SYS_close, sg_fd, 0, 0); sg_fd = -1; sg_h0 = sg_h1 = 0;
@@ -602,9 +602,11 @@ static int sg_other_av_ok(int is_sat) {	/* もう一方の系統が、同じ世�
 static int open_streams_inner(struct svc *s, int is_sat) {
     unsigned long rv, i; int tries;
     /* B-CAS ジェネリックストリーム */
-    if (owner_mode && sg_file_read()) {     /* 親が持つ 1 本を使う。ACTIVATE も GENERIC の開閉もしない */
+    if (sg_file_read()) {     /* 親が持つ 1 本を使う。ACTIVATE も GENERIC の開閉もしない。担当に限らず、コマンドラインの起動なども
+                                 * (自分の GENERIC を開いて閉じると、共有の 1 本の活性化まで失われるため。--shared-generic と同じ) */
         sg_using = 1; h_g0 = sg_h0; h_g1 = sg_h1; owner_has_g = 0;
         lgx("open_streams: single shared GENERIC (parent), skip ACTIVATE", h_g0);
+        if (!logv) err("共有の GENERIC を使う(ACTIVATE しない)\n");
         goto activated;
     }
     if (owner_keep_g && owner_has_g) {
@@ -683,6 +685,7 @@ static void close_streams_ex(int keep_g) {
     lgx("close_streams: pt", h_pt0);
     if (h_pt0 || h_pt1) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_pt0; tb[0xa8 / 4] = h_pt1; ioc(tb, 0xb4, 0x11, 5000); h_pt0 = h_pt1 = 0; }
     lgx("close_streams: generic", h_g0);
+    if (sg_using) { h_g0 = h_g1 = 0; return; }		/* 共有の GENERIC は親のもの。閉じない */
     if (!keep_g && (h_g0 || h_g1)) { clr(tb, 0xb4 / 4 + 2); tb[0xa4 / 4] = h_g0; tb[0xa8 / 4] = h_g1; tb[0xb0 / 4] = 0x400; ioc(tb, 0xb4, 0x2f, 5000); h_g0 = h_g1 = 0; }
 }
 static void close_streams(void) { close_streams_ex(0); }
