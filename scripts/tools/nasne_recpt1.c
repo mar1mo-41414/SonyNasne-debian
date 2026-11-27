@@ -397,7 +397,7 @@ static int discover(unsigned long want_sid, unsigned long tmo_ms) {
             for (j = 8; j + 4 <= ln - 4 && sec_nsec < MAX_SEC; j += 4) {
                 unsigned long pn = (s[j] << 8) | s[j + 1], pid = ((s[j + 2] & 0x1f) << 8) | s[j + 3];
                 if (!pn) continue;
-                sec_pid[sec_nsec] = pid; sec_have[sec_nsec] = 0; svcs[nsvc].pn = pn; svcs[nsvc].pmt = pid; svcs[nsvc].ok = 0; svcs[nsvc].seg1 = (pid == 0x1fc8); nsvc++; sec_nsec++;
+                sec_pid[sec_nsec] = pid; sec_have[sec_nsec] = 0; svcs[nsvc].pn = pn; svcs[nsvc].pmt = pid; svcs[nsvc].ok = 0; svcs[nsvc].seg1 = (pid >= 0x1fc8 && pid <= 0x1fcf); nsvc++; sec_nsec++;
             }
             pat_done = 1;
         }
